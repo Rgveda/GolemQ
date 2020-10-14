@@ -1,5 +1,5 @@
 # GolemQ
-PowerToys based QUANTAXIS
+a PowerToys based QUANTAXIS
 
 这是一个基于 QUANTAXIS 二次开发的量化系统子项目
 
