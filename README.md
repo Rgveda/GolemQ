@@ -1,0 +1,2 @@
+# GolemQ
+PowerToys based QUANTAXIS
