@@ -12,9 +12,16 @@ A PowerToys based QUANTAXIS
 功能包括：
 
 来源新浪财经的A股实盘行情 l1快照数据
+在 repo 根目录下面，输入
+python -m GolemQ.cli --sub sina_l1
+
 已知Bug：
 上证指数 000001 实盘走势和平安银行混淆。
 成交量：Volumne和Amount 计算方式不对。
+
+读取实盘行情数据K线
+在 repo 根目录下面，输入
+python -m GolemQ.GQTest.GQFetch_test.realtime
 
 模仿优矿DataAPI数据接口
 挖了坑，未完成，待续
