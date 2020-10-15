@@ -9,24 +9,49 @@ A PowerToys based QUANTAXIS
 
 但是又有很多朋友问这些常用的功能使用情况，为了发布我不得不打包代码，索性发布自己的第一个Git项目吧，也算是人生头一回原创 Git仓库了。
 
-功能包括：
+#安装：
+
+在 QUANTAXIS Docker 中打开 Dashboard
+
+选择 qacommunity，打开 cli 控制台，输入 bash
+
+输入 git clone https://github.com/Rgveda/GolemQ.git
+
+cd GolemQ
+
+python setup.py install
+
+#使用：
+
+#功能包括：
 
 来源新浪财经的A股实盘行情 l1快照数据
 在 repo 根目录下面，输入
-python -m GolemQ.cli --sub sina_l1
+python -m GolemQ.cli --sub s
 
-已知Bug：
+读取实盘数据
+
+打开 Jupyter，输入
+
+from GolemQ.GQFetch.kline import (
+    get_kline_price,
+    get_kline_price_min,
+)
+
+data_day, codename = get_kline_price("000001.XSHG", verbose=True)
+
+#已知Bug：
 上证指数 000001 实盘走势和平安银行混淆。
 成交量：Volumne和Amount 计算方式不对。
 
-读取实盘行情数据K线
+#读取实盘行情数据K线
 在 repo 根目录下面，输入
 python -m GolemQ.GQTest.GQFetch_test.realtime
 
-模仿优矿DataAPI数据接口
+#模仿优矿DataAPI数据接口
 挖了坑，未完成，待续
 
-计划
+#计划
 模仿聚宽API接口——To be continue...
 
 Firstblood!
