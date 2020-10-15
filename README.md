@@ -54,9 +54,7 @@ python setup.py install
 
 在 repo 根目录下面，输入
 
-python -m GolemQ.cli --sub s
-
-
+python -m GolemQ.cli --sub sina_l1
 
 ### 读取实盘l1数据
 
@@ -78,7 +76,24 @@ data_day, codename = get_kline_price("000001.XSHG", verbose=True)
 
 成交量：Volumne和Amount 计算方式不对。
 
+### 常见问题
 
+无法运行命令
+
+PS C:\Users\azai\source\repos\GolemQ> python -m GolemQ.cli --sub sina_l1
+
+提示
+C:\Users\azai\AppData\Local\Programs\Python\Python37\python.exe: Error while finding module specification for 'GolemQ.cli' (ModuleNotFoundError: No module named 'GolemQ')
+
+解决方法输入 cd ..
+PS C:\Users\azai\source\repos\GolemQ> cd ..
+
+PS C:\Users\azai\source\repos> python -m GolemQ.cli --sub sina_l1
+Program Last Time 3.762s
+Not Trading time 现在是中国A股收盘时间 2020-10-15 16:28:05.310437
+Not Trading time 现在是中国A股收盘时间 2020-10-15 16:28:07.314858
+Not Trading time 现在是中国A股收盘时间 2020-10-15 16:28:09.323150
+Not Trading time 现在是中国A股收盘时间 2020-10-15 16:28:11.334017
 
 ## 例子
 ### 读取实盘行情数据K线
