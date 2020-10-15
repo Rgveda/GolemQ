@@ -140,7 +140,9 @@ from GolemQ.GQFetch.kline import (
 
 data_day, codename = get_kline_price("000001.XSHG", verbose=True)
 
+为避免出现很多打印信息，可以设置参数 verbose=False
 
+data_day, codename = get_kline_price_min("000001.XSHG", verbose=False)
 
 ### 已知Bug：
 
