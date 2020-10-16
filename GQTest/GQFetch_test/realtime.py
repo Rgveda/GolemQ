@@ -32,6 +32,7 @@ import pandas as pd
 from GolemQ.GQUtil.symbol import (
     get_codelist,
 )
+from GolemQ.GQFetch.kline import get_kline_price
 from GolemQ.GQFetch.kline import (
     get_kline_price,
     get_kline_price_min,

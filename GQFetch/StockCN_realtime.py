@@ -27,6 +27,7 @@ import datetime
 import time
 import numpy as np
 import pandas as pd
+import pymongo
 
 try:
     import QUANTAXIS as QA
@@ -63,6 +64,68 @@ except:
             raise Exception(u'Const Class can\'t allow to change property\' value.')
             return super().__setattr__(name, value)
 
+from QUANTAXIS.QAUtil import (
+    DATABASE,
+    )
+
+
+def GQ_fetch_stock_realtime_adv(
+    code=None,
+    num=1,
+    collections=DATABASE.get_collection(
+        'realtime_{}'.format(datetime.date.today())
+    ),
+    verbose=True,
+):
+    '''
+    返回当日的上下五档, code可以是股票可以是list, num是每个股票获取的数量
+    :param code:
+    :param num:
+    :param collections:  realtime_XXXX-XX-XX 每天实时时间
+    :return: DataFrame
+    '''
+    if code is not None:
+        # code 必须转换成list 去查询数据库
+        if isinstance(code, str):
+            code = [code]
+        elif isinstance(code, list):
+            pass
+        else:
+            print(
+                "QA Error QA_fetch_stock_realtime_adv parameter code is not List type or String type"
+            )
+
+        items_from_collections = [
+            item for item in collections.find(
+                {'code': {
+                    '$in': code
+                }},
+                limit=num * len(code),
+                sort=[('datetime',
+                       pymongo.DESCENDING)]
+            )
+        ]
+        if (items_from_collections is None) or \
+            (len(items_from_collections) == 0):
+            if verbose:
+                print(
+                    "QA Error QA_fetch_stock_realtime_adv find parameter code={} num={} collection={} return NOne"
+                    .format(code,
+                            num,
+                            collections)
+                )
+            return
+
+        data = pd.DataFrame(items_from_collections)
+        data_set_index = data.set_index(['datetime',
+                                         'code'],
+                                        drop=False).drop(['_id'],
+                                                            axis=1)
+
+        return data_set_index
+    else:
+        print("QA Error QA_fetch_stock_realtime_adv parameter code is None")
+
 
 def GQ_fetch_stock_day_realtime_adv(codelist, 
                                     data_day, 
@@ -86,7 +149,10 @@ def GQ_fetch_stock_day_realtime_adv(codelist,
                                                              datetime.datetime.min.time()) - data_day.data.index.get_level_values(level=0)[-1].to_pydatetime(),
                   '尝试查找实盘数据....', codelist)
         #print(codelist, verbose)
-        data_realtime = QA.QA_fetch_stock_realtime_adv(codelist, num=5000, verbose=verbose)
+        try:
+            data_realtime = QA.QA_fetch_stock_realtime_adv(codelist, num=5000, verbose=verbose)
+        except: 
+            data_realtime = GQ_fetch_stock_realtime_adv(codelist, num=5000, verbose=verbose)
         if (data_realtime is not None) and \
             (len(data_realtime) > 0):
             # 合并实盘实时数据
@@ -186,8 +252,10 @@ def GQ_fetch_stock_min_realtime_adv(codelist,
             print('时间戳差距超过：', datetime.datetime.now() - data_min.data.index.get_level_values(level=0)[-1].to_pydatetime(),
                   '尝试查找实盘数据....', codelist)
         #print(codelist, verbose)
-        data_realtime = QA.QA_fetch_stock_realtime_adv(codelist, num=5000, verbose=verbose)
-
+        try:
+            data_realtime = QA.QA_fetch_stock_realtime_adv(codelist, num=5000, verbose=verbose)
+        except: 
+            data_realtime = GQ_fetch_stock_realtime_adv(codelist, num=5000, verbose=verbose)
         if (data_realtime is not None) and \
             (len(data_realtime) > 0):
             # 合并实盘实时数据
