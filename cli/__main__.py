@@ -39,11 +39,9 @@ except:
     print('PLEASE run "pip install QUANTAXIS" before call GolemQ.cli modules')
     pass
 
-# 东方财富爬虫
-from QUANTAXIS.QASU.main import (QA_SU_crawl_eastmoney)
-
 from GolemQ.cli.sub import (
     sub_l1_from_sina,
+    sub_codelist_l1_from_sina,
     sub_1min_from_tencent_lru,
 )
 from GolemQ.GQUtil.symbol import (
@@ -58,17 +56,19 @@ if __name__ == '__main__':
 
     # 处理命令行参数
     parser.add_argument("-v", "--verbose", help=u"increase output verbosity 更多显示信息", action="store_true", default=False)
-    parser.add_argument('-t', '--strategy', help=u"strategy will be evaluated 执行单一策略", type=str, default='',)
-    parser.add_argument('-e', '--eval', help=u"[all,etf,index,block,fast] will be evaluated 执行评估模式[all=全体A股，etf=主要etf，index=中证系列指数，block=重要指标股(默认)，fast=重要指标股，无仓位和止损控制]", type=str, default='block')
+    parser.add_argument('-t', '--strategy', help=u"strategy will be evaluated 执行单一策略", type=str, default=False,)
+    parser.add_argument('-e', '--eval', help=u"[all,etf,index,block,fast] will be evaluated 执行评估模式[all=全体A股，etf=主要etf，index=中证系列指数，block=重要指标股(默认)，fast=重要指标股，无仓位和止损控制]", type=str, default='fast')
     parser.add_argument("-f", "--frequency", help=u"frequency 交易周期频率", type=str, default='60min',)
-    parser.add_argument('-p', '--portfolio', help=u"portfolio will be evaluated 策略组合方案", type=str, default='sharpe_onewavelet_day',)
+    parser.add_argument('-p', '--portfolio', help=u"portfolio will be evaluated 策略组合方案", type=str, default='uprising',)
     parser.add_argument('-c', '--pct_of_cores', help=u"percentage of CPU cores will be used. 并行计算时最大CPU占用率", type=int, default=0,)
-    parser.add_argument('-s', '--show', help=u"Show Me a Numer. 显示指定策略的选股结果", type=str, default='',)
-    parser.add_argument('-S', '--sub', help=u"Subscibe stock. with ws server ip 接收实盘行情", type=str, default='',)
-    parser.add_argument('-r', '--risk', help=u"risk portfolio optimizer 策略仓位优化", type=str, default='CVaR',)
-    parser.add_argument('-m', '--moneyflow', help=u"moneyflow 资金流向", type=str, default='CVaR',)
-    parser.add_argument('-k', '--check', help=u"Check code", type=str, default='',)
-    parser.add_argument('-l', '--labelimg', help=u"labelimg", type=str, default='',)
+    parser.add_argument('-C', '--codelist', help=u"Codelist 指定 Code 列表", type=str, default=False,)
+    parser.add_argument('-s', '--show', help=u"Show Me a Numer. 显示指定策略的选股结果", type=str, default=False,)
+    parser.add_argument('-S', '--sub', help=u"Subscibe stock. with ws server ip 接收实盘行情", type=str, default=False,)
+    parser.add_argument('-r', '--risk', help=u"risk portfolio optimizer 策略仓位优化", type=str, default=False,)
+    parser.add_argument('-m', '--moneyflow', help=u"moneyflow 资金流向", type=str, default=False,)
+    parser.add_argument('-k', '--check', help=u"Check code", type=str, default=False,)
+    parser.add_argument('-l', '--log', help=u"截图 log", type=str, default=False,)
+    parser.add_argument('-n', '--snapshot', help=u"Snapshot 保存图形图像", type=str, default=False,)
 
     cmdline_args = parser.parse_args()
     done = False
@@ -80,9 +80,18 @@ if __name__ == '__main__':
         # 比我一只Number啦
         show_me_number(cmdline_args.strategy)
         done = True
-    elif (cmdline_args.moneyflow == 'eastmoney'):
+    elif (cmdline_args.moneyflow == 'eastmoney'):    		
+				# 东方财富爬虫
+				# from QUANTAXIS.QASU.main import (
+				#     QA_SU_crawl_eastmoney
+				# )
+
         # 比我一只Number啦
         QA_SU_crawl_eastmoney(action='zjlx', stockCode='all')
+        done = True
+    elif (cmdline_args.snapshot == 'snapshot'):
+        # 评估
+        print(u'没实现')
         done = True
     elif (cmdline_args.strategy == 'onewavelet'):
         from GolemQ.GQBenchmark.onewavelet import onewavelet
@@ -162,8 +171,12 @@ if __name__ == '__main__':
         done = True
     elif ((len(cmdline_args.sub) > 0) and \
         (cmdline_args.sub == 'sina_l1')):
-        # 收线，收线
-        sub_l1_from_sina()
+        if (cmdline_args.codelist != False):
+            # 收线，收线
+            sub_codelist_l1_from_sina(get_codelist(cmdline_args.codelist))
+        else:
+            # 收线，收线
+            sub_l1_from_sina()
         done = True
     elif ((len(cmdline_args.sub) > 0) and \
         (cmdline_args.sub == 'huobi_realtime')):
@@ -286,8 +299,7 @@ if __name__ == '__main__':
                 '生物疫苗',
                 '机场航运',
                 '数字货币', 
-                '文化传媒'
-                ]
+                '文化传媒']
         blockname = list(set(blockname))
         codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code
         codelist_candidate = [code for code in codelist_candidate if not code.startswith('300')]

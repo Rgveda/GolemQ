@@ -102,7 +102,7 @@ def formater_l1_tick(code:str, l1_tick:dict) -> dict:
     return l1_tick
 
 
-def formater_l1_ticks(l1_ticks:dict) -> dict:
+def formater_l1_ticks(l1_ticks:dict, codelist:list=None) -> dict:
     """
     处理 l1 ticks 数据
     """
@@ -110,8 +110,10 @@ def formater_l1_ticks(l1_ticks:dict) -> dict:
     for code, l1_tick_values in l1_ticks.items():
         #l1_tick = namedtuple('l1_tick', l1_ticks[code])
         #formater_l1_tick_jit(code, l1_tick)
-        l1_tick = formater_l1_tick(code, l1_tick_values)
-        l1_ticks_data.append(l1_tick)
+        if (codelist is None) or \
+            (code in codelist):
+            l1_tick = formater_l1_tick(code, l1_tick_values)
+            l1_ticks_data.append(l1_tick)
 
     return l1_ticks_data
 
@@ -216,6 +218,125 @@ def sub_l1_from_sina():
             (get_once):  # 如果在交易时间
             l1_ticks = quotation.market_snapshot(prefix=False)
             l1_ticks_data = formater_l1_ticks(l1_ticks)
+
+            if (datetime.datetime.now() < start_time) or \
+                ((len(l1_ticks_data) > 0) and \
+                (datetime.datetime.strptime(l1_ticks_data[-1]['datetime'], '%Y-%m-%d %H:%M:%S') < datetime.datetime.strptime(str(datetime.datetime.now().date()) + ' 00:00', '%Y-%m-%d %H:%M'))):
+                print(u'Not Trading time 现在是中国A股收盘时间 {}'.format(_time))
+                timer.sleep(sleep)
+                continue
+
+            # 查询是否新 tick
+            query_id = {
+                "code": [l1_tick['code'] for l1_tick in l1_ticks_data],
+                "datetime": {
+                    '$in': [l1_tick['datetime'] for l1_tick in l1_ticks_data]
+                }
+            }
+            refcount = database.count_documents(query_id)
+            if refcount > 0:
+                if (len(l1_ticks_data) > 1):
+                    # 删掉重复数据
+                    database.delete_many(query_id)
+                    database.insert_many(l1_ticks_data)
+                else:
+                    # 持续更新模式，更新单条记录
+                    database.replace_one(query_id, l1_ticks_data[0])
+            else:
+                # 新 tick，插入记录
+                database.insert_many(l1_ticks_data)
+            if (get_once != True):
+                print(u'Trading time now 现在是中国A股交易时间 {}\nProcessing ticks data cost:{:.3f}s'.format(datetime.datetime.now(),
+                    (datetime.datetime.now() - _time).total_seconds()))
+            timer.sleep(sleep)
+            print('Program Last Time {:.3f}s'.format((datetime.datetime.now() - _time1).total_seconds()))
+            get_once = False
+        else:
+            print(u'Not Trading time 现在是中国A股收盘时间 {}'.format(_time))
+            timer.sleep(sleep)
+
+    # 每天下午5点，代码就会执行到这里，如有必要，再次执行收盘行情下载，也就是 QUANTAXIS/save X
+    save_time = datetime.datetime.strptime(str(datetime.datetime.now().date()) + ' 17:00', '%Y-%m-%d %H:%M')
+    if (datetime.datetime.now() > end_time) and \
+        (datetime.datetime.now() < save_time):
+        # 收盘时间 下午16:00到17:00 更新收盘数据
+        # 我不建议整合，因为少数情况会出现 程序执行阻塞 block，
+        # 本进程被阻塞后无人干预第二天影响实盘行情接收。
+        # save_X_func()
+        pass
+
+    # While循环每天下午5点自动结束，在此等待13小时，大概早上六点结束程序自动重启
+    print(u'While循环每天下午5点自动结束，在此等待13小时，大概早上六点结束程序自动重启，这样只要窗口不关，永远每天自动收取 tick')
+    timer.sleep(40000)
+
+
+def sub_codelist_l1_from_sina(codelist:list=None):
+    """
+    从新浪获取L1数据，3秒更新一次，建议mongodb数据库存放在企业级SSD上面
+    （我用Intel DC P3600 800GB SSD，锐龙 3600，每个tick 保存时间 < 0.6s）
+    """
+    print(codelist)
+    def collections_of_today():
+        database = DATABASE.get_collection('realtime_{}'.format(datetime.date.today()))
+        database.create_index([('code', QA_util_sql_mongo_sort_ASCENDING)])
+        database.create_index([('datetime', QA_util_sql_mongo_sort_ASCENDING)])
+        database.create_index([("code",
+                    QA_util_sql_mongo_sort_ASCENDING),
+                ("datetime",
+                    QA_util_sql_mongo_sort_ASCENDING)],
+            #unique=True,
+        )
+        return database
+
+    def save_X_func():
+        """
+        QUANTAXIS的save X，建议每天下午四~五点收盘后执行
+        """
+        QA_SU_save_stock_day('tdx')
+        QA_SU_save_stock_xdxr('tdx')
+        QA_SU_save_stock_min('tdx')
+        QA_SU_save_index_day('tdx')
+        QA_SU_save_index_min('tdx')
+        QA_SU_save_etf_list('tdx')
+        QA_SU_save_etf_day('tdx')
+        QA_SU_save_etf_min('tdx')
+        QA_SU_save_stock_list('tdx')
+        QA_SU_save_index_list('tdx')
+        QA_SU_save_stock_block('tdx')
+        QA_SU_save_future_list('tdx')
+        pass
+
+    quotation = easyquotation.use('sina') # 新浪 ['sina'] 腾讯 ['tencent', 'qq']
+
+    sleep_time = 2.0
+    sleep = int(sleep_time)
+    _time1 = datetime.datetime.now()
+    database = collections_of_today()
+    get_once = True
+    # 开盘/收盘时间
+    end_time = datetime.datetime.strptime(str(datetime.datetime.now().date()) + ' 16:30', '%Y-%m-%d %H:%M')
+    start_time = datetime.datetime.strptime(str(datetime.datetime.now().date()) + ' 09:15', '%Y-%m-%d %H:%M')
+    day_changed_time = datetime.datetime.strptime(str(datetime.datetime.now().date()) + ' 01:00', '%Y-%m-%d %H:%M')
+    while (datetime.datetime.now() < end_time):
+        # 开盘/收盘时间
+        end_time = datetime.datetime.strptime(str(datetime.datetime.now().date()) + ' 16:30', '%Y-%m-%d %H:%M')
+        start_time = datetime.datetime.strptime(str(datetime.datetime.now().date()) + ' 09:15', '%Y-%m-%d %H:%M')
+        day_changed_time = datetime.datetime.strptime(str(datetime.datetime.now().date()) + ' 01:00', '%Y-%m-%d %H:%M')
+        _time = datetime.datetime.now()
+
+        if QA_util_if_tradetime(_time) and \
+            (datetime.datetime.now() < day_changed_time):
+            # 日期变更，写入表也会相应变更，这是为了防止用户永不退出一直执行
+            print(u'当前日期更新~！ {} '.format(datetime.date.today()))
+            database = collections_of_today()
+            print(u'Not Trading time 现在是中国A股收盘时间 {}'.format(_time))
+            timer.sleep(sleep)
+            continue
+
+        if QA_util_if_tradetime(_time) or \
+            (get_once):  # 如果在交易时间
+            l1_ticks = quotation.market_snapshot(prefix=False)
+            l1_ticks_data = formater_l1_ticks(l1_ticks, codelist)
 
             if (datetime.datetime.now() < start_time) or \
                 ((len(l1_ticks_data) > 0) and \
