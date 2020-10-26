@@ -239,7 +239,7 @@ if __name__ == '__main__':
         # 收线，收线
         sub_1min_from_tencent_lru()
         done = True
-    elif (len(cmdline_args.check) > 0):
+    elif (cmdline_args.check != False):
         blockname = ['MSCI中国',
                  'MSCI成份', 
                  'MSCI概念',
@@ -312,7 +312,7 @@ if __name__ == '__main__':
         print('\n=====> 以下{}个个股没有进入候选策略计算清单：'.format(len(miss_codelist)), miss_codelist)
 
         done = True
-    elif (len(cmdline_args.risk) > 0):
+    elif (cmdline_args.risk != False):
         from GolemQ.cli.portfolio import portfolio_optimizer
         # 收线，收线
         if (len(cmdline_args.portfolio) > 0):
@@ -323,4 +323,4 @@ if __name__ == '__main__':
         done = True
 
     if (done == False):
-        print('U need Help, Try type "Help"')
+        print('I think U need Help, Try type "python -m GolemQ.cli Help"')
