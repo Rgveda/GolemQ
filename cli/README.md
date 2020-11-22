@@ -32,7 +32,7 @@ python -m GolemQ.cli --sub sina_l1 --codelist "600783、601069、002152、000582
 
 ### 已知Bug：
 
-上证指数 000001 实盘走势和平安银行混淆。
+上证指数 000001 实盘走势和平安银行混淆。 目前已经修正 ——2020.11.22
 
 成交量：Volumne和Amount 计算方式不对。
 
@@ -50,7 +50,7 @@ python -m GolemQ.cli --sub sina_l1 --codelist "600783、601069、002152、000582
 while finding module specification for 'GolemQ.cli' 
 (ModuleNotFoundError: No module named 'GolemQ')*
 
-解决方法输入 cd ..
+解决方法输入 cd .. 切换到上一层目录
 
 *PS C:\Users\azai\source\repos\GolemQ> cd ..*
 
