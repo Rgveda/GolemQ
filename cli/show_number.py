@@ -209,7 +209,7 @@ def position(portfolio:str='myportfolio',
     mainfest_punch = mainfest_signals[(mainfest_signals[ST.TRIGGER_R5].gt(0) | \
                                        mainfest_signals[ST.TRIGGER_RPS].gt(0))].copy()
     print('mainfest_punch:', len(mainfest_punch), mainfest_punch.index.get_level_values(level=1).unique().values)
-    #each_day = position_signals.index.get_level_values(level=0).unique()
+    #each_day = sorted(position_signals.index.get_level_values(level=0).unique())
     #for i in range(1, 6):
     #    print(position_dual_punch.loc[(each_day[-i], slice(None)), [AKA.NAME, ]])
     
@@ -423,7 +423,7 @@ def position(portfolio:str='myportfolio',
     #vol= position_signals[AKA.VOLUME]
     ##position_signals.replace([np.inf, -np.inf], np.nan, inplace=True)
     ##codelist = position_signals.index.get_level_values(level=1).unique()
-    ##each_day = position_signals.index.get_level_values(level=0).unique()
+    ##each_day = sorted(position_signals.index.get_level_values(level=0).unique())
     ##close_prices = np.vstack([position_signals.loc[(each_day[-10:], code), [AKA.OPEN]].fillna(method='ffill') for code in codelist])
     ##open_prices = np.vstack([position_signals.loc[(each_day[-10:], code), [AKA.CLOSE]].fillna(method='ffill') for code in codelist])
     ### 每日价格变换可能承载我们所需信息dict_data[s_key].fillna(method='ffill')

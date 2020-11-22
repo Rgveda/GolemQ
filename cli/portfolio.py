@@ -127,7 +127,8 @@ def portfolio_optimizer(rm='CVaR',
 
         # 收益率序列
         rets_jotion = data_day.add_func(kline_returns_func)
-        returns = pd.DataFrame(columns=codelist, index=data_day.data.index.get_level_values(level=0).unique())
+        returns = pd.DataFrame(columns=codelist, 
+                               index=sorted(data_day.data.index.get_level_values(level=0).unique()))
         for code in codelist:
             returns[code] = rets_jotion.loc[(slice(None), code), :].reset_index(level=[1], drop=True)
 

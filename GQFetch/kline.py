@@ -24,6 +24,7 @@
 # SOFTWARE.
 #
 import datetime
+import os
 
 try:
     import QUANTAXIS as QA
@@ -66,7 +67,9 @@ from GolemQ.GQFetch.StockCN_realtime import (
     #GQ_fetch_index_day_realtime_adv,
     #GQ_fetch_index_min_realtime_adv,
 )
-
+from GolemQ.GQUtil.path import (
+    mkdirs,
+)
 
 def get_kline_price(codelist, start=None, market_type=None, verbose=True):
     """
@@ -289,16 +292,17 @@ def get_kline_price_min(codelist,
 
     if (market_type == QA.MARKET_TYPE.STOCK_CN):
         start = '{}'.format(datetime.datetime.now() - datetime.timedelta(hours=19200)) if (start is None) else start
-        data_min = QA.QA_fetch_stock_min_adv(code=codelist,
+        data_min = GQ_fetch_stock_min_adv(code=codelist,
                 start=start,
                 end='{}'.format(datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))) + datetime.timedelta(minutes=1)),
                 frequence=frequency)
 
         data_min = GQ_fetch_stock_min_realtime_adv(codelist, data_min, frequency=frequency, verbose=verbose)
         if (data_min is None):
-            print(market_type, codelist)
+            if verbose:
+                print(market_type, codelist)
             pass
-
+        #print(data_min.data.tail(10))
         if verbose:
             data_min.data[ST.VERBOSE] = True
     elif (market_type == QA.MARKET_TYPE.CRYPTOCURRENCY):
@@ -317,13 +321,15 @@ def get_kline_price_min(codelist,
             frequence=frequency)
         data_min = GQ_fetch_stock_min_realtime_adv(codelist, data_min, frequency=frequency, verbose=verbose)
         if (data_min is None):
-            print(market_type, codelist)
+            if verbose:
+                print(market_type, codelist)
             pass
 
         if verbose:
             data_min.data[ST.VERBOSE] = True
     else:
-        print(u'Not Supported code:', codelist)
+        if verbose:
+            print(u'Not Supported code:', codelist)
         return None, None
 
     if verbose:
@@ -352,8 +358,113 @@ def get_kline_price_min(codelist,
         else:
             codename = codelist if isinstance(codelist, str) else codelist.item()
     except:
-        print(u'Unsupported code:{}'.format(codelist))
+        if verbose:
+            print(u'Unsupported code:{}'.format(codelist))
         return None, None
 
+    #print(data_min.data.tail(10))
     return data_min, codename
 
+
+def GQ_fetch_stock_min_adv(code,
+    start,
+    end=None,
+    frequence='1min',
+    if_drop_index=True,
+    verbose=False,):
+    '''
+    '获取股票分钟线'
+    :param code:  字符串str eg 600085
+    :param start: 字符串str 开始日期 eg 2011-01-01
+    :param end:   字符串str 结束日期 eg 2011-05-01
+    :param frequence: 字符串str 分钟线的类型 支持 1min 1m 5min 5m 15min 15m 30min 30m 60min 60m 类型
+    :param if_drop_index: Ture False ， dataframe drop index or not
+    :param collections: mongodb 数据库
+    :return: QA_DataStruct_Stock_min 类型
+    '''
+    if frequence in ['1min', '1m']:
+        frequence = '1min'
+    elif frequence in ['5min', '5m']:
+        frequence = '5min'
+    elif frequence in ['15min', '15m']:
+        frequence = '15min'
+    elif frequence in ['30min', '30m']:
+        frequence = '30min'
+    elif frequence in ['60min', '60m']:
+        frequence = '60min'
+    else:
+        if (verbose):
+            print("QA Error QA_fetch_stock_min_adv parameter frequence=%s is none of 1min 1m 5min 5m 15min 15m 30min 30m 60min 60m" % frequence)
+        return None
+
+    # __data = [] 未使用
+
+    end = start if end is None else end
+    if len(start) == 10:
+        start = '{} 09:30:00'.format(start)
+
+    if len(end) == 10:
+        end = '{} 15:00:00'.format(end)
+
+    if start == end:
+        # 🛠 todo 如果相等，根据 frequence 获取开始时间的 时间段 QA_fetch_stock_min， 不支持start
+        # end是相等的
+        if (verbose):
+            print("QA Error QA_fetch_stock_min_adv parameter code=%s , start=%s, end=%s is equal, should have time span! " % (code,
+                   start,
+                   end))
+        return None
+
+    # 🛠 todo 报告错误 如果开始时间 在 结束时间之后
+
+    res = QA.QA_fetch_stock_min(code, start, end, format='pd', frequence=frequence)
+    if res is None:
+        if (verbose):
+            print("QA Error QA_fetch_stock_min_adv parameter code=%s , start=%s, end=%s frequence=%s call QA_fetch_stock_min return None" % (code,
+                   start,
+                   end,
+                   frequence))
+        return None
+    else:
+        res_set_index = res.set_index(['datetime', 'code'], drop=if_drop_index)
+        # if res_set_index is None:
+        #     print("QA Error QA_fetch_stock_min_adv set index 'datetime, code'
+        #     return None")
+        #     return None
+        return QA_DataStruct_Stock_min(res_set_index)
+
+
+def GQ_fetch_stock_min(symbol, frequence, path='cache', verbose=False):
+    if (isinstance(symbol, list)):
+        symbol = symbol[0]
+
+    mkdirs(os.path.join(path, 'stock'))
+    res = pd.read_hdf(os.path.join(path, 'stock', '{}_{}_kline.hdf'.format(symbol, frequence)), key='df', mode='r')
+    return res
+
+
+def GQ_fetch_stock_features_min(symbol, frequence, path='cache', verbose=False):
+    if (isinstance(symbol, list)):
+        symbol = symbol[0]
+
+    mkdirs(os.path.join(path, 'stock'))
+    res = pd.read_hdf(os.path.join(path, 'stock', '{}_{}_features.hdf'.format(symbol, frequence)), key='df', mode='r')
+    return res
+
+
+def GQ_fetch_index_min(symbol, frequence, path='cache', verbose=False):
+    if (isinstance(symbol, list)):
+        symbol = symbol[0]
+
+    mkdirs(os.path.join(path, 'index'))
+    res = pd.read_hdf(os.path.join(path, 'index', '{}_{}_kline.hdf'.format(symbol, frequence)), key='df', mode='r')
+    return res
+
+
+def GQ_fetch_index_features_min(symbol, frequence, path='cache', verbose=False):
+    if (isinstance(symbol, list)):
+        symbol = symbol[0]
+
+    mkdirs(os.path.join(path, 'index'))
+    res = pd.read_hdf(os.path.join(path, 'index', '{}_{}_features.hdf'.format(symbol, frequence)), key='df', mode='r')
+    return res

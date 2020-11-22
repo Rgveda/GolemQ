@@ -28,6 +28,16 @@ import time
 import threading
 import os
 import sys
+from tqdm import tqdm
+
+try:
+    from joblib import Parallel, delayed
+    import joblib
+    import multiprocessing
+except:
+    print('Some command line args "-c" & "--pct_of_cores" need to run "pip install joblib" before use it.')
+    print('Some command line args "-c" & "--pct_of_cores" need to run "pip install multiprocessing" before use it.')
+    pass
 
 # 命令行分析库
 import argparse
@@ -69,6 +79,7 @@ if __name__ == '__main__':
     parser.add_argument('-k', '--check', help=u"Check code", type=str, default=False,)
     parser.add_argument('-l', '--log', help=u"截图 log", type=str, default=False,)
     parser.add_argument('-n', '--snapshot', help=u"Snapshot 保存图形图像", type=str, default=False,)
+    parser.add_argument('-b', '--briefing', help=u"Fractal briefing", type=str, default=False,)
 
     cmdline_args = parser.parse_args()
     done = False
@@ -100,6 +111,13 @@ if __name__ == '__main__':
                    cpu_usage=cmdline_args.pct_of_cores,
                    verbose=cmdline_args.verbose,
                    eval_range=cmdline_args.eval)
+        done = True
+    elif (cmdline_args.strategy == 'regtree'):
+        from GolemQ.GQBenchmark.regtree import regtree
+        # 怼渠全市场
+        regtree(cpu_usage=cmdline_args.pct_of_cores,
+                verbose=cmdline_args.verbose,
+                eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'uprising'):
         from GolemQ.GQBenchmark.find_uprising import find_uprising
@@ -169,8 +187,14 @@ if __name__ == '__main__':
                        verbose=cmdline_args.verbose,
                        eval_range=cmdline_args.eval)
         done = True
-    elif ((len(cmdline_args.sub) > 0) and \
-        (cmdline_args.sub == 'sina_l1')):
+    elif (cmdline_args.strategy == 'void'):
+        from GolemQ.GQBenchmark.dodge_void import dodge_void
+        dodge_void(cpu_usage=cmdline_args.pct_of_cores,
+                   verbose=cmdline_args.verbose,
+                   eval_range=cmdline_args.eval)
+        done = True
+    elif (cmdline_args.sub != False) and \
+        (cmdline_args.sub == 'sina_l1'):
         if (cmdline_args.codelist != False):
             # 收线，收线
             sub_codelist_l1_from_sina(get_codelist(cmdline_args.codelist))
@@ -178,16 +202,16 @@ if __name__ == '__main__':
             # 收线，收线
             sub_l1_from_sina()
         done = True
-    elif ((len(cmdline_args.sub) > 0) and \
-        (cmdline_args.sub == 'huobi_realtime')):
+    elif (cmdline_args.sub != False) and \
+        (cmdline_args.sub == 'huobi_realtime'):
         # 接收火币实时数据
         from QUANTAXIS.QASU.save_huobi import (
             QA_SU_save_huobi_realtime,
         )
         QA_SU_save_huobi_realtime()
         done = True
-    elif ((len(cmdline_args.sub) > 0) and \
-        (cmdline_args.sub == 'huobi')):
+    elif (cmdline_args.sub != False) and \
+        (cmdline_args.sub == 'huobi'):
         # 接收火币行情历史数据
         from QUANTAXIS.QASU.save_huobi import (
             QA_SU_save_huobi_symbol,
@@ -201,8 +225,8 @@ if __name__ == '__main__':
         QA_SU_save_huobi_1hour()
         QA_SU_save_huobi_1min()
         done = True
-    elif ((len(cmdline_args.sub) > 0) and \
-        (cmdline_args.sub == 'okex')):
+    elif (cmdline_args.sub != False) and \
+        (cmdline_args.sub == 'okex'):
         # 接收OKEx行情历史数据
         from QUANTAXIS.QASU.save_okex import (
             QA_SU_save_okex_symbol,
@@ -219,8 +243,8 @@ if __name__ == '__main__':
         QA_SU_save_okex('300')
         QA_SU_save_okex_1min()
         done = True
-    elif ((len(cmdline_args.sub) > 0) and \
-        (cmdline_args.sub == 'binance')):
+    elif (cmdline_args.sub != False) and \
+        (cmdline_args.sub == 'binance'):
         # 接收币安行情历史数据
         from QUANTAXIS.QASU.save_binance import (
             QA_SU_save_binance_symbol,
@@ -234,83 +258,120 @@ if __name__ == '__main__':
         QA_SU_save_binance_1hour()
         QA_SU_save_binance_1min()
         done = True
-    elif ((len(cmdline_args.sub) > 0) and \
-        (cmdline_args.sub == 'tencent_1min')):
+    elif (cmdline_args.sub != False) and \
+        (cmdline_args.sub == 'tencent_1min'):
         # 收线，收线
         sub_1min_from_tencent_lru()
         done = True
     elif (cmdline_args.check != False):
-        blockname = ['MSCI中国',
-                 'MSCI成份', 
-                 'MSCI概念',
-                 '三网融合',
-                 '上证180', 
-                 '上证380',
-                 '沪深300', 
-                 '上证380', 
-                 '深证300',
-                 '上证50',
-                 '上证电信',
-                 '电信等权',
-                 '上证100',
-                 '上证150',
-                 '沪深300',
-                 '中证100',
-                 '中证500',
-                 '全指消费',
-                 '中小板指',
-                 '创业板指',
-                 '综企指数',
-                 '1000可选',
-                 '国证食品',
-                 '深证可选',
-                 '深证消费',
-                 '深成消费',
-                 '中证酒', 
-                 '中证白酒',
-                 '行业龙头',
-                 '白酒',
-                 '证券', 
-                 '消费100', 
-                 '消费电子', 
-                 '消费金融',
-                 '富时A50',
-                 '银行', 
-                 '中小银行', 
-                 '证券', 
-                 '军工', 
-                 '白酒', 
-                 '啤酒', 
-                 '医疗器械', 
-                 '医疗器械服务', 
-                 '医疗改革', 
-                 '医药商业', 
-                 '医药电商', 
-                 '中药', 
-                 '消费100', 
-                 '消费电子', 
-                 '消费金融',
-                 '黄金', 
-                 '黄金概念',
-                '4G5G', 
-                '5G概念', 
-                '生态农业', 
-                '生物医药', 
-                '生物疫苗',
-                '机场航运',
-                '数字货币', 
-                '文化传媒']
+        blockname = ['MSCI中国', 'MSCI成份', 'MSCI概念', '三网融合',
+                 '上证180', '上证380', '沪深300', '上证380', 
+                 '深证300', '上证50', '上证电信', '电信等权', 
+                 '上证100', '上证150', '沪深300', '中证100',
+                 '中证500', '全指消费', '中小板指', '创业板指',
+                 '综企指数', '1000可选', '国证食品', '深证可选',
+                 '深证消费', '深成消费', '中证酒', '中证白酒',
+                 '行业龙头', '白酒', '证券', '消费100', 
+                 '消费电子', '消费金融', '富时A50', '银行', 
+                 '中小银行', '证券', '军工', '白酒', '啤酒', 
+                 '医疗器械', '医疗器械服务', '医疗改革', '医药商业', 
+                 '医药电商', '中药', '消费100', '消费电子', 
+                 '消费金融', '黄金', '黄金概念', '4G5G', 
+                 '5G概念', '生态农业', '生物医药', '生物疫苗',
+                '机场航运', '数字货币', '文化传媒']
         blockname = list(set(blockname))
         codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code
-        codelist_candidate = [code for code in codelist_candidate if not code.startswith('300')]
+        #codelist_candidate = [code for code in codelist_candidate if not
+        #code.startswith('300')]
+    
+        print('批量评估板块成分股：{}'.format(blockname))
 
-        print('批量评估板块成分股：{} Total:{}'.format(blockname, 
-                                                   len(codelist_candidate)))
-        
         codelist = get_codelist(cmdline_args.check)
         miss_codelist = [item for item in codelist if item not in codelist_candidate]
-        print('\n=====> 以下{}个个股没有进入候选策略计算清单：'.format(len(miss_codelist)), miss_codelist)
+        print('=====> 以下{}个个股没有进入候选策略计算清单：'.format(len(miss_codelist)), miss_codelist)
 
+        print(u'\n Total:{} 正在处理... '.format(len(codelist_candidate)))
+        if (cmdline_args.pct_of_cores == 0):
+            # *** DEMO *** 这里完全是为了测试进度条效果是否正常，并不是真的需要读条
+            try:
+                pbar = tqdm(codelist_candidate, ascii=True)
+                for code in pbar:
+                    pbar.set_description(u"A股({})".format(code))
+                    pbar.update(1)
+
+                    time.sleep(0.5)
+                    pass
+            except KeyboardInterrupt:
+                pbar.close()
+                raise
+            pbar.close()
+        else:
+            cpu_usage = cmdline_args.pct_of_cores
+
+            # 多线程并行处理 DEMO
+            if (cpu_usage > 1):
+                # 如果 cpu_usage 参数大于1，则认为是百分比
+                cpu_usage = cpu_usage / 100
+
+            # 按百分比例分配使用当前主机CPU核心数量，每CPU核心一次性批次读取并处理个股数量
+            max_usage_of_cores, step = int(cpu_usage * multiprocessing.cpu_count()), 5
+
+            print(u'*** Standalone 单机多线程模式 ***')
+            print(u'即将使用 {:.0%} —> {} 个CPU核心进行指定策略的全市场数据并行处理。'.format(cpu_usage, 
+                                                max_usage_of_cores,))
+
+            # *** DEMO *** 这里完全是为了测试进度条效果是否正常，并不是真的需要读条
+            verbose = False
+            portfolio_batch = 'Fooo'
+            codelist_grouped = [(verbose,
+                                 portfolio_batch,
+                                 codelist_candidate[i:i + step]) for i in range(0,
+                                                                          len(codelist_candidate),
+                                                                          step)]
+        
+            def calc_batch_with_dodge_void(codelist,
+                                           portfolio_batch,
+                                           verbose=False):
+                """
+                假负载函数
+                """
+                time.sleep(1.25)
+                pass
+
+            import contextlib
+            
+            @contextlib.contextmanager
+            def tqdm_joblib(tqdm_object):
+                """Context manager to patch joblib to report into tqdm progress bar given as argument"""
+                class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+                    def __init__(self, *args, **kwargs):
+                        super().__init__(*args, **kwargs)
+
+                    def __call__(self, *args, **kwargs):
+                        tqdm_object.set_description(u"A股({})".format(tqdm_object.iterable[tqdm_object.n]))
+                        if ((tqdm_object.n + step) < len(tqdm_object.iterable)):
+                            tqdm_object.update(n=step)  # self.batch_size
+                        else:
+                            tqdm_object.update(n=(len(tqdm_object.iterable) - tqdm_object.n))  # self.batch_size
+                        return super().__call__(*args, **kwargs)
+
+                old_batch_callback = joblib.parallel.BatchCompletionCallBack
+                joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+                try:
+                    yield tqdm_object
+                finally:
+                    joblib.parallel.BatchCompletionCallBack = old_batch_callback
+                    tqdm_object.close()    
+
+            overall_progress = tqdm(codelist_candidate, unit='stock')
+            with tqdm_joblib(overall_progress) as progress_bar:
+                # calc_my_func 是我的策略封装执行回测的函数
+                Parallel(n_jobs=max_usage_of_cores)(delayed(calc_batch_with_dodge_void)(codelist,
+                                                                      portfolio_batch,
+                                                                      verbose) for verbose,
+                             portfolio_batch,
+                             codelist in codelist_grouped)
+            pass
         done = True
     elif (cmdline_args.risk != False):
         from GolemQ.cli.portfolio import portfolio_optimizer
@@ -321,6 +382,9 @@ if __name__ == '__main__':
         else:
             portfolio_optimizer(cmdline_args.risk)
         done = True
+    elif (cmdline_args.briefing != False):
+
+        done = True
 
     if (done == False):
-        print('I think U need Help, Try type "python -m GolemQ.cli Help"')
+        print('I think U need Help, Try type "python -m GolemQ.cli --help"')
