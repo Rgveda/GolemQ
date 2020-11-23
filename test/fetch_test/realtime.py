@@ -29,11 +29,10 @@ from numpy import *
 import numpy as np
 import pandas as pd
 
-from GolemQ.GQUtil.symbol import (
+from GolemQ.utils.symbol import (
     get_codelist,
 )
-from GolemQ.GQFetch.kline import get_kline_price
-from GolemQ.GQFetch.kline import (
+from GolemQ.fetch.kline import (
     get_kline_price,
     get_kline_price_min,
 )

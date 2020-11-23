@@ -24,44 +24,4 @@
 # SOFTWARE.
 #
 
-import datetime
-import numpy as np
-
-try:
-    import talib
-except:
-    print('PLEASE run "pip install TALIB" to call these modules')
-    pass
-try:
-    import QUANTAXIS as QA
-    from QUANTAXIS.QAUtil.QAParameter import ORDER_DIRECTION
-    from QUANTAXIS.QAData.QADataStruct import (QA_DataStruct_Index_min, 
-                                               QA_DataStruct_Index_day, 
-                                               QA_DataStruct_Stock_day, 
-                                               QA_DataStruct_Stock_min)
-    from QUANTAXIS.QAIndicator.talib_numpy import *
-    from QUANTAXIS.QAUtil.QADate_Adv import (
-        QA_util_timestamp_to_str,
-        QA_util_datetime_to_Unix_timestamp,
-        QA_util_print_timestamp
-    )
-    from QUANTAXIS.QAUtil.QALogs import (
-        QA_util_log_info, 
-        QA_util_log_debug, 
-        QA_util_log_expection
-    )
-except:
-    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.cli.okex modules')
-    pass
-
-from GolemQ.utils.parameter import (
-    AKA, 
-    INDICATOR_FIELD as FLD, 
-    TREND_STATUS as ST
-)
-
-
-def realtime_rolling_by_vol():
-    return False
-
 

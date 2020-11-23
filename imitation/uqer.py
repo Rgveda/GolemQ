@@ -38,7 +38,7 @@ from QUANTAXIS.QAUtil.QADate_trade import (
     QA_util_get_real_date,
     trade_date_sse
 )
-from GolemQ.GQUtil.symbol import (
+from GolemQ.utils.symbol import (
     EXCHANGE as EXG
 )
 

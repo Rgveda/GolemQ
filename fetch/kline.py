@@ -46,28 +46,28 @@ try:
         QA_DataStruct_CryptoCurrency_min,
         )
 except:
-    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.GQFetch.kline modules')
+    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.fetch.kline modules')
     pass
 
-from GolemQ.GQUtil.parameter import (
+from GolemQ.utils.parameter import (
     AKA, 
     INDICATOR_FIELD as FLD, 
     TREND_STATUS as ST,
     FEATURES as FTR,
     )
 
-from GolemQ.GQUtil.symbol import (
+from GolemQ.utils.symbol import (
     is_stock_cn, 
     is_furture_cn,
     is_cryptocurrency,
 )
-from GolemQ.GQFetch.StockCN_realtime import (
+from GolemQ.fetch.StockCN_realtime import (
     GQ_fetch_stock_day_realtime_adv,
     GQ_fetch_stock_min_realtime_adv,
     #GQ_fetch_index_day_realtime_adv,
     #GQ_fetch_index_min_realtime_adv,
 )
-from GolemQ.GQUtil.path import (
+from GolemQ.utils.path import (
     mkdirs,
 )
 

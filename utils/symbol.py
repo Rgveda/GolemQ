@@ -26,11 +26,11 @@ import QUANTAXIS as QA
 try:
     import QUANTAXIS as QA
 except:
-    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.GQUtil.symbol modules')
+    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.utils.symbol modules')
     pass
 
 from QUANTAXIS.QAUtil.QACode import (QA_util_code_tostr)
-from GolemQ.GQUtil.const import _const
+from GolemQ.utils.const import _const
     
 class EXCHANGE(_const):
     XSHG = 'XSHG'

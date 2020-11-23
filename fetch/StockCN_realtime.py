@@ -33,11 +33,11 @@ import pymongo
 try:
     import QUANTAXIS as QA
 except:
-    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.GQFetch.StockCN_realtime modules')
+    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.fetch.StockCN_realtime modules')
     pass
 
 try:
-    from GolemQ.GQUtil.parameter import (
+    from GolemQ.utils.parameter import (
         AKA, 
         INDICATOR_FIELD as FLD, 
         TREND_STATUS as ST
@@ -69,7 +69,7 @@ from QUANTAXIS.QAUtil import (
     QASETTING,
     )
 client = QASETTING.client['QAREALTIME']
-from GolemQ.GQUtil.symbol import (
+from GolemQ.utils.symbol import (
     normalize_code
 )
 

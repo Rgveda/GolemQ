@@ -54,7 +54,7 @@ try:
         FIRST_PRIORITY,
     )
 except:
-    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.GQUtil.path modules')
+    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.utils.path modules')
     pass
 
 

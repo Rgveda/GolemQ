@@ -54,10 +54,10 @@ try:
         QA_util_print_timestamp
     )
 except:
-    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.GQFetch.portfolio modules')
+    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.fetch.portfolio modules')
     pass
 
-from GolemQ.GQUtil.parameter import (
+from GolemQ.utils.parameter import (
     AKA, 
     INDICATOR_FIELD as FLD, 
     TREND_STATUS as ST, 

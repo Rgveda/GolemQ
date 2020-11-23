@@ -33,15 +33,15 @@ except:
     print('PLEASE run "pip install QUANTAXIS" before use these modules')
     pass
 
-from GolemQ.GQAnalysis.timeseries import *
-from GolemQ.GQFetch.Portfolio_signals import (
+from GolemQ.analysis.timeseries import *
+from GolemQ.fetch.Portfolio_signals import (
     GQSignal_fetch_position_singal_day, 
     GQSignal_fetch_position_singal_min,
     GQSignal_fetch_flu_cunsum_day,
     GQSignal_fetch_flu_cunsum_min,
     GQSignal_fetch_block_cunsum_day,
 )
-from GolemQ.GQUtil.parameter import (
+from GolemQ.utils.parameter import (
     AKA, 
     INDICATOR_FIELD as FLD,
     TREND_STATUS as ST,
