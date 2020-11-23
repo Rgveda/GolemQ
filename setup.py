@@ -39,7 +39,7 @@ if sys.version_info.major != 3 or sys.version_info.minor not in [5, 6, 7, 8]:
 
 setup(
         name='GolemQ',     # 包名字
-        version='0.0.1',   # 包版本
+        version='0.0.2',   # 包版本
         description='A PowerToys based QUANTAXIS',   # 简单描述
         author='azai',  # 作者
         author_email='11652964@qq.com',  # 作者邮箱

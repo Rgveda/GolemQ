@@ -59,7 +59,7 @@ except:
     print('PLEASE run "pip install QUANTAXIS" before call GolemQ.cli.show_number modules')
     pass
 
-from GolemQ.fetch.Portfolio_signals import (
+from GolemQ.fetch.portfolio_signals import (
     GQSignal_fetch_position_singal_day, 
     GQSignal_fetch_position_singal_min,
     GQSignal_fetch_mainfest_singal_day,
