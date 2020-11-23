@@ -19,7 +19,7 @@ python -m GolemQ.cli --sub sina_l1 --codelist "600783、601069、002152、000582
 
 这里完成的动作包括，读取l1数据，重采样为1min数据，重采样为日线/小时线数据，具体方法为打开 Jupyter，输入
 
-*from GolemQ.GQFetch.kline import \(*
+*from GolemQ.fetch.kline import \(*
     *get_kline_price,*
     *get_kline_price_min,*
 *\)*
