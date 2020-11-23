@@ -302,7 +302,9 @@ def get_codelist(codepool):
     # 清除尾巴
     ret_codelist = [code.strip(',') for code in ret_codelist]
     ret_codelist = [code.strip('\'') for code in ret_codelist]
-
+    ret_codelist = [code.strip('’') for code in ret_codelist]
+    ret_codelist = [code.strip('‘') for code in ret_codelist]
+    
     # 去除重复代码
     ret_codelist = list(set(ret_codelist))
 

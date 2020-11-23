@@ -315,7 +315,6 @@ def sub_codelist_l1_from_sina(codelist:list=None):
     从新浪获取L1数据，3秒更新一次，建议mongodb数据库存放在企业级SSD上面
     （我用Intel DC P3600 800GB SSD，锐龙 3600，每个tick 保存时间 < 0.6s）
     """
-    print(codelist)
     def collections_of_today():
         database = DATABASE.get_collection('realtime_{}'.format(datetime.date.today()))
         database.create_index([('code', QA_util_sql_mongo_sort_ASCENDING)])
@@ -327,24 +326,6 @@ def sub_codelist_l1_from_sina(codelist:list=None):
             #unique=True,
         )
         return database
-
-    def save_X_func():
-        """
-        QUANTAXIS的save X，建议每天下午四~五点收盘后执行
-        """
-        QA_SU_save_stock_day('tdx')
-        QA_SU_save_stock_xdxr('tdx')
-        QA_SU_save_stock_min('tdx')
-        QA_SU_save_index_day('tdx')
-        QA_SU_save_index_min('tdx')
-        QA_SU_save_etf_list('tdx')
-        QA_SU_save_etf_day('tdx')
-        QA_SU_save_etf_min('tdx')
-        QA_SU_save_stock_list('tdx')
-        QA_SU_save_index_list('tdx')
-        QA_SU_save_stock_block('tdx')
-        QA_SU_save_future_list('tdx')
-        pass
 
     quotation = easyquotation.use('sina') # 新浪 ['sina'] 腾讯 ['tencent', 'qq']
 
@@ -378,7 +359,7 @@ def sub_codelist_l1_from_sina(codelist:list=None):
         if QA_util_if_tradetime(_time) or \
             (get_once):  # 如果在交易时间
             l1_ticks = quotation.market_snapshot(prefix=True)
-            l1_ticks_data = formater_l1_ticks(l1_ticks, codelist)
+            l1_ticks_data, symbol_list = formater_l1_ticks(l1_ticks, codelist=codelist)
 
             if (dt.now() < start_time) or \
                 ((len(l1_ticks_data) > 0) and \
@@ -389,13 +370,22 @@ def sub_codelist_l1_from_sina(codelist:list=None):
                 timer.sleep(sleep)
                 continue
 
+            # 获取第二遍，包含上证指数信息
+            l1_ticks = quotation.market_snapshot(prefix=False)
+            l1_ticks_data, symbol_list = formater_l1_ticks(l1_ticks, 
+                                                           codelist=codelist,
+                                                           stacks=l1_ticks_data, 
+                                                           symbol_list=symbol_list)
+
             # 查询是否新 tick
             query_id = {
-                "code": [l1_tick['code'] for l1_tick in l1_ticks_data],
-                "datetime": {
-                    '$in': [l1_tick['datetime'] for l1_tick in l1_ticks_data]
-                }
+                "code": {
+                    '$in': list(set([l1_tick['code'] for l1_tick in l1_ticks_data]))
+                    },
+                "datetime": sorted(list(set([l1_tick['datetime'] for l1_tick in l1_ticks_data])))[-1]
             }
+
+            #print(symbol_list, len(symbol_list))
             refcount = database.count_documents(query_id)
             if refcount > 0:
                 if (len(l1_ticks_data) > 1):
