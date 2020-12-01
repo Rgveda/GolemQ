@@ -35,10 +35,12 @@ except:
 try:
     import QUANTAXIS as QA
     from QUANTAXIS.QAUtil.QAParameter import ORDER_DIRECTION
-    from QUANTAXIS.QAData.QADataStruct import (QA_DataStruct_Index_min, 
-                                               QA_DataStruct_Index_day, 
-                                               QA_DataStruct_Stock_day, 
-                                               QA_DataStruct_Stock_min)
+    from QUANTAXIS.QAData.QADataStruct import (
+        QA_DataStruct_Index_min, 
+        QA_DataStruct_Index_day, 
+        QA_DataStruct_Stock_day, 
+        QA_DataStruct_Stock_min
+    )
     from QUANTAXIS.QAIndicator.talib_numpy import *
     from QUANTAXIS.QAUtil.QADate_Adv import (
         QA_util_timestamp_to_str,

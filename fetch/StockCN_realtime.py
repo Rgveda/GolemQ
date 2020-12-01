@@ -115,7 +115,7 @@ def GQ_fetch_stock_realtime_adv(code=None,
         data = pd.DataFrame(items_from_collections)
         if (suffix == False):
             # 返回代码数据中是否包含交易所代码
-            data['code'] = data.apply(lambda x: x.at['code'][0:6], axis=1)
+            data['code'] = data.apply(lambda x: x.at['code'][:6], axis=1)
         data_set_index = data.set_index(['datetime',
                                          'code'],
                                         drop=False).drop(['_id'],
@@ -140,18 +140,21 @@ def GQ_fetch_stock_day_realtime_adv(codelist,
             pass
         else:
             print("QA Error GQ_fetch_stock_day_realtime_adv parameter codelist is not List type or String type")
-
-    if ((dt.combine(date.today(), 
-                    dt.min.time()) - data_day.data.index.get_level_values(level=0)[-1].to_pydatetime()) > timedelta(hours=10)):
+    start_time = dt.strptime(str(dt.now().date()) + ' 09:15', '%Y-%m-%d %H:%M')
+    if ((dt.now() > start_time) and ((dt.now() - data_day.data.index.get_level_values(level=0)[-1].to_pydatetime()) > timedelta(hours=10))) or \
+        ((dt.now() < start_time) and ((dt.now() - data_day.data.index.get_level_values(level=0)[-1].to_pydatetime()) > timedelta(hours=40))):
         if (verbose == True):
-            print('时间戳差距超过：', dt.combine(date.today(), 
-                                              dt.min.time()) - data_day.data.index.get_level_values(level=0)[-1].to_pydatetime(),
+            print('时间戳差距超过：', dt.now() - data_day.data.index.get_level_values(level=0)[-1].to_pydatetime(),
                   '尝试查找实盘数据....', codelist)
         #print(codelist, verbose)
         try:
-            data_realtime = GQ_fetch_stock_realtime_adv(codelist, num=5000, verbose=verbose)
+            if (dt.now() > start_time):
+                collections = client.get_collection('realtime_{}'.format(date.today()))
+            else:
+                collections = client.get_collection('realtime_{}'.format(date.today() - timedelta(hours=24)))
+            data_realtime = GQ_fetch_stock_realtime_adv(codelist, num=8000, verbose=verbose, suffix=False, collections=collections)
         except: 
-            data_realtime = QA.QA_fetch_stock_realtime_adv(codelist, num=5000, verbose=verbose)
+            data_realtime = QA.QA_fetch_stock_realtime_adv(codelist, num=8000, verbose=verbose)
         if (data_realtime is not None) and \
             (len(data_realtime) > 0):
             # 合并实盘实时数据
@@ -164,7 +167,7 @@ def GQ_fetch_stock_day_realtime_adv(codelist,
             data_realtime['datetime'] = pd.to_datetime(data_realtime['datetime'])
             for code in codelist:
                 # 顺便检查股票行情长度，发现低于30天直接砍掉。
-                if (len(data_day.select_code(code)) < 30):
+                if (len(data_day.select_code(code[:6])) < 30):
                     print(u'{} 行情只有{}天数据，新股或者数据不足，不进行择时分析。'.format(code, 
                                                                    len(data_day.select_code(code))))
                     data_day.data.drop(data_day.select_code(code), inplace=True)
@@ -209,13 +212,22 @@ def GQ_fetch_stock_day_realtime_adv(codelist,
 
                         # issue:成交量计算不正确，成交量计算差距较大，这里尝试处理方法，但是貌似不对
                         data_realtime_1day[AKA.VOLUME] = data_realtime_1min[AKA.VOLUME][-1] / data_realtime_1min[AKA.CLOSE][-1]
-
-                        if (verbose == True):
-                            print(u'追加实时实盘数据，股票代码：{} 时间：{} 价格：{}'.format(data_realtime_1day.index[0][1],
-                                                                                     data_realtime_1day.index[-1][0],
-                                                                                     data_realtime_1day[AKA.CLOSE][-1]))
-                        data_day.data = data_day.data.append(data_realtime_1day, 
-                                                             sort=True)
+                  #      if (len(data_realtime_1day) > 0):
+                  #          print(u'日线 status:',
+                  #          data_day.data.index.get_level_values(level=0)[-1]
+                  #          ==
+                  #          data_realtime_1day.index.get_level_values(level=0)[-1],
+                  #          '时间戳差距超过：', dt.now() -
+                  #          data_day.data.index.get_level_values(level=0)[-1].to_pydatetime(),
+                  #'尝试查找实盘数据....', codelist)
+                  #          print(data_day.data.tail(3), data_realtime_1day)
+                        if (data_day.data.index.get_level_values(level=0)[-1] != data_realtime_1day.index.get_level_values(level=0)[-1]):
+                            if (verbose == True):
+                                print(u'追加实时实盘数据，股票代码：{} 时间：{} 价格：{}'.format(data_realtime_1day.index[0][1],
+                                                                                         data_realtime_1day.index[-1][0],
+                                                                                         data_realtime_1day[AKA.CLOSE][-1]))
+                            data_day.data = data_day.data.append(data_realtime_1day, 
+                                                                 sort=True)
 
     return data_day
 
@@ -239,25 +251,30 @@ def GQ_fetch_stock_min_realtime_adv(codelist,
 
     if data_min is None:
         if verbose:
-            print(u'代码：{} 今天停牌或者已经退市'.format(codelist))  
+            print(u'代码：{} 今天停牌或者已经退市*'.format(codelist))  
         return None
 
     try:
         foo = (dt.now() - data_min.data.index.get_level_values(level=0)[-1].to_pydatetime())
     except:
         if verbose:
-            print(u'代码：{} 今天停牌或者已经退市'.format(codelist))                    
+            print(u'代码：{} 今天停牌或者已经退市**'.format(codelist))                    
         return None
-
-    if ((dt.now() - data_min.data.index.get_level_values(level=0)[-1].to_pydatetime()) > timedelta(hours=10)):
+    start_time = dt.strptime(str(dt.now().date()) + ' 09:15', '%Y-%m-%d %H:%M')
+    if ((dt.now() > start_time) and ((dt.now() - data_min.data.index.get_level_values(level=0)[-1].to_pydatetime()) > timedelta(hours=10))) or \
+        ((dt.now() < start_time) and ((dt.now() - data_min.data.index.get_level_values(level=0)[-1].to_pydatetime()) > timedelta(hours=24))):
         if (verbose == True):
             print('时间戳差距超过：', dt.now() - data_min.data.index.get_level_values(level=0)[-1].to_pydatetime(),
                   '尝试查找实盘数据....', codelist)
         #print(codelist, verbose)
         try:
-            data_realtime = GQ_fetch_stock_realtime_adv(codelist, num=5000, verbose=verbose, suffix=False)
+            if (dt.now() > start_time):
+                collections = client.get_collection('realtime_{}'.format(date.today()))
+            else:
+                collections = client.get_collection('realtime_{}'.format(date.today() - timedelta(hours=24)))
+            data_realtime = GQ_fetch_stock_realtime_adv(codelist, num=8000, verbose=verbose, suffix=False, collections=collections)
         except: 
-            data_realtime = QA.QA_fetch_stock_realtime_adv(codelist, num=5000, verbose=verbose)
+            data_realtime = QA.QA_fetch_stock_realtime_adv(codelist, num=8000, verbose=verbose)
         if (data_realtime is not None) and \
             (len(data_realtime) > 0):
             # 合并实盘实时数据
@@ -272,7 +289,7 @@ def GQ_fetch_stock_min_realtime_adv(codelist,
             for code in codelist:
                 # 顺便检查股票行情长度，发现低于30天直接砍掉。
                 try:
-                    if (len(data_min.select_code(code)) < 30):
+                    if (len(data_min.select_code(code[:6])) < 30):
                         if verbose:
                             print(u'{} 行情只有{}天数据，新股或者数据不足，不进行择时分析。新股买不买卖不卖，建议掷骰子。'.format(code, 
                                                                        len(data_min.select_code(code))))
@@ -280,11 +297,12 @@ def GQ_fetch_stock_min_realtime_adv(codelist,
                         continue
                 except:
                     if verbose:
-                        print(u'代码：{} 今天停牌或者已经退市'.format(code))                    
+                        print(u'代码：{} 今天停牌或者已经退市***'.format(code))                    
                     continue
 
                 # *** 注意，QA_data_tick_resample_1min 函数不支持多标的 *** 需要循环处理
-                data_realtime_code = data_realtime[data_realtime['code'].eq(code)]
+                # 可能出现8位六位股票代码兼容问题
+                data_realtime_code = data_realtime[data_realtime['code'].eq(code[:6])]
                 if (len(data_realtime_code) > 0):
                     data_realtime_code = data_realtime_code.set_index(['datetime']).sort_index()
                     if ('volume' in data_realtime_code.columns) and \
@@ -336,12 +354,19 @@ def GQ_fetch_stock_min_realtime_adv(codelist,
                         #data_realtime_mins =
                         #data_realtime_mins.set_index(['datetime', 'code'],
                         #                                                drop=True).sort_index()
-                        if (verbose == True):
-                            print(u'追加实时实盘数据，股票代码：{} 时间：{} 价格：{}'.format(data_realtime_mins.index[0][1],
-                                                                                     data_realtime_mins.index[-1][0],
-                                                                                     data_realtime_mins[AKA.CLOSE][-1]))
-                        data_min.data = data_min.data.append(data_realtime_mins, 
-                                                             sort=True)
+                  #      if (len(data_realtime_mins) > 0):
+                  #          print(u'分钟线 status:', (dt.now() < start_time), '时间戳差距超过：', dt.now() - data_min.data.index.get_level_values(level=0)[-1].to_pydatetime(),
+                  #'尝试查找实盘数据....', codelist)
+                  #          print(data_min.data.tail(3), data_realtime_mins)
+                        if (data_min.data.index.get_level_values(level=0)[-1] != data_realtime_mins.index.get_level_values(level=0)[-1]):
+                            if (verbose == True):
+                                #print(data_min.data.tail(3), data_realtime_mins)
+                                print(u'追加实时实盘数据，股票代码：{} 时间：{} 价格：{}'.format(data_realtime_mins.index[0][1],
+                                                                                         data_realtime_mins.index[-1][0],
+                                                                                         data_realtime_mins[AKA.CLOSE][-1]))
+                            data_min.data = data_min.data.append(data_realtime_mins, 
+                                                                 sort=True)
+
                         # Amount, Volume 计算不对
     else:
         if (verbose == True):

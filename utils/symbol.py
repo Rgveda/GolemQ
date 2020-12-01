@@ -42,6 +42,12 @@ class EXCHANGE(_const):
 
 
 def normalize_code(symbol, pre_close=None):
+    """
+    归一化证券代码
+
+    :param code 如000001
+    :return 证券代码的全称 如000001.XSHE
+    """
     if (not isinstance(symbol, str)):
         return symbol
 
@@ -68,7 +74,8 @@ def normalize_code(symbol, pre_close=None):
         symbol.startswith('688') or symbol.startswith('900') or \
         (symbol == '751038'))):
         ret_normalize_code = '{}.{}'.format(symbol, EXCHANGE.SH)
-    elif ((len(symbol) == 6) and (symbol[:3] in ['000', '001', '002', '200', '300'])):
+    elif ((len(symbol) == 6) and (symbol[:3] in ['000', '001', '002',
+                                                 '200', '300'])):
         ret_normalize_code = '{}.{}'.format(symbol, EXCHANGE.SZ)
     else:
         print(symbol)
@@ -95,7 +102,8 @@ def is_stock_cn(code):
                     code = try_split_codelist[1]
                 elif (try_split_codelist[1] == 'XSHG') and (len(try_split_codelist[0]) == 6):
                     code = try_split_codelist[0]
-                if (code[:5] in ["00000"]):
+                if (code[:5] in ["00000"]) or \
+                    (code[:3] in ["000"]):
                     return True, QA.MARKET_TYPE.INDEX_CN, 'SH', '上交所指数'
         if code.startswith('60') == True:
             return True, QA.MARKET_TYPE.STOCK_CN, 'SH', '上交所A股'
@@ -361,3 +369,64 @@ def get_block_symbols(blockname, stock_cn_block=None):
         return stock_cn_block.get_block(blockname).code
 
 
+def perpar_symbol_range(eval_range):
+    """
+    返回预设的标的合集
+    """
+    if (eval_range == 'all'):
+        codelist_candidate = QA.QA_fetch_stock_list()
+        if (len(codelist_candidate) > 0):
+            codelist_candidate = codelist_candidate[AKA.CODE].tolist()
+        else:
+            return False
+    elif (eval_range == 'etf'):
+        codelist_candidate = ['159995', '']
+    elif (eval_range == 'hs300'):
+        blockname = ['沪深300']
+        blockname = list(set(blockname))
+        codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code
+    elif (eval_range == 'test'):
+        codepool = ['600104', '300015', '600612', '300750',
+                '600585', '000651', '600436', '002475',
+                '600030', '300760', '000895', '600066',
+                '000661', '600887', '600352', '002352',
+                '000568', '002714', '002415', '002594',
+                '603713', '000858', '601138', '300122',
+                '002179', '601888', '002557', '600036',
+                '002271', '600298', '600276', '600547',
+                '300146', '600660', '600161', '601318',
+                '002050', '600900', '300498', '603515',
+                '002007', '600600', '300059', '601933',
+                '002258', '300715', '603899', '603444',
+                '600031', '000876', '600332', '601877',
+                '603288', '603520', '000333', '600563',
+                '603259', '603517', '600309', '002230',
+                '600009', '600519', '603486', '601100',
+                '300144', '000538', '600486', '002705',
+                '600570', '603129', '000963']
+        codelist_candidate = get_codelist(codepool)
+    else:
+        eval_range = 'blocks'
+        blockname = ['MSCI中国', 'MSCI成份', 'MSCI概念', '三网融合',
+                    '上证180', '上证380', '沪深300', '上证380', 
+                    '深证300', '上证50', '上证电信', '电信等权', 
+                    '上证100', '上证150', '沪深300', '中证100',
+                    '中证500', '全指消费', '中小板指', '创业板指',
+                    '综企指数', '1000可选', '国证食品', '深证可选',
+                    '深证消费', '深成消费', '中证酒', '中证白酒',
+                    '行业龙头', '白酒', '证券', '消费100', 
+                    '消费电子', '消费金融', '富时A50', '银行', 
+                    '中小银行', '证券', '军工', '白酒', '啤酒', 
+                    '医疗器械', '医疗器械服务', '医疗改革', '医药商业', 
+                    '医药电商', '中药', '消费100', '消费电子', 
+                    '消费金融', '黄金', '黄金概念', '4G5G', 
+                    '5G概念', '生态农业', '生物医药', '生物疫苗',
+                    '机场航运', '数字货币', '文化传媒']
+        blockname = list(set(blockname))
+        codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code
+        #codelist_candidate = [code for code in codelist_candidate if not
+        #code.startswith('300')]
+        print('批量评估板块成分股：{} Total:{}'.format(blockname, 
+                                                len(codelist_candidate)))
+
+    return codelist_candidate

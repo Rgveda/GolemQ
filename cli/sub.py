@@ -27,7 +27,7 @@ import json
 import sys
 import websocket
 
-from datetime import datetime as dt, timezone, timedelta
+from datetime import datetime as dt, timezone, timedelta, date
 import datetime
 import time as timer
 import numba as nb
@@ -271,12 +271,14 @@ def sub_l1_from_sina():
                     },
                 "datetime": sorted(list(set([l1_tick['datetime'] for l1_tick in l1_ticks_data])))[-1]
             }
-            #print(sorted(list(set([l1_tick['datetime'] for l1_tick in l1_ticks_data])))[-1])
+            #print(sorted(list(set([l1_tick['datetime'] for l1_tick in
+            #l1_ticks_data])))[-1])
             refcount = database.count_documents(query_id)
             if refcount > 0:
                 if (len(l1_ticks_data) > 1):
                     # 删掉重复数据
-                    #print('Delete', refcount, list(set([l1_tick['datetime'] for l1_tick in l1_ticks_data])))
+                    #print('Delete', refcount, list(set([l1_tick['datetime']
+                    #for l1_tick in l1_ticks_data])))
                     database.delete_many(query_id)
                     database.insert_many(l1_ticks_data)
                 else:
@@ -289,7 +291,8 @@ def sub_l1_from_sina():
             if (get_once != True):
                 print(u'Trading time now 现在是中国A股交易时间 {}\nProcessing ticks data cost:{:.3f}s'.format(dt.now(),
                     (dt.now() - _time).total_seconds()))
-            timer.sleep(sleep)
+            if ((dt.now() - _time).total_seconds() < sleep):
+                timer.sleep(sleep - (dt.now() - _time).total_seconds())
             print('Program Last Time {:.3f}s'.format((dt.now() - _time1).total_seconds()))
             get_once = False
         else:
@@ -401,7 +404,8 @@ def sub_codelist_l1_from_sina(codelist:list=None):
             if (get_once != True):
                 print(u'Trading time now 现在是中国A股交易时间 {}\nProcessing ticks data cost:{:.3f}s'.format(dt.now(),
                     (dt.now() - _time).total_seconds()))
-            timer.sleep(sleep)
+            if ((dt.now() - _time).total_seconds() < sleep):
+                timer.sleep(sleep - (dt.now() - _time).total_seconds())
             print('Program Last Time {:.3f}s'.format((dt.now() - _time1).total_seconds()))
             get_once = False
         else:

@@ -24,6 +24,7 @@
 # SOFTWARE.
 #
 import datetime
+from datetime import datetime as dt, timezone, timedelta
 import os
 
 try:
@@ -131,10 +132,10 @@ def get_kline_price(codelist, start=None, market_type=None, verbose=True):
     #                                      '{}'.format(datetime.date.today()),
     #                                      frequence=frequence)
     if (market_type == QA.MARKET_TYPE.STOCK_CN):
-        start = '{}'.format(datetime.date.today() - datetime.timedelta(days=2500)) if (start is None) else start
+        start = '{}'.format(datetime.date.today() - timedelta(days=2500)) if (start is None) else start
         data_day = QA.QA_fetch_stock_day_adv(codelist,
             start=start,
-            end='{}'.format(datetime.date.today() + datetime.timedelta(days=1)),).to_qfq()
+            end='{}'.format(datetime.date.today() + timedelta(days=1)),).to_qfq()
         #data_day = QA.QA_fetch_stock_day_adv(codelist,
         #                                  '2006-01-01',
         #                                  '{}'.format(datetime.date.today(),)).to_qfq()
@@ -151,26 +152,26 @@ def get_kline_price(codelist, start=None, market_type=None, verbose=True):
         if verbose:
             data_day.data[ST.VERBOSE] = True
     elif (market_type == QA.MARKET_TYPE.CRYPTOCURRENCY):
-        start = '{}'.format(datetime.datetime.now() - datetime.timedelta(hours=3600)) if (start is None) else start
+        start = '{}'.format(datetime.datetime.now() - timedelta(hours=3600)) if (start is None) else start
         data_day = QA.QA_fetch_cryptocurrency_min_adv(code=codelist,
                 start=start,
-                end='{}'.format(datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))) + datetime.timedelta(minutes=1)),
+                end='{}'.format(datetime.datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=1)),
                 frequence='60min')
         #data_hour = data_day =
         #QA.QA_fetch_cryptocurrency_day_adv(code=codelist,
         #        start='2018-01-15',
-        #        end='{}'.format(datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
-        #        + datetime.timedelta(minutes=1)),
+        #        end='{}'.format(datetime.datetime.now(timezone(timedelta(hours=8)))
+        #        + timedelta(minutes=1)),
         #        )
         #data_day =
         #QA.QA_DataStruct_CryptoCurrency_min(data_day.resample('4h'))
         if verbose:
             data_day.data[ST.VERBOSE] = True
     elif (market_type == QA.MARKET_TYPE.INDEX_CN):
-        start = '{}'.format(datetime.date.today() - datetime.timedelta(days=2500)) if (start is None) else start
+        start = '{}'.format(datetime.date.today() - timedelta(days=2500)) if (start is None) else start
         data_day = QA.QA_fetch_index_day_adv(codelist,
             start=start,
-            end='{}'.format(datetime.date.today() + datetime.timedelta(days=1)),)
+            end='{}'.format(datetime.date.today() + timedelta(days=1)),)
         data_day = GQ_fetch_stock_day_realtime_adv(codelist, data_day, verbose=verbose)
         if verbose:
             data_day.data[ST.VERBOSE] = True
@@ -291,10 +292,18 @@ def get_kline_price_min(codelist,
                 codelist if isinstance(codelist, str) else codelist[0:10])
 
     if (market_type == QA.MARKET_TYPE.STOCK_CN):
-        start = '{}'.format(datetime.datetime.now() - datetime.timedelta(hours=19200)) if (start is None) else start
+        start = '{}'.format(datetime.datetime.now() - timedelta(hours=19200)) if (start is None) else start
+
+        start_time = dt.strptime(str(dt.now().date()) + ' 09:15', 
+                                 '%Y-%m-%d %H:%M')
+        if (dt.now() > start_time):
+            end='{}'.format(dt.now(timezone(timedelta(hours=8))) + timedelta(minutes=1))
+        else:
+            end='{}'.format(dt.strptime(str(dt.now(timezone(timedelta(hours=8))).date() - timedelta(hours=24)) + ' 16:30', 
+                           '%Y-%m-%d %H:%M'))
         data_min = GQ_fetch_stock_min_adv(code=codelist,
                 start=start,
-                end='{}'.format(datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))) + datetime.timedelta(minutes=1)),
+                end=end,
                 frequence=frequency)
 
         data_min = GQ_fetch_stock_min_realtime_adv(codelist, data_min, frequency=frequency, verbose=verbose)
@@ -306,18 +315,18 @@ def get_kline_price_min(codelist,
         if verbose:
             data_min.data[ST.VERBOSE] = True
     elif (market_type == QA.MARKET_TYPE.CRYPTOCURRENCY):
-        start = '{}'.format(datetime.datetime.now() - datetime.timedelta(hours=5400)) if (start is None) else start
+        start = '{}'.format(datetime.datetime.now() - timedelta(hours=5400)) if (start is None) else start
         data_min = QA.QA_fetch_cryptocurrency_min_adv(code=codelist,
                 start=start,
-                end='{}'.format(datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))) + datetime.timedelta(minutes=1)),
+                end='{}'.format(datetime.datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=1)),
                 frequence=frequency)
         if verbose:
             data_min.data[ST.VERBOSE] = True
     elif (market_type == QA.MARKET_TYPE.INDEX_CN):
-        start = '{}'.format(datetime.datetime.now() - datetime.timedelta(hours=19200)) if (start is None) else start
+        start = '{}'.format(datetime.datetime.now() - timedelta(hours=19200)) if (start is None) else start
         data_min = QA.QA_fetch_index_min_adv(codelist,
             start=start,
-            end='{}'.format(datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))) + datetime.timedelta(minutes=1)),
+            end='{}'.format(datetime.datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=1)),
             frequence=frequency)
         data_min = GQ_fetch_stock_min_realtime_adv(codelist, data_min, frequency=frequency, verbose=verbose)
         if (data_min is None):

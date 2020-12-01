@@ -56,6 +56,8 @@ class uqer_api():
         self._tradeDate_sse = self._tradeDate_sse.assign(date=pd.to_datetime(self._tradeDate_sse.calendarDate)).drop_duplicates((['date'])).set_index(['date'],
                                    drop=False)
         tradeDate_sse_month_day = self._tradeDate_sse.index.month.values
+
+        # 月末最后一天，优矿系统的专有特征
         self._tradeDate_sse['isMonthEnd'] = np.where(tradeDate_sse_month_day != np.r_[tradeDate_sse_month_day[1:], 
                                                                                       tradeDate_sse_month_day[-1]], 1, 0)
         return super().__init__(*args, **kwargs)

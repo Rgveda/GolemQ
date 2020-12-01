@@ -62,7 +62,7 @@ except:
     print('PLEASE run "pip install QUANTAXIS" before call GolemQ.cli.portfolio modules')
     pass
 
-from GolemQ.indices.base import *
+from GolemQ.indices.indices import *
 from GolemQ.cli.show_number import (
     position,
 )
@@ -203,7 +203,8 @@ def portfolio_optimizer(rm='CVaR',
 
         ##print(frontier.T.head())
 
-        #ax = plf.plot_frontier_area(w_frontier=frontier, cmap="tab20", height=6,
+        #ax = plf.plot_frontier_area(w_frontier=frontier, cmap="tab20",
+        #height=6,
         #width=10, ax=None)
 
         #plt.show()

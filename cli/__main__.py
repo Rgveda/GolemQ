@@ -105,7 +105,7 @@ if __name__ == '__main__':
         print(u'没实现')
         done = True
     elif (cmdline_args.strategy == 'onewavelet'):
-        from GolemQ.GQBenchmark.onewavelet import onewavelet
+        from GolemQ.benchmark.onewavelet import onewavelet
         # 怼渠全市场
         onewavelet(frequency=cmdline_args.frequency, 
                    cpu_usage=cmdline_args.pct_of_cores,
@@ -113,28 +113,28 @@ if __name__ == '__main__':
                    eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'regtree'):
-        from GolemQ.GQBenchmark.regtree import regtree
+        from GolemQ.benchmark.regtree import regtree
         # 怼渠全市场
         regtree(cpu_usage=cmdline_args.pct_of_cores,
                 verbose=cmdline_args.verbose,
                 eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'uprising'):
-        from GolemQ.GQBenchmark.find_uprising import find_uprising
+        from GolemQ.benchmark.find_uprising import find_uprising
         # 怼渠全市场
         find_uprising(cpu_usage=cmdline_args.pct_of_cores,
                    verbose=cmdline_args.verbose,
                    eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'sharpe'):
-        from GolemQ.GQBenchmark.sharpe import calc_sharpe
+        from GolemQ.benchmark.sharpe import calc_sharpe
         # 怼渠全市场
         calc_sharpe(cpu_usage=cmdline_args.pct_of_cores,
                    verbose=cmdline_args.verbose,
                    eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'onewavelet_day'):
-        from GolemQ.GQBenchmark.onewavelet import onewavelet
+        from GolemQ.benchmark.onewavelet import onewavelet
         # 怼渠全市场日线
         onewavelet(frequency = 'day', 
                    cpu_usage=cmdline_args.pct_of_cores,
@@ -142,7 +142,7 @@ if __name__ == '__main__':
                    eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'onewavelet_all'):
-        from GolemQ.GQBenchmark.onewavelet import onewavelet
+        from GolemQ.benchmark.onewavelet import onewavelet
         # 怼渠全市场日线
         onewavelet(frequency = 'day', 
                    cpu_usage=cmdline_args.pct_of_cores,
@@ -150,7 +150,7 @@ if __name__ == '__main__':
                    eval_range='all')
         done = True
     elif (cmdline_args.strategy == 'onewavelet_neo'):
-        from GolemQ.GQBenchmark.onewavelet import onewavelet
+        from GolemQ.benchmark.onewavelet import onewavelet
         # 怼渠全市场
         onewavelet_neo(frequency = 'day', 
                    cpu_usage=cmdline_args.pct_of_cores,
@@ -158,7 +158,7 @@ if __name__ == '__main__':
                    eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'scale_patterns'):
-        from GolemQ.GQBenchmark.scale_patterns import scale_patterns
+        from GolemQ.benchmark.scale_patterns import scale_patterns
         # 怼渠
         scale_patterns(frequency=cmdline_args.frequency, 
                        cpu_usage=cmdline_args.pct_of_cores,
@@ -166,14 +166,14 @@ if __name__ == '__main__':
                        eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'scale_patterns_day'):
-        from GolemQ.GQBenchmark.scale_patterns import scale_patterns
+        from GolemQ.benchmark.scale_patterns import scale_patterns
         scale_patterns(frequency = 'day', 
                        cpu_usage=cmdline_args.pct_of_cores,
                        verbose=cmdline_args.verbose,
                        eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'gostrike'):
-        from GolemQ.GQBenchmark.gostrike import gostrike
+        from GolemQ.benchmark.gostrike import gostrike
         # 怼渠
         gostrike(frequency=cmdline_args.frequency, 
                        cpu_usage=cmdline_args.pct_of_cores,
@@ -181,14 +181,14 @@ if __name__ == '__main__':
                        eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'gostrike_day'):
-        from GolemQ.GQBenchmark.gostrike import gostrike
+        from GolemQ.benchmark.gostrike import gostrike
         gostrike(frequency = 'day', 
                        cpu_usage=cmdline_args.pct_of_cores,
                        verbose=cmdline_args.verbose,
                        eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'void'):
-        from GolemQ.GQBenchmark.dodge_void import dodge_void
+        from GolemQ.benchmark.dodge_void import dodge_void
         dodge_void(cpu_usage=cmdline_args.pct_of_cores,
                    verbose=cmdline_args.verbose,
                    eval_range=cmdline_args.eval)
