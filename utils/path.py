@@ -73,32 +73,56 @@ basepath = os.getcwd()
 path = os.path.expanduser('~')
 user_path = '{}{}{}'.format(path, os.sep, '.GolemQ')
 #cache_path = os.path.join(user_path, 'datastore', 'cache')
-
-def cache_path(dirname):
-    ret_cache_path = os.path.join(user_path, 'datastore', 'cache', dirname)
+def cache_path(dirname, portable=False):
+    """
+    返回本地用户目录下的'.GolemQ'为根目录的缓存临时文件目录，如果 portable 参数等于 True，
+    则返回程序代码启动目录为根目录的缓存目录。
+    """
+    if (portable):
+        ret_cache_path = os.path.join(basepath, 'datastore', 'cache', dirname)
+    else:
+        ret_cache_path = os.path.join(user_path, 'datastore', 'cache', dirname)
     if not (os.path.exists(ret_cache_path) and \
         os.path.isdir(ret_cache_path)):
-        print(u'文件夹',dirname,'不存在，重新建立')
+        #print(u'文件夹',dirname,'不存在，重新建立')
         #os.mkdir(dirname)
-        os.makedirs(ret_cache_path)
+        try:
+            os.makedirs(ret_cache_path)
+        except:
+            # 如果目录已经存在，那么可能是并发冲突，当做什么事情都没发生
+            if not (os.path.exists(ret_cache_path)):
+                # 否则继续触发异常
+                os.makedirs(os.path.join(ret_cache_path))
     return ret_cache_path
 
 
 def mkdirs_user(dirname):
     if not (os.path.exists(os.path.join(user_path, dirname)) and \
         os.path.isdir(os.path.join(user_path, dirname))):
-        print(u'文件夹',dirname,'不存在，重新建立')
+        #print(u'文件夹',dirname,'不存在，重新建立')
         #os.mkdir(dirname)
-        os.makedirs(os.path.join(user_path, dirname))
+        try:
+            os.makedirs(os.path.join(user_path, dirname))
+        except:
+            # 如果目录已经存在，那么可能是并发冲突，当做什么事情都没发生
+            if not (os.path.join(user_path, dirname)):
+                # 否则继续触发异常
+                os.makedirs(os.path.join(user_path, dirname))
     return os.path.join(user_path, dirname)
 
 
 def mkdirs(dirname):
     if not (os.path.exists(os.path.join(basepath, dirname)) and \
         os.path.isdir(os.path.join(basepath, dirname))):
-        print(u'文件夹',dirname,'不存在，重新建立')
+        #print(u'文件夹',dirname,'不存在，重新建立')
         #os.mkdir(dirname)
-        os.makedirs(os.path.join(basepath, dirname))
+        try:
+            os.makedirs(os.path.join(basepath, dirname))
+        except:
+            # 如果目录已经存在，那么可能是并发冲突，当做什么事情都没发生
+            if not (os.path.exists(os.path.join(basepath, dirname))):
+                # 否则继续触发异常
+                os.makedirs(os.path.join(basepath, dirname))
     return os.path.join(basepath, dirname)
 
 
@@ -358,7 +382,8 @@ def export_hdf_metadata(export_path, code, frequence='60min', metadata=None):
     else:
         print(os.path.join(export_path, '{}_{}.hdf5'.format(code, frequence)),
               metadata.tail(10))
-        #metadata.to_hdf(os.path.join(export_path, '{}_{}.hdf5'.format(code, frequence)), key='df', mode='w')
+        #metadata.to_hdf(os.path.join(export_path, '{}_{}.hdf5'.format(code,
+        #frequence)), key='df', mode='w')
         metadata.to_pickle(os.path.join(export_path, '{}_{}.hdf5'.format(code, frequence)))
     return metadata
 
@@ -376,7 +401,8 @@ def export_metadata_to_pickle(export_path, code, frequence='60min', metadata=Non
     else:
         print(os.path.join(export_path, '{}_{}.pickle'.format(code, frequence)),
               metadata.tail(3))
-        #metadata.to_hdf(os.path.join(export_path, '{}_{}.hdf5'.format(code, frequence)), key='df', mode='w')
+        #metadata.to_hdf(os.path.join(export_path, '{}_{}.hdf5'.format(code,
+        #frequence)), key='df', mode='w')
         metadata.to_pickle(os.path.join(export_path, '{}_{}.pickle'.format(code, frequence)))
     return metadata
 
@@ -462,23 +488,23 @@ def export_hdf_min(code, market_type, export_path='export', features=None):
 
     return data_day.data
 
-def load_cache(filename = 'cache.pickle'):
+def load_cache(filename='cache.pickle'):
     filename = filename.replace(' ', '_').replace(':', '_')
     metadata = pd.read_pickle(os.path.join(mkdirs(os.path.join('cache')), filename))
     return metadata
 
-def save_cache(filename = 'cache.pickle', metadata = None):
+def save_cache(filename='cache.pickle', metadata=None):
     filename = filename.replace(' ', '_').replace(':', '_')
     metadata = metadata.to_pickle(os.path.join(mkdirs(os.path.join('cache')), filename))
     return filename
 
 
-def load_snapshot_cache(dirpath, filename = 'cache.pickle'):
+def load_snapshot_cache(dirpath, filename='cache.pickle'):
     filename = filename.replace(' ', '_').replace(':', '_')
     metadata = pd.read_pickle(os.path.join(mkdirs(dirpath), filename))
     return metadata
 
-def save_snapshot_cache(dirpath, filename = 'cache.pickle', metadata = None):
+def save_snapshot_cache(dirpath, filename='cache.pickle', metadata=None):
     filename = filename.replace(' ', '_').replace(':', '_')
     metadata = metadata.to_pickle(os.path.join(mkdirs(dirpath), filename))
     return os.path.join(mkdirs(dirpath), filename)

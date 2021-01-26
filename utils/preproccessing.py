@@ -22,11 +22,197 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-
 import numpy as np
 import pandas as pd
 import scipy as sp
 from sklearn import preprocessing as skp
+
+from GolemQ.utils.parameter import (
+    AKA, 
+    INDICATOR_FIELD as FLD, 
+    TREND_STATUS as ST,
+    FEATURES as FTR,
+    )
+
+
+def prepar_feature_conditions(features,
+                              model='xgboost_baseline'):
+    if (model == 'xgboost_baseline') or \
+        (model.startswith('xgboost_baseline')):
+        features['FTR_01'] = features[FLD.DRAWDOWN_RATIO_MAJOR] + features[FLD.DRAWDOWN_RATIO] + features[FLD.MAPOWER30_MAJOR]
+        features['FTR_02'] = features[FLD.MAPOWER30_MAJOR] + features[FLD.HMAPOWER120_MAJOR] + features[FLD.MAPOWER30]
+        features['COND_01'] = (features[FLD.NEGATIVE_LOWER_PRICE_BEFORE] > features[FLD.MAPOWER30_PEAK_LOW_BEFORE])
+        features['COND_02'] = (features[FLD.MAPOWER_BASELINE] > features[FLD.MAPOWER_BASELINE].shift(8))
+        features['COND_03'] = (features[FLD.ATR_LB] > features[FLD.BOLL_LB])
+        features['COND_04'] = ((features[FLD.ATR_LB] - features[FLD.BOLL_LB]) > (features[FLD.ATR_LB].shift(1) - features[FLD.BOLL_LB].shift(1))) 
+        features['COND_05'] = (features[FLD.MA120] > features[FLD.MA90])
+        features['COND_06'] = (features[FLD.MAPOWER30_PEAK_LOW_BEFORE] < features[FLD.MAPOWER30_PEAK_HIGH_BEFORE]) & \
+                                ((features[FLD.MAPOWER30_PEAK_LOW_BEFORE] + features[FLD.DEADPOOL_REMIX_TIMING_LAG]) < 0) & \
+                                ((features[FLD.MAPOWER_HMAPOWER120_TIMING_LAG] + features[FLD.DEADPOOL_REMIX_TIMING_LAG]) < 0)
+        features['COND_07'] = (features[FLD.DEA] < features[FLD.MACD_PEAK_LOW_BACKWARD])
+        features['COND_08'] = ((features[FLD.ATR_LB] > features[FLD.ATR_LB].shift(1)) & \
+                                    (features[FLD.BOLL_LB] > features[FLD.BOLL_LB].shift(1)))
+        features['COND_09'] = (features[FLD.POLYNOMIAL9] < features[FLD.ATR_LB])
+        features['COND_10'] = ((features[FLD.BOLL_LB_HMA5_TIMING_LAG] + features[FLD.DEADPOOL_REMIX_TIMING_LAG]) > 0)
+        features['COND_11'] = (features[FLD.HMAPOWER120_MAJOR] > features[FLD.MAPOWER30_MAJOR])
+        features['COND_12'] = (features[FLD.ATR_LB] > features[FLD.ATR_LB].shift(1)) & \
+                                    ((features[FLD.BOLL_LB] > features[FLD.BOLL_LB].shift(1)) | \
+                                    (features[FLD.BOLL_DELTA] > 0))
+    elif (model == 'xgboost_uprising') or \
+        (model.startswith('xgboost_uprising')):
+        features['FTR_01'] = features[FLD.DRAWDOWN_RATIO_MAJOR] + features[FLD.DRAWDOWN_RATIO] + features[FLD.MAPOWER30_MAJOR]
+        features['FTR_02'] = features[FLD.MAPOWER30_MAJOR] + features[FLD.HMAPOWER120_MAJOR] + features[FLD.MAPOWER30]
+        features['COND_01'] = (features[FLD.NEGATIVE_LOWER_PRICE_BEFORE] > features[FLD.MAPOWER30_PEAK_LOW_BEFORE])
+        features['COND_02'] = (features[FLD.MAPOWER_BASELINE] > features[FLD.MAPOWER_BASELINE].shift(8))
+        features['COND_03'] = (features[FLD.ATR_LB] > features[FLD.BOLL_LB])
+        features['COND_04'] = ((features[FLD.ATR_LB] - features[FLD.BOLL_LB]) > (features[FLD.ATR_LB].shift(1) - features[FLD.BOLL_LB].shift(1))) 
+        features['COND_05'] = (features[FLD.MA120] > features[FLD.MA90])
+        features['COND_06'] = (features[FLD.MAPOWER30_PEAK_LOW_BEFORE] < features[FLD.MAPOWER30_PEAK_HIGH_BEFORE]) & \
+                                ((features[FLD.MAPOWER30_PEAK_LOW_BEFORE] + features[FLD.DEADPOOL_REMIX_TIMING_LAG]) < 0) & \
+                                ((features[FLD.MAPOWER_HMAPOWER120_TIMING_LAG] + features[FLD.DEADPOOL_REMIX_TIMING_LAG]) < 0)
+        features['COND_07'] = (features[FLD.DEA] < features[FLD.MACD_PEAK_LOW_BACKWARD])
+        features['COND_08'] = ((features[FLD.ATR_LB] > features[FLD.ATR_LB].shift(1)) & \
+                              (features[FLD.BOLL_LB] > features[FLD.BOLL_LB].shift(1)))
+        features['COND_09'] = (features[FLD.POLYNOMIAL9] < features[FLD.ATR_LB])
+        features['COND_10'] = ((features[FLD.BOLL_LB_HMA5_TIMING_LAG] + features[FLD.DEADPOOL_REMIX_TIMING_LAG]) > 0)
+        features['COND_11'] = (features[FLD.HMAPOWER120_MAJOR] > features[FLD.MAPOWER30_MAJOR])
+        features['COND_12'] = (features[FLD.ATR_LB] > features[FLD.ATR_LB].shift(1)) & \
+                                    ((features[FLD.BOLL_LB] > features[FLD.BOLL_LB].shift(1)) | \
+                                    (features[FLD.BOLL_DELTA] > 0))
+        features['COND_13'] = (features[FLD.MACD_ZERO_TIMING_LAG] > 0) & \
+                              (features[FLD.HMAPOWER120_TIMING_LAG] < 0)
+        features['COND_14'] = (features[FLD.MAINFEST_UPRISING_COEFFICIENT] > 0) & \
+            (features[FLD.MAINFEST_UPRISING_COEFFICIENT] > features[FLD.DEA_ZERO_TIMING_LAG])
+        features['COND_15'] = (features[FLD.MAPOWER30_TIMING_LAG_MAJOR] > 0) & \
+            (features[FLD.MAPOWER30_TIMING_LAG_MAJOR] > features[FLD.DEA_ZERO_TIMING_LAG])
+        features['COND_16'] = (features[FLD.HMAPOWER120_TIMING_LAG_MAJOR] > 0) & \
+            (features[FLD.HMAPOWER120_TIMING_LAG_MAJOR] < np.minimum(features[FLD.MAPOWER30_PEAK_LOW_BEFORE],
+                                                                     features[FLD.MAPOWER30_PEAK_LOW_BEFORE_MAJOR]))
+        features['COND_17'] = (features[FLD.MA90] > features[FLD.MA120]) & \
+                      (((features[FLD.MA90_CLEARANCE_TIMING_LAG] + features[FLD.MAINFEST_UPRISING_TIMING_LAG]) > 0) | \
+                      (((features[FLD.MA90_TREND_TIMING_LAG] + features[FLD.MAINFEST_UPRISING_TIMING_LAG]) > 0) & \
+                      (features[FLD.MA90_CLEARANCE] > -0.618) & \
+                      (features[FLD.MA_CHANNEL] < 0.0382)))
+        features['COND_18'] = ((features[FLD.MAPOWER30_PEAK_LOW_BEFORE] + features[FLD.DEADPOOL_REMIX_TIMING_LAG]) < 0)
+        features['COND_19'] = ((features[FLD.HMAPOWER120_PEAK_LOW_BEFORE] + features[FLD.DEADPOOL_REMIX_TIMING_LAG]) < 0)
+        
+    return features
+
+
+def feature_names(model='xgboost_baseline'):
+    ret_feature_names = []
+    if (model == 'xgboost_baseline') or \
+        (model.startswith('xgboost_baseline')):
+        ret_feature_names = [FLD.NEGATIVE_LOWER_PRICE_BEFORE,
+            FLD.DEA_ZERO_TIMING_LAG,
+            FLD.DIF_ZERO_TIMING_LAG,
+            FLD.MACD_ZERO_TIMING_LAG,
+            FLD.DEA_INTERCEPT_TIMING_LAG,
+            FLD.MACD_INTERCEPT,
+            FLD.CCI,
+            FLD.RSI,
+            FLD.PEAK_OPEN,
+            FLD.MAXFACTOR,
+            FLD.MAPOWER30,
+            FLD.HMAPOWER120,
+            FLD.MAPOWER30_MAJOR,
+            FLD.HMAPOWER120_MAJOR,
+            FLD.HMA10_CLEARANCE,
+            FLD.HMA10_CLEARANCE_ZSCORE,
+            FLD.PEAK_LOW_TIMING_LAG,
+            FLD.BOLL_LB_HMA5_TIMING_LAG,
+            FLD.BOLL_JX_RSI,
+            FLD.BOLL_JX_MAXFACTOR,
+            FLD.BOLL_JX_MAPOWER30,
+            FLD.BOLL_JX_HMAPOWER120,
+            FLD.DRAWDOWN_RATIO,
+            FLD.DRAWDOWN_RATIO_MAJOR,
+            FLD.MAPOWER30_TIMING_LAG_MAJOR,
+            FLD.MAPOWER_BASELINE_TIMING_LAG_MAJOR,
+            FLD.MAINFEST_UPRISING_COEFFICIENT,
+            FTR.BOOTSTRAP_ENHANCED_TIMING_LAG,
+            FLD.DEADPOOL_REMIX_TIMING_LAG,
+            FLD.DEADPOOL_CANDIDATE_TIMING_LAG,
+            FLD.MAPOWER30_TIMING_LAG,
+            FLD.HMAPOWER120_TIMING_LAG,
+            FLD.POLYNOMIAL9_TIMING_LAG,
+            FLD.ZEN_WAVELET_TIMING_LAG,
+            'FTR_01',
+            'FTR_02',
+            'COND_01',
+            'COND_02',
+            'COND_03',
+            'COND_04',
+            'COND_05',
+            'COND_06',
+            'COND_07',
+            'COND_08',
+            'COND_09',
+            'COND_10',
+            'COND_11',
+            'COND_12',]
+    elif (model == 'xgboost_uprising') or \
+        (model.startswith('xgboost_uprising')):
+        ret_feature_names = [FLD.NEGATIVE_LOWER_PRICE_BEFORE,
+            FLD.DEA_ZERO_TIMING_LAG,
+            FLD.DIF_ZERO_TIMING_LAG,
+            FLD.MACD_ZERO_TIMING_LAG,
+            FLD.DEA_INTERCEPT_TIMING_LAG,
+            FLD.MACD_INTERCEPT,
+            FLD.CCI,
+            FLD.RSI,
+            FLD.PEAK_OPEN,
+            FLD.MAXFACTOR,
+            FLD.MAPOWER30,
+            FLD.HMAPOWER120,
+            FLD.MAPOWER30_MAJOR,
+            FLD.HMAPOWER120_MAJOR,
+            FLD.HMA10_CLEARANCE,
+            FLD.HMA10_CLEARANCE_ZSCORE,
+            FLD.PEAK_LOW_TIMING_LAG,
+            FLD.BIAS3,
+            FLD.BIAS3_TREND_TIMING_LAG,
+            FLD.LINEAREG_BAND_TIMING_LAG,
+            FLD.BOLL_LB_HMA5_TIMING_LAG,
+            FLD.BOLL_JX_RSI,
+            FLD.BOLL_JX_MAXFACTOR,
+            FLD.BOLL_JX_MAPOWER30,
+            FLD.BOLL_JX_HMAPOWER120,
+            FLD.DRAWDOWN_RATIO,
+            FLD.DRAWDOWN_RATIO_MAJOR,
+            FLD.MAPOWER30_TIMING_LAG_MAJOR,
+            FLD.MAPOWER_BASELINE_TIMING_LAG_MAJOR,
+            FLD.MAINFEST_UPRISING_COEFFICIENT,
+            FTR.BOOTSTRAP_ENHANCED_TIMING_LAG,
+            FLD.DEADPOOL_REMIX_TIMING_LAG,
+            FLD.DEADPOOL_CANDIDATE_TIMING_LAG,
+            FLD.MAPOWER30_TIMING_LAG,
+            FLD.HMAPOWER120_TIMING_LAG,
+            FLD.POLYNOMIAL9_TIMING_LAG,
+            FLD.ZEN_WAVELET_TIMING_LAG,
+            'FTR_01',
+            'FTR_02',
+            'COND_01',
+            'COND_02',
+            'COND_03',
+            'COND_04',
+            'COND_05',
+            'COND_06',
+            'COND_07',
+            'COND_08',
+            'COND_09',
+            'COND_10',
+            'COND_11',
+            'COND_12',
+            'COND_13',
+            'COND_14',
+            'COND_15',
+            'COND_16',
+            'COND_17',
+            'COND_18',
+            'COND_19',]
+    return ret_feature_names
+
 
 def winsorize_quantile(factor, up, down):
     '''

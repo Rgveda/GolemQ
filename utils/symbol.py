@@ -77,8 +77,14 @@ def normalize_code(symbol, pre_close=None):
     elif ((len(symbol) == 6) and (symbol[:3] in ['000', '001', '002',
                                                  '200', '300'])):
         ret_normalize_code = '{}.{}'.format(symbol, EXCHANGE.SZ)
+    elif symbol.startswith('XSHG'):
+        ret_normalize_code = '{}.{}'.format(symbol[5:], EXCHANGE.SH)
+    elif symbol.startswith('XSHE'):
+        ret_normalize_code = '{}.{}'.format(symbol[5:], EXCHANGE.SZ)
+    elif (symbol.endswith('XSHG') or symbol.endswith('XSHE')):
+        ret_normalize_code = symbol
     else:
-        print(symbol)
+        print(u'normalize_code():', symbol)
         ret_normalize_code = symbol
 
     return ret_normalize_code
@@ -91,7 +97,7 @@ def is_stock_cn(code):
     """
     code = str(code)
     if code[0] in ['5', '6', '9'] or \
-        code[:3] in ["009", "126", "110", "201", "202", "203", "204"] or \
+        code[:3] in ["009", "126", "110", "201", "202", "203", "204", '688'] or \
         (code.startswith('XSHG')) or \
         (code.endswith('XSHG')):
         if (code.startswith('XSHG')) or \
@@ -107,6 +113,8 @@ def is_stock_cn(code):
                     return True, QA.MARKET_TYPE.INDEX_CN, 'SH', '上交所指数'
         if code.startswith('60') == True:
             return True, QA.MARKET_TYPE.STOCK_CN, 'SH', '上交所A股'
+        elif code.startswith('688') == True:
+            return True, QA.MARKET_TYPE.STOCK_CN, 'SH', '上交所科创板'
         elif code.startswith('900') == True:
             return True, QA.MARKET_TYPE.STOCK_CN, 'SH', '上交所B股'
         elif code.startswith('50') == True:
@@ -114,6 +122,7 @@ def is_stock_cn(code):
         elif code.startswith('51') == True:
             return True, QA.MARKET_TYPE.FUND_CN, 'SH', '上交所ETF基金'
         else:
+            print(code, True, None, 'SH', '上交所未知代码')
             return True, None, 'SH', '上交所未知代码'
     elif code[0] in ['0', '2', '3'] or \
         code[:3] in ['000', '001', '002', '200', '300', '159'] or \
@@ -127,6 +136,8 @@ def is_stock_cn(code):
                 return True, QA.MARKET_TYPE.STOCK_CN, 'SZ', '深交所主板'
         if code.startswith('002') == True:
             return True, QA.MARKET_TYPE.STOCK_CN, 'SZ', '深交所中小板'
+        elif code.startswith('003') == True:
+            return True, QA.MARKET_TYPE.STOCK_CN, 'SZ', '中广核？？'
         elif code.startswith('159') == True:
             return True, QA.MARKET_TYPE.FUND_CN, 'SZ', '深交所ETF基金'
         elif code.startswith('200') == True:
@@ -139,8 +150,10 @@ def is_stock_cn(code):
             (code.endswith('XSHE')):
              pass
         else:
+            print(code, True, None, 'SZ', '深交所未知代码')
             return True, None, 'SZ', '深交所未知代码'
     else:
+        print(code, '不知道')
         return False, None, None, None
 
 def is_furture_cn(code):
@@ -326,6 +339,8 @@ def get_block_symbols(blockname, stock_cn_block=None):
     """
     if (stock_cn_block is None):
         stock_cn_block = QA.QA_fetch_stock_block_adv() 
+
+    # 追加指标/行业ETF基金代码和上下游相关企业
     blockset = {'军工': ['150182', '512660', '512560', '512710'],
                 '银行': ['512800', '515020', '159933', '512730', '515820', '515280'],
                 '医疗': ['512170',],
@@ -337,7 +352,11 @@ def get_block_symbols(blockname, stock_cn_block=None):
                 '白酒': ['512690'],
                 '文化传媒': ['512980', '159805'],
                 '传媒': ['512980', '159805'],
+                '疫苗': ['600529'],
+                '生物疫苗': ['600529'],
                 }
+
+    # 这几类上市公司主营业务比较确定，不需要额外过滤
     blockset['银行'].extend(stock_cn_block.get_block(['银行', '中小银行']).code)
     blockset['证券'].extend(stock_cn_block.get_block(['证券']).code)
 
@@ -347,24 +366,69 @@ def get_block_symbols(blockname, stock_cn_block=None):
     blockset['机场航运'] = stock_cn_block.get_block(['机场航运', '航运']).code
     blockset['航运'] = stock_cn_block.get_block(['机场航运', '航运']).code
 
+    # 这几类鱼龙混杂，不少是“号称”，必须使用行业龙头/机构持股/指标成份过滤基本面
     lockheed = list(set(stock_cn_block.get_block(['军工']).code).intersection(stock_cn_block.get_block(['国防军工']).code))
-    blockset['军工'].extend(list(set(lockheed).intersection(stock_cn_block.get_block(['行业龙头', '证金持股']).code)))
+    blockset['军工'].extend(list(set(lockheed).intersection(stock_cn_block.get_block(['行业龙头', 
+                                                                                 '保险重仓', 
+                                                                                 'MSCI成份',
+                                                                                 'QFII重仓',
+                                                                                 '信托重仓',
+                                                                                 '券商重仓',
+                                                                                 '基金重仓',
+                                                                                 '社保重仓',
+                                                                                 '证金持股']).code)))
 
     # 这个问题是“生物疫苗”，和"医疗器械"是否算医疗类
     medic = stock_cn_block.get_block(['生物医药', '医疗器械', '医疗改革', '医药商业']).code
-    blockset['医疗'].extend(list(set(medic).intersection(stock_cn_block.get_block(['行业龙头', '证金持股']).code)))
+    blockset['医疗'].extend(list(set(medic).intersection(stock_cn_block.get_block(['行业龙头', 
+                                                                                 '保险重仓', 
+                                                                                 'MSCI成份',
+                                                                                 'QFII重仓',
+                                                                                 '信托重仓',
+                                                                                 '券商重仓',
+                                                                                 '基金重仓',
+                                                                                 '社保重仓',
+                                                                                 '证金持股']).code)))
     blockset['医药'] = blockset['医疗']
 
+    vaccine = stock_cn_block.get_block(['生物疫苗']).code
+    blockset['疫苗'].extend(list(set(vaccine).intersection(stock_cn_block.get_block(['行业龙头', 
+                                                                                 '保险重仓', 
+                                                                                 'MSCI成份',
+                                                                                 'QFII重仓',
+                                                                                 '信托重仓',
+                                                                                 '券商重仓',
+                                                                                 '基金重仓',
+                                                                                 '社保重仓',
+                                                                                 '证金持股']).code)))
+    blockset['生物疫苗'] = blockset['疫苗']
+
     culture = stock_cn_block.get_block(['文化传媒', '传媒', '传播与文化产业',]).code
-    blockset['文化传媒'].extend(list(set(culture).intersection(stock_cn_block.get_block(['行业龙头', '证金持股']).code)))
+    blockset['文化传媒'].extend(list(set(culture).intersection(stock_cn_block.get_block(['行业龙头', 
+                                                                                 '保险重仓', 
+                                                                                 'MSCI成份',
+                                                                                 'QFII重仓',
+                                                                                 '信托重仓',
+                                                                                 '券商重仓',
+                                                                                 '基金重仓',
+                                                                                 '社保重仓',
+                                                                                 '证金持股']).code)))
     blockset['传媒'] = blockset['文化传媒']
 
     gold = stock_cn_block.get_block(['黄金概念', '黄金']).code
-    blockset['黄金'].extend(list(set(gold).intersection(stock_cn_block.get_block(['行业龙头', '证金持股']).code)))
+    blockset['黄金'].extend(list(set(gold).intersection(stock_cn_block.get_block(['行业龙头', 
+                                                                                 '保险重仓', 
+                                                                                 'MSCI成份',
+                                                                                 'QFII重仓',
+                                                                                 '信托重仓',
+                                                                                 '券商重仓',
+                                                                                 '基金重仓',
+                                                                                 '社保重仓',
+                                                                                 '证金持股']).code)))
     blockset['黄金概念'] = blockset['黄金']
 
     if (blockname in blockset.keys()):
-        return blockset[blockname]
+        return list(set(blockset[blockname]))
     else:
         return stock_cn_block.get_block(blockname).code
 
@@ -380,11 +444,39 @@ def perpar_symbol_range(eval_range):
         else:
             return False
     elif (eval_range == 'etf'):
-        codelist_candidate = ['159995', '']
+        codelist_candidate = ['159919', '159997', '159805', '159987', 
+               '159952', '159920', '518880', '159934', 
+               '159985', '515050', '159994', '159941', 
+               '512800', '515000', '512170', '512980', 
+               '510300', '513100', '510900', '512690', 
+               '510050', '159916', '512910', '510310', 
+               '512090', '513050', '513030', '513500', 
+               '159905', '159949', '510330', '510500', 
+               '510180', '159915', '510810', '159901', 
+               '512710', '510850', '512500', '512000',
+               '513900', '513090']
+    elif (eval_range == 'csindex'):
+        codelist_candidate = ['000001.XSHG', 
+                      '000002.XSHG', '000003.XSHG', '000004.XSHG', '000849.XSHG'
+                      '000005.XSHG', '000006.XSHG', '000007.XSHG', '000009.XSHG',
+                      '000009.XSHG', '000010.XSHG', '000015.XSHG', '000016.XSHG',  
+                      '000036.XSHG', '000037.XSHG', '000038.XSHG', '000039.XSHG',  
+                      '000040.XSHG', '000300.XSHG', '000112.XSHG', '000133.XSHG', 
+                      '000903.XSHG', '000905.XSHG', '000906.XSHG', '000993.XSHG', 
+                      '000989.XSHG', '000990.XSHG', '000991.XSHG', '000992.XSHG', 
+                      '399001', '399006', '399997', '399987', 
+                      '399396', '399384', '399684', '399616',
+                      '399240', '399976', '399005', '000934.XSHG',
+                      '399248', '399811', '399810', '000863.XSHG',
+                      '399989', '399935', '399808', '399932', 
+                      '399804', '399928', '399998', '399934',
+                      '399967', '399986', '399933', '399233',
+                      '399699', '399959',]
     elif (eval_range == 'hs300'):
         blockname = ['沪深300']
         blockname = list(set(blockname))
-        codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code
+        codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code + perpar_symbol_range('test')
+        codelist_candidate = list(set(codelist_candidate))
     elif (eval_range == 'test'):
         codepool = ['600104', '300015', '600612', '300750',
                 '600585', '000651', '600436', '002475',
@@ -403,10 +495,24 @@ def perpar_symbol_range(eval_range):
                 '603259', '603517', '600309', '002230',
                 '600009', '600519', '603486', '601100',
                 '300144', '000538', '600486', '002705',
-                '600570', '603129', '000963']
+                '600570', '603129', '000963', '600738', 
+                '600529', 
+                '002129', '002041', '603816', '600009',
+                '300677', '002304', '600893', '603185']
         codelist_candidate = get_codelist(codepool)
+    elif (eval_range == 'sz150'):
+        blockname = ['上证150', '上证50', '深证300']
+        blockname = list(set(blockname))
+        codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code + perpar_symbol_range('test')
+        codelist_candidate = list(set(codelist_candidate))
+    elif (eval_range == 'zz500'):
+        blockname = ['中证500']
+        blockname = list(set(blockname))
+        codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code + perpar_symbol_range('test')
+        codelist_candidate = list(set(codelist_candidate))
     else:
         eval_range = 'blocks'
+        #blockname = ['中证500', '创业板50', '上证50', '上证150', '深证300']
         blockname = ['MSCI中国', 'MSCI成份', 'MSCI概念', '三网融合',
                     '上证180', '上证380', '沪深300', '上证380', 
                     '深证300', '上证50', '上证电信', '电信等权', 
@@ -426,7 +532,101 @@ def perpar_symbol_range(eval_range):
         codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code
         #codelist_candidate = [code for code in codelist_candidate if not
         #code.startswith('300')]
+        codelist_candidate = list(set(codelist_candidate))
         print('批量评估板块成分股：{} Total:{}'.format(blockname, 
                                                 len(codelist_candidate)))
 
     return codelist_candidate
+
+
+def stock_list_terminated():
+    """
+    获取退市股代码列表
+    """
+    import akshare as ak
+    stock_info_sz_delist_df = ak.stock_info_sz_delist(indicator=u"终止上市公司")
+    print(stock_info_sz_delist_df)
+
+    stock_info_sh_delist_df = ak.stock_info_sh_delist(indicator=u"终止上市公司")
+    print(stock_info_sh_delist_df)
+
+
+def get_sz150s():
+    from GolemQ.utils.clawer import get_csindex_stocklist_from_sina
+    stocklist = get_csindex_stocklist_from_sina()
+    stocklist['blockname'] = '上证150'
+    #print(stocklist)
+    return stocklist
+
+
+if __name__ == '__main__':
+    from QUANTAXIS.QACmd import QA_SU_save_stock_block
+    from QUANTAXIS.QAFetch import QA_fetch_get_stock_block
+    from QUANTAXIS.QAUtil import (
+        DATABASE,
+        QASETTING,
+        QA_util_log_info, 
+        QA_util_log_debug, 
+        QA_util_log_expection,
+        QA_util_to_json_from_pandas
+    )    
+
+    client=DATABASE
+    coll = client.stock_block
+    coll.create_index('code')
+
+    #stock_block = QA_fetch_get_stock_block('tdx')
+    #print(stock_block)
+    #coll.insert_many(
+    #    QA_util_to_json_from_pandas(stock_block)
+    #)
+    #from QUANTAXIS.QAFetch.QATushare import QA_fetch_get_stock_block as QATushare_fetch_get_stock_block
+    #codelist = QATushare_fetch_get_stock_block()
+    #print(codelist)
+    #client=DATABASE
+    #coll = client.stock_block
+    #coll.create_index('code')
+    #coll.insert_many(
+    #    QA_util_to_json_from_pandas(codelist)
+    #)
+    #codelist = get_sz150s()
+    #print(codelist)
+    #coll.insert_many(
+    #    QA_util_to_json_from_pandas(codelist)
+    #)
+    #QA_SU_save_stock_block('tdx')    
+    blockname = ['中证500']
+    blockname = list(set(blockname))
+    codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code
+    codelist_candidate = list(set(codelist_candidate))
+    print(blockname,
+          codelist_candidate)
+    
+    blockname = ['创业板50']
+    blockname = list(set(blockname))
+    codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code
+    codelist_candidate = list(set(codelist_candidate))
+    print(blockname,
+          codelist_candidate)
+
+    blockname = ['上证50']
+    blockname = list(set(blockname))
+    codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code
+    codelist_candidate = list(set(codelist_candidate))
+    print(blockname,
+          codelist_candidate)
+
+    blockname = ['上证150']
+    blockname = list(set(blockname))
+    codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code
+    codelist_candidate = list(set(codelist_candidate))
+    print(blockname,
+          codelist_candidate)
+
+    blockname = ['深证300']
+    blockname = list(set(blockname))
+    codelist_candidate = QA.QA_fetch_stock_block_adv().get_block(blockname).code
+    codelist_candidate = list(set(codelist_candidate))
+    print(blockname,
+          codelist_candidate)
+    

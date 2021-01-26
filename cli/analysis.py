@@ -143,7 +143,7 @@ def position(portfolio:str='myportfolio',
                                                                                          x[FLD.BOOTSTRAP_COMBO_MINOR_TIMING_LAG]), 
                                                          axis=1)
     position_signals[u'力量/仓位'] = position_signals.apply(lambda x: '{:.1%}/{:.1%}'.format(x[FLD.COMBINE_DENSITY],
-                                                                                              x[FLD.LEVERAGE_ONHOLD]), 
+                                                                                            x[FLD.LEVERAGE_ONHOLD]), 
                                                          axis=1)
     position_signals[u'买点/偏离'] = position_signals.apply(lambda x: '{:d}/{:.1%}'.format(x[ST.TRIGGER_RPS],
                                                                                           x[FLD.BIAS3_ZSCORE]), 

@@ -67,15 +67,19 @@ if __name__ == '__main__':
     # 处理命令行参数
     parser.add_argument("-v", "--verbose", help=u"increase output verbosity 更多显示信息", action="store_true", default=False)
     parser.add_argument('-t', '--strategy', help=u"strategy will be evaluated 执行单一策略", type=str, default=False,)
+    parser.add_argument('-x', '--train', help=u"训练识别典型主升浪概率的xgboost模型", action="store_true", default=False,)
     parser.add_argument('-e', '--eval', help=u"[all,etf,index,block,fast] will be evaluated 执行评估模式[all=全体A股，etf=主要etf，index=中证系列指数，block=重要指标股(默认)，fast=重要指标股，无仓位和止损控制]", type=str, default='fast')
     parser.add_argument("-f", "--frequency", help=u"frequency 交易周期频率", type=str, default='60min',)
     parser.add_argument('-p', '--portfolio', help=u"portfolio will be evaluated 策略组合方案", type=str, default='uprising',)
     parser.add_argument('-c', '--pct_of_cores', help=u"percentage of CPU cores will be used. 并行计算时最大CPU占用率", type=int, default=0,)
     parser.add_argument('-C', '--codelist', help=u"Codelist 指定 Code 列表", type=str, default=False,)
     parser.add_argument('-s', '--show', help=u"Show Me a Numer. 显示指定策略的选股结果", type=str, default=False,)
+    parser.add_argument('-X', '--save', help=u"save stock data", type=str, default=False,)
+    parser.add_argument('-i', '--shift', help=u"时移信号计算. 显示指定策略的时移选股结果", type=int, default=0,)
+    parser.add_argument('-I', '--csindex', help=u"A股指数 + 时移信号计算. 显示A股指数的时移大盘趋势判断结果", type=int, default=0,)
     parser.add_argument('-S', '--sub', help=u"Subscibe stock. with ws server ip 接收实盘行情", type=str, default=False,)
     parser.add_argument('-r', '--risk', help=u"risk portfolio optimizer 策略仓位优化", type=str, default=False,)
-    parser.add_argument('-m', '--moneyflow', help=u"moneyflow 资金流向", type=str, default=False,)
+    parser.add_argument('-m', '--mark', help=u"Mark uprising", action="store_true", default=False,)
     parser.add_argument('-k', '--check', help=u"Check code", type=str, default=False,)
     parser.add_argument('-l', '--log', help=u"截图 log", type=str, default=False,)
     parser.add_argument('-n', '--snapshot', help=u"Snapshot 保存图形图像", type=str, default=False,)
@@ -91,24 +95,50 @@ if __name__ == '__main__':
         # 比我一只Number啦
         show_me_number(cmdline_args.strategy)
         done = True
-    elif (cmdline_args.moneyflow == 'eastmoney'):    		
-				# 东方财富爬虫
-				# from QUANTAXIS.QASU.main import (
-				#     QA_SU_crawl_eastmoney
-				# )
-
-        # 比我一只Number啦
-        QA_SU_crawl_eastmoney(action='zjlx', stockCode='all')
+    elif (cmdline_args.csindex > 0):
+        from GolemQ.benchmark.csindex import csindex
+        print(u'执行指令动作：在\'{}\'范围内寻找并使用csindex寻找主升浪'.format(cmdline_args.eval))
+        csindex(cpu_usage=cmdline_args.pct_of_cores,
+                verbose=cmdline_args.verbose,
+                shift=cmdline_args.csindex,
+                eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.snapshot == 'snapshot'):
         # 评估
         print(u'没实现')
+        done = True
+    elif (cmdline_args.mark == True) or \
+        (cmdline_args.strategy == 'markup'):
+        # 评估
+        from GolemQ.benchmark.mark_uprising import mark_uprising
+        # 怼渠全市场
+        print(u'执行指令动作：在\'{}\'范围内寻找并标记典型主升浪'.format(cmdline_args.eval))
+        mark_uprising(cpu_usage=cmdline_args.pct_of_cores,
+                   verbose=cmdline_args.verbose,
+                   eval_range=cmdline_args.eval)
+        done = True
+    elif (cmdline_args.train == True) or \
+        (cmdline_args.strategy == 'train_xgboost'):
+        # 评估
+        from GolemQ.benchmark.train_xgboost import train_xgboost
+        # 怼渠全市场
+        print(u'执行指令动作：在\'{}\'范围内训练识别典型主升浪概率的xgboost模型'.format(cmdline_args.eval))
+        train_xgboost(cpu_usage=cmdline_args.pct_of_cores,
+                      verbose=cmdline_args.verbose,
+                      eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'onewavelet'):
         from GolemQ.benchmark.onewavelet import onewavelet
         # 怼渠全市场
         onewavelet(frequency=cmdline_args.frequency, 
                    cpu_usage=cmdline_args.pct_of_cores,
+                   verbose=cmdline_args.verbose,
+                   eval_range=cmdline_args.eval)
+        done = True
+    elif (cmdline_args.strategy == 'block'):
+        from GolemQ.benchmark.find_block import find_block
+        # 怼渠全市场
+        find_block(cpu_usage=cmdline_args.pct_of_cores,
                    verbose=cmdline_args.verbose,
                    eval_range=cmdline_args.eval)
         done = True
@@ -122,9 +152,24 @@ if __name__ == '__main__':
     elif (cmdline_args.strategy == 'uprising'):
         from GolemQ.benchmark.find_uprising import find_uprising
         # 怼渠全市场
-        find_uprising(cpu_usage=cmdline_args.pct_of_cores,
-                   verbose=cmdline_args.verbose,
-                   eval_range=cmdline_args.eval)
+        if (cmdline_args.eval in ['csindex', 'etf', 'test', 'fast', 'hs300', 'zz500', 'sz150']):
+            find_uprising(cpu_usage=cmdline_args.pct_of_cores,
+                          verbose=cmdline_args.verbose,
+                          eval_range=cmdline_args.eval)
+        elif (cmdline_args.eval in ['600031', '603444', '603713', '002557', '002352', '000963', '600436']):
+            find_uprising(cpu_usage=cmdline_args.pct_of_cores,
+                          verbose=cmdline_args.verbose,
+                          eval_range=cmdline_args.eval)
+        else:
+            print(u'invalid eval range')
+        done = True
+    elif (cmdline_args.shift > 0.5):
+        from GolemQ.benchmark.shift import shifting
+        # 怼渠全市场
+        shifting(cpu_usage=cmdline_args.pct_of_cores,
+                 verbose=cmdline_args.verbose,
+                 shift=cmdline_args.shift,
+                 eval_range=cmdline_args.eval)
         done = True
     elif (cmdline_args.strategy == 'sharpe'):
         from GolemQ.benchmark.sharpe import calc_sharpe
@@ -257,6 +302,43 @@ if __name__ == '__main__':
         QA_SU_save_binance_1day()
         QA_SU_save_binance_1hour()
         QA_SU_save_binance_1min()
+        done = True
+    elif (cmdline_args.save == 'stock_block'):
+        from QUANTAXIS.QACmd import QA_SU_save_stock_block
+        from QUANTAXIS.QAFetch import QA_fetch_get_stock_block
+        from QUANTAXIS.QAUtil import (
+            DATABASE,
+            QASETTING,
+            QA_util_log_info, 
+            QA_util_log_debug, 
+            QA_util_log_expection,
+            QA_util_to_json_from_pandas
+        )    
+
+        client=DATABASE
+        client.drop_collection('stock_block')
+        coll = client.stock_block
+        coll.create_index('code')
+
+        stock_block = QA_fetch_get_stock_block('tdx')
+        print(stock_block)
+        coll.insert_many(
+            QA_util_to_json_from_pandas(stock_block)
+        )
+
+        from QUANTAXIS.QAFetch.QATushare import QA_fetch_get_stock_block as QATushare_fetch_get_stock_block
+        codelist = QATushare_fetch_get_stock_block()
+        print(codelist)
+        coll.insert_many(
+            QA_util_to_json_from_pandas(codelist)
+        )
+        
+        from GolemQ.utils.symbol import get_sz150s
+        codelist = get_sz150s()
+        print(codelist)
+        coll.insert_many(
+            QA_util_to_json_from_pandas(codelist)
+        )
         done = True
     elif (cmdline_args.sub != False) and \
         (cmdline_args.sub == 'tencent_1min'):
