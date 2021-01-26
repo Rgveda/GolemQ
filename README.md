@@ -28,7 +28,7 @@ python setup.py install
 
 来源新浪财经的A股实盘行情 l1快照数据
 
-在 repo 根目录下面，输入：
+在 repo 根目录(假设在\usr\local\目录)下面，输入：
 
 python -m GolemQ.cli --sub sina_l1
 
@@ -52,19 +52,27 @@ python -m GolemQ.cli --sub sina_l1 --codelist "600783、601069、002152、000582
 
 *data_day, codename = get_kline_price_min\("6003444", verbose=False\)*
 
+### 获取中证500，上证150成分列表，并保存到 stock_block 表中
+
+在 repo 根目录(假设在\usr\local\目录)下面，输入：
+
+python -m GolemQ.cli --save stock_block
+
 ### 已知Bug：
 
 上证指数 000001 实盘走势和平安银行混淆。 目前已经修正 ——2020.11.22
 
-成交量：Volumne和Amount 计算方式不对。
+成交量：Volumne和Amount 计算方式不对。 目前已经修正 ——2021.01.03
 
-未能正确处理 *000001.XSHG 600519.SH* 这类格式的代码，能返回K线数据，但是不含今日实盘数据
+未能正确处理 *000001.XSHG 600519.SH* 这类格式的代码，能返回K线数据，但是不含今日实盘数据  目前已经修正 ——2021.01.03
 
 ### 常见问题
 
 无法运行命令
 
-*PS C:\Users\azai\source\repos\GolemQ> python -m GolemQ.cli --sub sina_l1*
+(Win) *PS C:\Users\azai\source\repos\GolemQ> python -m GolemQ.cli --sub sina_l1*
+
+(Linux) *root@5fd969fd8928:/usr/local/GolemQ# python -m GolemQ.cli --save stock_block*
 
 提示
 
@@ -72,11 +80,16 @@ python -m GolemQ.cli --sub sina_l1 --codelist "600783、601069、002152、000582
 while finding module specification for 'GolemQ.cli' 
 (ModuleNotFoundError: No module named 'GolemQ')*
 
+*/usr/local/bin/python: Error while finding module specification for 'GolemQ.cli' 
+(ModuleNotFoundError: No module named 'GolemQ')*
+
 解决方法输入 cd .. 切换到上一层目录
 
-*PS C:\Users\azai\source\repos\GolemQ> cd ..*
+(Win) *PS C:\Users\azai\source\repos\GolemQ> cd ..*
 
-*PS C:\Users\azai\source\repos> python -m GolemQ.cli --sub sina_l1*
+(Win) *PS C:\Users\azai\source\repos> python -m GolemQ.cli --sub sina_l1*
+
+(Linux) *root@5fd969fd8928:/usr/local# python -m GolemQ.cli --save stock_block*
 
 Program Last Time 3.762s
 
