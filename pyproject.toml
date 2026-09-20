@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "GolemQ"
+version = "0.1.0"
+description = "A Python package for quantum-inspired algorithms"
+requires-python = ">=3.12"
+authors = [
+    {name = "acai", email = "4910163@qq.com"},
+]

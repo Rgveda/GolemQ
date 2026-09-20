@@ -1,0 +1,35 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Legacy codebase kept as the refactoring reference (not part of the new tree)
+GolemQ_old/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Claude Flow runtime state (metrics, sessions, neural data)
+.claude-flow/
+
+# Personal Claude Code settings (project-shared .claude/settings.json is tracked)
+.claude/settings.local.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp

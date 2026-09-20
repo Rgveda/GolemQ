@@ -1,0 +1,1 @@
+"""GolemQ CLI module."""
