@@ -77,7 +77,7 @@ class BROKER_TYPE():
     随机(按算法/分布随机生成行情)/仅用于训练测试
     """
 
-    BACKETEST = 'backtest'
+    BACKTEST = 'backtest'
     SIMULATION = 'simulation'
     REAL = 'real'
     RANDOM = 'random'

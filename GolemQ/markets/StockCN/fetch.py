@@ -184,7 +184,7 @@ focus_block = [
 ]
 
 
-def perpar_symbol_range(eval_range, verbose=True):
+def prepare_symbol_range(eval_range, verbose=True):
     """
     返回预设的标的合集
     """

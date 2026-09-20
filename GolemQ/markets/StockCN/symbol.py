@@ -97,7 +97,7 @@ def normalize_code(symbol, pre_close=None, market_type=None):
     :return 证券代码的全称 如000001.XSHE
     """
     if (isinstance(symbol, list)):
-        return [normalize_code(each_symbo) for each_symbo in symbol]
+        return [normalize_code(each_symbol) for each_symbol in symbol]
     elif (not isinstance(symbol, str)):
         return symbol
     else:
@@ -172,8 +172,8 @@ def is_stock_cn(code):
     """
     symbol = code
     if (isinstance(code, list)):
-        for ecach_code in code:
-            return is_stock_cn(ecach_code)
+        for each_code in code:
+            return is_stock_cn(each_code)
 
     code = str(code)
     if (len(code) == 0):
@@ -277,7 +277,7 @@ def is_stock_cn(code):
         return False, None, None, None
 
 
-def is_furture_cn(code):
+def is_future_cn(code):
     if code[:2] in ['IH', 'IF', 'IC', 'TF', 'JM', 'PP', 'EG', 'CS',
                     'AU', 'AG', 'SC', 'CU', 'AL', 'ZN', 'PB', 'SN', 'NI',
                     'RU', 'RB', 'HC', 'BU', 'FU', 'SP',
@@ -506,7 +506,7 @@ def stock_cn_blacklist():
                      '002260', '002359', '002450', '002710',
                      '002720', '002711', '300362', '300156',
                      '600485', '603302',]
-    ret_banedlist = ['602227', '693690', '688688',]
+    ret_bannedlist = ['602227', '693690', '688688',]
 
     # 新股发行流程中，需要代码定期检查是否挂牌交易(存在暴雷可能性)
     ret_brandnew_list = ['301005', '301001', '600905', '688067',
@@ -521,7 +521,7 @@ def stock_cn_blacklist():
                          '688276', '688690', '688345', '601665',
                          '301004', '301013', '300991', '688682',
                          '688260']
-    return list(set(ret_blacklist + ret_banedlist + ret_brandnew_list))
+    return list(set(ret_blacklist + ret_bannedlist + ret_brandnew_list))
 
 
 def GQ_util_firstDayTrading(codelist: list):

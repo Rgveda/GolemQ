@@ -43,7 +43,7 @@ class xtQmtTrader:
             account_type='STOCK',
             is_slippage=True, slippage=0.01) -> None:
         '''
-        简化版的qmt_trder方便大家做策略的开发类的继承
+        简化版的qmt_trader方便大家做策略的开发类的继承
         '''
         self.xt_trader = ''
         self.acc = ''

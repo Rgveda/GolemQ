@@ -325,7 +325,7 @@ def calc_stock_hourly_kline_align(
     return stock_hourly_feats
 
 
-def calc_stock_matadata_missing_queris(
+def calc_stock_metadata_missing_queries(
     features: pd.DataFrame = None,
     verbose: bool = False,
     collections=DATABASE_GolemQ.stock_wencai_metadata_missing_queries,

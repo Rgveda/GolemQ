@@ -88,7 +88,7 @@ except ImportError:
 
 def calc_4Quad_push_credit(features):
     """
-    Calculate quandrant push credit scores.
+    Calculate quadrant push credit scores.
 
     Parameters
     ----------

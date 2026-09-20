@@ -41,7 +41,7 @@ from .realtime import (
 from .symbol import (
     is_stock_cn,
     normalize_code,
-    is_furture_cn,
+    is_future_cn,
     GQ_fetch_stock_info,
     GQ_fetch_etf_name, 
     GQ_fetch_stock_name,
@@ -184,7 +184,7 @@ __all__ = [
     'StockCN',
     'normalize_code',
     'is_stock_cn',
-    'is_furture_cn',
+    'is_future_cn',
     'GQ_etf_a_spot_em',
     'GQ_stock_a_spot_em',
     'GQ_fetch_etf_name',
