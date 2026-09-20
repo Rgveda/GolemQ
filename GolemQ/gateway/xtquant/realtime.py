@@ -31,9 +31,7 @@ from datetime import (
     timedelta,
 )
 from collections import deque
-from QUANTAXIS.QAUtil.QADate_trade import (
-        QA_util_if_tradetime as GQ_util_if_tradetime,
-)
+from GolemQ.markets.StockCN.date_utils import GQ_util_if_tradetime
 import pandas as pd
 from pymongo import UpdateOne
 import time as timer

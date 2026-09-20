@@ -361,3 +361,36 @@ def GQ_util_timestamp_to_str(ts_epoch=None, local_tz=None):
 
     # 数值时间戳
     return dt.fromtimestamp(float(ts_epoch), local_tz).strftime('%Y-%m-%d %H:%M:%S')
+
+
+def GQ_util_get_pre_trade_date(cursor_date=None, n: int = 1) -> str:
+    """前 n 个交易日。行为对齐 ``QUANTAXIS.QAUtil.QADate_trade.QA_util_get_pre_trade_date``。
+
+    ⚠️ **两处反直觉，都是原样对齐，不要"改对"**：
+
+    1. **非交易日向后找，不是向前。** 名字叫 ``pre``，但 2024-01-06（周六）
+       返回的是 **2024-01-08（下周一）**，不是上一个交易日。
+    2. **默认 ``n=1``**，即默认不含当天 —— 与其他日期助手的 ``n=0`` 默认不同。
+
+    >>> GQ_util_get_pre_trade_date('2024-01-02', 0)   # 交易日本身
+    '2024-01-02'
+    >>> GQ_util_get_pre_trade_date('2024-01-02', 1)   # 前一个交易日
+    '2023-12-29'
+    >>> GQ_util_get_pre_trade_date('2024-01-06', 0)   # 周六 → 下周一（不是上一个）
+    '2024-01-08'
+    """
+    sse = TRADE_DATE_SSE
+    if not cursor_date:
+        cursor_date = dt.today().strftime('%Y-%m-%d')
+    else:
+        cursor_date = pd.Timestamp(cursor_date).strftime('%Y-%m-%d')
+
+    if cursor_date in sse:
+        return sse[sse.index(cursor_date) - n]
+
+    # 原实现走 QA_util_get_real_date(cursor_date, towards=1)，
+    # 语义即「向后找第一个交易日」—— 照搬，不改成向前。
+    for day in sse:
+        if day > cursor_date:
+            return sse[sse.index(day) - n]
+    raise ValueError(f'{cursor_date} 之后没有交易日了（TRADE_DATE_SSE 覆盖不足？）')

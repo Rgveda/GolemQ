@@ -59,13 +59,10 @@ from .symbol import (
     GQ_fetch_stock_name,
     GQ_fetch_etf_name,
 )
-try:
-    from QUANTAXIS.QAUtil.QADate_Adv import (
-        QA_util_timestamp_to_str,
-    )
-except Exception:
-    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.analysis.machinelearning modules')
-    pass
+# 时间戳格式化已本地化（GQ_util_timestamp_to_str 实测与 QA 版同值）。
+# 原先包 try/except 是因为「没装 QUANTAXIS 就不 import」—— 现已无必要，
+# 而且那层保护会把真正的导入错误吞掉。
+from GolemQ.markets.StockCN.date_utils import GQ_util_timestamp_to_str
 from QUANTAXIS.QAData.QADataStruct import (
         QA_DataStruct_Index_min,
         QA_DataStruct_Index_day,
@@ -788,7 +785,7 @@ def get_kline_price_min(
     if verbose:
         print(
             u'{} 开始读取{}分钟K线历史数据'.format(
-                QA_util_timestamp_to_str()[2:16],
+                GQ_util_timestamp_to_str()[2:16],
                 market_type_desc),
             codelist if isinstance(codelist, str) else codelist[0:10])
 
@@ -1103,7 +1100,7 @@ def get_kline_price_min(
         data_min.data = fix_incorrect_1300_time(data_min.data)
 
     if verbose:
-        print(u'{} get_kline_price_min() 读取{}分钟K线历史数据完毕'.format(QA_util_timestamp_to_str()[2:16],
+        print(u'{} get_kline_price_min() 读取{}分钟K线历史数据完毕'.format(GQ_util_timestamp_to_str()[2:16],
                                         market_type_desc), 
                 codelist[-10:])
         if (data_min is not None) and (len(data_min.data.query("volume<1")) > 0):
@@ -1244,7 +1241,7 @@ def get_kline_price_v3(
 
     if verbose:
         print(u'{} 开始读取{}日K线历史数据'.format(
-            QA_util_timestamp_to_str()[2:16], 
+            GQ_util_timestamp_to_str()[2:16], 
             market_type_desc),
             codelist if isinstance(codelist, str) else codelist[0:10])
     if (market_type == MARKET_TYPE.STOCK_CN):
@@ -1548,7 +1545,7 @@ def get_kline_price_v3(
             print(f'\nget_kline_price_v3 detected zero_trading:{nan_sum}')
             print(zero_trading)
 
-        print(u'{} get_kline_price_v3() 读取{}日K线历史数据完毕'.format(QA_util_timestamp_to_str()[2:16],
+        print(u'{} get_kline_price_v3() 读取{}日K线历史数据完毕'.format(GQ_util_timestamp_to_str()[2:16],
                                         market_type_desc), 
                 codelist[-10:], '查询 {} 名称'.format(market_type_desc))
     

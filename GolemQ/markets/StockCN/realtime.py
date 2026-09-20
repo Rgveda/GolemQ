@@ -69,9 +69,9 @@ try:
 except ImportError:
     print('PLEASE run "pip install QUANTAXIS" before call GolemQ.cli modules')
     pass
-from QUANTAXIS.QAUtil.QADate_trade import (
-    QA_util_if_tradetime,
-    QA_util_get_pre_trade_date,
+from .date_utils import (
+    GQ_util_if_tradetime as QA_util_if_tradetime,
+    GQ_util_get_pre_trade_date as QA_util_get_pre_trade_date,
 )
 from func_timeout import func_set_timeout
 from pandas.tseries.frequencies import to_offset

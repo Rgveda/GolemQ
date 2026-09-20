@@ -47,11 +47,15 @@ try:
     from GolemQ.core.presentation import suppress_stdout_stderr
     with suppress_stdout_stderr():
         import QUANTAXIS as QA
-    from QUANTAXIS.QAUtil.QADate_trade import QA_util_if_tradetime
+    # 注意：QA_AVAILABLE 仍然有意义 —— 下面 :165 附近的 QA.MARKET_TYPE /
+    # QA.QA_fetch_stock_min_adv 仍走 QUANTAXIS。这里只把**日期助手**换成
+    # GQ 实现（它已本地化），不去掉整层保护。
     QA_AVAILABLE = True
 except Exception:
     print('QUANTAXIS not installed.')
     QA_AVAILABLE = False
+
+from GolemQ.markets.StockCN.date_utils import GQ_util_if_tradetime
 
 from GolemQ.core.base import set_cpu_affinity_even
 from GolemQ.core.presentation import tqdm_joblib
@@ -162,7 +166,7 @@ class BaseBenchmark(ABC):
                 
             # 获取实盘数据
             if fetch_realtime and kline_data is not None:
-                if (QA_util_if_tradetime(dt.now()) or
+                if (GQ_util_if_tradetime(dt.now()) or
                         ((pd.to_datetime(GQ_util_get_last_day()) - end_date) < timedelta(hours=18))):
                     kline_data = GQ_fetch_stock_min_realtime_adv(
                         normalize_code(code, market_type=self.market_type),
