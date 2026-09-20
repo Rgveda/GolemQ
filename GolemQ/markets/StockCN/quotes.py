@@ -25,10 +25,12 @@
 import warnings
 import pandas as pd
 
-from QUANTAXIS.QAFetch.QAQuery_Advance import QA_fetch_stock_day_adv
-
 from GolemQ.core.constants import AKA
 from .symbol import normalize_code
+# 日线读取改走本树自己的 8.3 路径（`kline83` + `datastruct`），不再依赖
+# QUANTAXIS。返回类型 `GQ_DataStruct_Stock_day` 与 `QA_DataStruct_Stock_day`
+# 同接口：`.data` / `.to_qfq()`。
+from .kline83 import GQ_fetch_stock_day_adv
 from .fetch import GQ_fetch_stock_min_adv
 
 
@@ -55,7 +57,7 @@ class StockCNQuotes:
             返回空DataFrame如果无数据
         """
         short_code = normalize_code(code)[:6]
-        data_day = QA_fetch_stock_day_adv(
+        data_day = GQ_fetch_stock_day_adv(
             short_code,
             start=str(start)[:10],
             end=str(end)[:10],
@@ -76,7 +78,7 @@ class StockCNQuotes:
             if data_day.data[[AKA.OPEN, AKA.CLOSE]].tail(10).isnull().values.any():
                 predict_null = pd.isnull(data_day.data[AKA.CLOSE])
                 data_null = data_day.data[predict_null == True]  # noqa: E712
-                data_day.data.loc[data_null.index, :] = QA_fetch_stock_day_adv(
+                data_day.data.loc[data_null.index, :] = GQ_fetch_stock_day_adv(
                     short_code,
                     '{}'.format(data_null.index.get_level_values(level=0).values[0]),
                     '{}'.format(data_null.index.get_level_values(level=0).values[-1]),

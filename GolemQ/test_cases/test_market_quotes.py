@@ -19,7 +19,11 @@ class TestMarketQuotes(unittest.TestCase):
 
     @staticmethod
     def _make_mock_qa_data_struct(data_df):
-        """Helper to create a mock QA_DataStruct with .data and .to_qfq()"""
+        """Helper to create a mock datastruct with .data and .to_qfq()
+
+        The real replacement is `GQ_DataStruct_Stock_day`; these tests only
+        depend on the two-attribute surface, so a MagicMock still stands in.
+        """
         mock_struct = MagicMock()
         mock_struct.data = data_df
         mock_struct.to_qfq.return_value = mock_struct
@@ -53,7 +57,7 @@ class TestMarketQuotes(unittest.TestCase):
             'vol': [float(10000 + i * 100) for i in range(hours)],
         }, index=index)
 
-    @patch('GolemQ.markets.StockCN.quotes.QA_fetch_stock_day_adv')
+    @patch('GolemQ.markets.StockCN.quotes.GQ_fetch_stock_day_adv')
     def test_get_kline_quotes_returns_dataframe(self, mock_fetch):
         """get_kline_quotes should return a pd.DataFrame with expected columns"""
         data_df = self._make_day_kline_df()
@@ -67,7 +71,7 @@ class TestMarketQuotes(unittest.TestCase):
             self.assertIn(col, result.columns)
         self.assertEqual(len(result), 5)
 
-    @patch('GolemQ.markets.StockCN.quotes.QA_fetch_stock_day_adv')
+    @patch('GolemQ.markets.StockCN.quotes.GQ_fetch_stock_day_adv')
     def test_get_kline_quotes_calls_fetch_with_correct_params(self, mock_fetch):
         """get_kline_quotes should normalize code and call QA_fetch_stock_day_adv"""
         data_df = self._make_day_kline_df()
@@ -78,7 +82,7 @@ class TestMarketQuotes(unittest.TestCase):
 
         mock_fetch.assert_called_once_with('000001', start='2024-01-01', end='2024-01-20')
 
-    @patch('GolemQ.markets.StockCN.quotes.QA_fetch_stock_day_adv')
+    @patch('GolemQ.markets.StockCN.quotes.GQ_fetch_stock_day_adv')
     def test_get_kline_quotes_applies_qfq_when_fq_set(self, mock_fetch):
         """When fq=1, to_qfq() should be called"""
         data_df = self._make_day_kline_df()
@@ -89,7 +93,7 @@ class TestMarketQuotes(unittest.TestCase):
 
         mock_struct.to_qfq.assert_called_once()
 
-    @patch('GolemQ.markets.StockCN.quotes.QA_fetch_stock_day_adv')
+    @patch('GolemQ.markets.StockCN.quotes.GQ_fetch_stock_day_adv')
     def test_get_kline_quotes_skips_qfq_when_fq_zero(self, mock_fetch):
         """When fq=0, to_qfq() should NOT be called"""
         data_df = self._make_day_kline_df()
@@ -100,7 +104,7 @@ class TestMarketQuotes(unittest.TestCase):
 
         mock_struct.to_qfq.assert_not_called()
 
-    @patch('GolemQ.markets.StockCN.quotes.QA_fetch_stock_day_adv')
+    @patch('GolemQ.markets.StockCN.quotes.GQ_fetch_stock_day_adv')
     def test_get_kline_quotes_returns_empty_on_none_data(self, mock_fetch):
         """If QA_fetch_stock_day_adv returns None, return empty DataFrame"""
         mock_fetch.return_value = None

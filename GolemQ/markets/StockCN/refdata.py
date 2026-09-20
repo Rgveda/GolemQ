@@ -31,7 +31,20 @@ from __future__ import annotations
 
 import pandas as pd
 
-from GolemQ.markets.StockCN import DATABASE_STOCK_CN
+def _stock_cn_db():
+    """8.3 库句柄。**函数级导入是刻意的。**
+
+    `markets/StockCN/__init__.py:55` 经 `from .quotes import StockCNQuotes`
+    间接导入 `fetch.py`，而 `fetch.py` 要 import 本模块；`DATABASE_STOCK_CN`
+    到 `:70` 才定义。顶层 `from GolemQ.markets.StockCN import DATABASE_STOCK_CN`
+    会抛 `ImportError: cannot import name ... from partially initialized module`。
+    `kline83.py` 与 `datastruct.py` 出于同一原因也这样写。
+
+    在本模块出现第一个导入者（`fetch.py`）之前，这行一直是模块级的且**恰好**
+    能用 —— 它只被独立导入过，而那时父包已初始化完毕。
+    """
+    from GolemQ.markets.StockCN import DATABASE_STOCK_CN
+    return DATABASE_STOCK_CN
 
 __all__ = [
     'REF_COLLECTIONS',
@@ -51,7 +64,7 @@ def GQ_ref_collection(name: str, database=None):
     """取集合句柄。`name` 必须是 5 个规范名之一。"""
     if name not in REF_COLLECTIONS:
         raise KeyError(f'未知参考集合 {name!r}；可用: {REF_COLLECTIONS}')
-    return (database or DATABASE_STOCK_CN)[name]
+    return (database or _stock_cn_db())[name]
 
 
 def _read(name: str, query: dict = None, projection: dict = None,

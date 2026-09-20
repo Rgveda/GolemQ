@@ -63,19 +63,18 @@ from .symbol import (
 # 原先包 try/except 是因为「没装 QUANTAXIS 就不 import」—— 现已无必要，
 # 而且那层保护会把真正的导入错误吞掉。
 from GolemQ.markets.StockCN.date_utils import GQ_util_timestamp_to_str
-from QUANTAXIS.QAData.QADataStruct import (
-        QA_DataStruct_Index_min,
-        QA_DataStruct_Index_day,
-        QA_DataStruct_Stock_day,
-        QA_DataStruct_Stock_min,
+from .datastruct import (
+    GQ_DataStruct_Index_min,
+    GQ_DataStruct_Index_day,
+    GQ_DataStruct_Stock_day,
+    GQ_DataStruct_Stock_min,
+    GQ_DataStruct_Stock_block,
 )
 import warnings
-from QUANTAXIS.QAFetch.QAQuery_Advance import (
-    QA_fetch_stock_block_adv,
-    QA_fetch_stock_day_adv,
-)
-from QUANTAXIS.QAFetch.QAQuery import (
-    QA_fetch_stock_list
+from .kline83 import GQ_fetch_stock_day_adv
+from .refdata import (
+    GQ_fetch_stock_block,
+    GQ_fetch_stock_list,
 )
 from .realtime import (
     GQ_fetch_stock_day_realtime_adv,
@@ -83,6 +82,25 @@ from .realtime import (
 from .scribe import (
     GQ_fetch_stock_moneyflow,
 )
+
+
+def GQ_fetch_stock_block_adv():
+    """板块成分 datastruct（8.3）。替代 QUANTAXIS 的 ``QA_fetch_stock_block_adv``。
+
+    原调用一律写成 ``QA_fetch_stock_block_adv(collections=DATABASE.stock_block)``，
+    而 ``DATABASE`` 绑在 ``golemq`` 库 —— 那里**没有** ``stock_block`` 集合
+    （实测：行情与参考集合都在 ``golemq_stock_cn``）。因为集合为空，
+    QUANTAXIS 内部 ``.drop('_id', axis=1)`` 会抛
+    ``KeyError: "['_id'] not found in axis"``。
+
+    8.3 的 ``golemq_stock_cn.stock_block`` 才是 D5 定的家（72,856 行 /
+    534 个板块）。库由 ``refdata`` 统一决定，故本函数不接收 ``collections``。
+
+    注：这条链（与 ``prepare_symbol_range`` 一起）在新树与老树里**都没有
+    调用者**，所以那个 KeyError 今天是不可达的 —— 这里修的是潜在缺陷，
+    不是活的回归。
+    """
+    return GQ_DataStruct_Stock_block(GQ_fetch_stock_block())
 
 
 def GQ_fetch_stock_list_day(
@@ -186,21 +204,21 @@ def prepare_symbol_range(eval_range, verbose=True):
     返回预设的标的合集
     """
     if (eval_range == 'all'):
-        codelist_candidate = QA_fetch_stock_list()
+        codelist_candidate = GQ_fetch_stock_list()
         if (len(codelist_candidate) > 0):
             codelist_candidate = codelist_candidate[AKA.CODE].tolist()
         else:
             return False
     elif (eval_range == 'etc') or \
         (eval_range == 'other'):
-        codelist_candidate = QA_fetch_stock_list()
+        codelist_candidate = GQ_fetch_stock_list()
         if (len(codelist_candidate) > 0):
             codelist_candidate = codelist_candidate[AKA.CODE].tolist()
         else:
             return False
         blockname = focus_block
 
-        blk = QA_fetch_stock_block_adv(collections=DATABASE.stock_block)
+        blk = GQ_fetch_stock_block_adv()
         blockname_exodus = list(set(blockname).difference(set(blk.block_name)))
         blockname = list(set(blk.block_name).intersection(set(blockname)))
         if (len(blockname_exodus) > 0):
@@ -212,14 +230,14 @@ def prepare_symbol_range(eval_range, verbose=True):
         codelist_candidate = list(set(codelist_candidate).difference(set(codelist_candidate_revese)))
     elif (eval_range == 'etc_1') or \
         (eval_range == 'other_1'):
-        codelist_candidate = QA_fetch_stock_list()
+        codelist_candidate = GQ_fetch_stock_list()
         if (len(codelist_candidate) > 0):
             codelist_candidate = codelist_candidate[AKA.CODE].tolist()
         else:
             return False
         blockname = focus_block
 
-        blk = QA_fetch_stock_block_adv(collections=DATABASE.stock_block)
+        blk = GQ_fetch_stock_block_adv()
         blockname_exodus = list(set(blockname).difference(set(blk.block_name)))
         blockname = list(set(blk.block_name).intersection(set(blockname)))
         if (len(blockname_exodus) > 0):
@@ -235,14 +253,14 @@ def prepare_symbol_range(eval_range, verbose=True):
             codelist_candidate = list(filter(None, [code if ((int(code[4]) + int(code[5])) % 2) == 1 else None for code in codelist_candidate]))
     elif (eval_range == 'etc_2') or \
         (eval_range == 'other_2'):
-        codelist_candidate = QA_fetch_stock_list()
+        codelist_candidate = GQ_fetch_stock_list()
         if (len(codelist_candidate) > 0):
             codelist_candidate = codelist_candidate[AKA.CODE].tolist()
         else:
             return False
         blockname = focus_block
 
-        blk = QA_fetch_stock_block_adv(collections=DATABASE.stock_block)
+        blk = GQ_fetch_stock_block_adv()
         blockname_exodus = list(set(blockname).difference(set(blk.block_name)))
         blockname = list(set(blk.block_name).intersection(set(blockname)))
         if (len(blockname_exodus) > 0):
@@ -366,7 +384,7 @@ def prepare_symbol_range(eval_range, verbose=True):
             '创业板', '创业板指', '创业300', '创业创新', '创业大盘', '创业板50',
             '创业板指', '创业蓝筹',])
         # blockname = list(set(blockname))
-        all_stock_blocks = QA_fetch_stock_block_adv(collections=DATABASE.stock_block)
+        all_stock_blocks = GQ_fetch_stock_block_adv()
         codelist_candidate = all_stock_blocks.get_block(list(blockname.intersection(all_stock_blocks.block_name))).code
 
         codelist_candidate = [code[1:7] if (len(code) == 7) else (code.strip('33,') if (len(code) == 9) else code) for code in codelist_candidate]
@@ -376,7 +394,7 @@ def prepare_symbol_range(eval_range, verbose=True):
             '深证300', '深证可选', '深证消费', '深成消费', '深证100', '深证价值',
             '深证创新', '深证成指', '深证成长', '深证治理', '深证红利',])
         # blockname = list(set(blockname))
-        all_stock_blocks = QA_fetch_stock_block_adv(collections=DATABASE.stock_block)
+        all_stock_blocks = GQ_fetch_stock_block_adv()
         codelist_candidate = all_stock_blocks.get_block(list(blockname.intersection(all_stock_blocks.block_name))).code
         codelist_candidate = [code[1:7] if (len(code) == 7) else code for code in codelist_candidate]
         codelist_candidate = list(set(codelist_candidate))
@@ -385,21 +403,21 @@ def prepare_symbol_range(eval_range, verbose=True):
             '上证综指', '上证180', '上证380', '上证50', '上证100', '上证150', '上证中盘',
             '上证创新', '上证治理', '上证混改', '上证红利', '上证超大',])
         # blockname = list(set(blockname))
-        all_stock_blocks = QA_fetch_stock_block_adv(collections=DATABASE.stock_block)
+        all_stock_blocks = GQ_fetch_stock_block_adv()
         codelist_candidate = all_stock_blocks.get_block(list(blockname.intersection(all_stock_blocks.block_name))).code
         codelist_candidate = [code[1:7] if (len(code) == 7) else code for code in codelist_candidate]
         codelist_candidate = list(set(codelist_candidate))
     elif (eval_range == '000688.XSHG'):
         blockname = set(['科创版指', '科创50', '科创信息',])
         # blockname = list(set(blockname))
-        all_stock_blocks = QA_fetch_stock_block_adv(collections=DATABASE.stock_block)
+        all_stock_blocks = GQ_fetch_stock_block_adv()
         codelist_candidate = all_stock_blocks.get_block(list(blockname.intersection(all_stock_blocks.block_name))).code
         codelist_candidate = [code[1:7] if (len(code) == 7) else code for code in codelist_candidate]
         codelist_candidate = list(set(codelist_candidate))
     elif (eval_range == 'hs300'):
         blockname = set(['沪深300'])
         # blockname = list(set(blockname))
-        all_stock_blocks = QA_fetch_stock_block_adv(collections=DATABASE.stock_block)
+        all_stock_blocks = GQ_fetch_stock_block_adv()
         codelist_candidate = all_stock_blocks.get_block(list(blockname.intersection(all_stock_blocks.block_name))).code
         codelist_candidate = [code[1:7] if (len(code) == 7) else code for code in codelist_candidate]
         codelist_candidate = list(set(codelist_candidate))
@@ -469,21 +487,21 @@ def prepare_symbol_range(eval_range, verbose=True):
     elif (eval_range == 'sz150'):
         blockname = set(['上证150', '上证50', '深证300'])
         # blockname = list(set(blockname))
-        all_stock_blocks = QA_fetch_stock_block_adv(collections=DATABASE.stock_block)
+        all_stock_blocks = GQ_fetch_stock_block_adv()
         codelist_candidate = all_stock_blocks.get_block(list(blockname.intersection(all_stock_blocks.block_name))).code
         codelist_candidate = [code[1:7] if (len(code) == 7) else code for code in codelist_candidate]
         codelist_candidate = list(set(codelist_candidate))
     elif (eval_range == 'zz500'):
         blockname = set(['中证500'])
         # blockname = list(set(blockname))
-        all_stock_blocks = QA_fetch_stock_block_adv(collections=DATABASE.stock_block)
+        all_stock_blocks = GQ_fetch_stock_block_adv()
         codelist_candidate = all_stock_blocks.get_blocklist((blockname.intersection(all_stock_blocks.block_name))).code
         codelist_candidate = [code[1:7] if (len(code) == 7) else code for code in codelist_candidate]
         codelist_candidate = list(set(codelist_candidate))
     elif (eval_range == 'zz100'):
         blockname = set(['中证100'])
         # blockname = list(set(blockname))
-        all_stock_blocks = QA_fetch_stock_block_adv(collections=DATABASE.stock_block)
+        all_stock_blocks = GQ_fetch_stock_block_adv()
         codelist_candidate = all_stock_blocks.get_block(list(blockname.intersection(all_stock_blocks.block_name))).code
         codelist_candidate = [code[1:7] if (len(code) == 7) else code for code in codelist_candidate]
         codelist_candidate = list(set(codelist_candidate))
@@ -539,7 +557,7 @@ def prepare_symbol_range(eval_range, verbose=True):
     else:
         eval_range = 'blocks'
         # blockname = ['中证500', '创业板50', '上证50', '上证150', '深证300']
-        all_stock_blocks = QA_fetch_stock_block_adv(collections=DATABASE.stock_block) 
+        all_stock_blocks = GQ_fetch_stock_block_adv() 
         blockname = focus_block
 
         blockname_exodus = list(set(blockname).difference(set(all_stock_blocks.block_name)))
@@ -665,7 +683,7 @@ def GQ_fetch_stock_min_adv(
     :param frequence: 字符串str 分钟线的类型 支持 1min 1m 5min 5m 15min 15m 30min 30m 60min 60m 类型
     :param if_drop_index: Ture False ， dataframe drop index or not
     :param collections: mongodb 数据库
-    :return: QA_DataStruct_Stock_min 类型
+    :return: GQ_DataStruct_Stock_min 类型
     '''
     if frequence in ['1min', '1m']:
         frequence = '1min'
@@ -711,7 +729,7 @@ def GQ_fetch_stock_min_adv(
         #     print("QA Error QA_fetch_stock_min_adv set index 'datetime, code'
         #     return None")
         #     return None
-        return QA_DataStruct_Stock_min(res_set_index)
+        return GQ_DataStruct_Stock_min(res_set_index)
     
 
 @func_set_timeout(12)
@@ -1113,11 +1131,11 @@ def get_kline_price_min(
         else:
             print(f'Code: {codelist} has non-data........... Ckpo 6\n')        
     try:
-        if (isinstance(data_min, QA_DataStruct_Stock_min) or \
-            isinstance(data_min, QA_DataStruct_Stock_day)):
+        if (isinstance(data_min, GQ_DataStruct_Stock_min) or \
+            isinstance(data_min, GQ_DataStruct_Stock_day)):
             codename = GQ_fetch_stock_name(codelist)
-        elif (isinstance(data_min, QA_DataStruct_Index_min) or \
-            isinstance(data_min, QA_DataStruct_Index_day)):
+        elif (isinstance(data_min, GQ_DataStruct_Index_min) or \
+            isinstance(data_min, GQ_DataStruct_Index_day)):
             if (market_type_desc == 'A股ETF基金'):
                 if (isinstance(codelist, str)):
                     codename = GQ_fetch_etf_name(codelist[:6])
@@ -1249,13 +1267,13 @@ def get_kline_price_v3(
         end = '{}'.format(dt.today() + timedelta(days=1)) if (end is None) else end
         # offest = (dt.today() + timedelta(days=1)) - pd.to_datetime(end)
         if (isinstance(codelist, str)):
-            data_day = QA_fetch_stock_day_adv(
+            data_day = GQ_fetch_stock_day_adv(
                 codelist[:6],
                 start=start,
                 end=end,)
             short_code = codelist[:6]
         else:
-            data_day = QA_fetch_stock_day_adv(
+            data_day = GQ_fetch_stock_day_adv(
                 [code[:6] for code in codelist],
                 start=start,
                 end=end,)
@@ -1319,7 +1337,7 @@ def get_kline_price_v3(
                 # 在下载数据的时候XRDR数据不全，有时候除权后最尾部莫名其妙丢数据了，只能拿没除权的数据补
                 predict_null = pd.isnull(data_day.data[AKA.CLOSE])
                 data_null = data_day.data[predict_null is True]
-                data_day.data.loc[data_null.index, :] = QA_fetch_stock_day_adv(
+                data_day.data.loc[data_null.index, :] = GQ_fetch_stock_day_adv(
                     codelist,
                     '{}'.format(data_null.index.get_level_values(level=0).values[0]),
                     '{}'.format(data_null.index.get_level_values(level=0).values[-1]),).data
@@ -1446,8 +1464,8 @@ def get_kline_price_v3(
                                                               data_day.data.index.get_level_values(level=0)[-1], 
                                                               len(data_day.data)))
     
-    if (isinstance(data_day, QA_DataStruct_Stock_min) or \
-        isinstance(data_day, QA_DataStruct_Stock_day)):
+    if (isinstance(data_day, GQ_DataStruct_Stock_min) or \
+        isinstance(data_day, GQ_DataStruct_Stock_day)):
         try:
             codename = GQ_fetch_stock_name(codelist)
         except Exception:
@@ -1466,8 +1484,8 @@ def get_kline_price_v3(
                 codename = codename.reindex([*codename.index,
                                              *miss_codelist])
             # print(len(codename), codename)
-    elif (isinstance(data_day, QA_DataStruct_Index_min) or \
-        isinstance(data_day, QA_DataStruct_Index_day)):
+    elif (isinstance(data_day, GQ_DataStruct_Index_min) or \
+        isinstance(data_day, GQ_DataStruct_Index_day)):
         if (market_type_desc == 'A股ETF基金'):
             try:
                 if (isinstance(codelist, str)):

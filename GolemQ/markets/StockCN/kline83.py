@@ -57,8 +57,10 @@
   返回 ``None`` 会抛 ``AttributeError`` 逃出 ``try``，最终在 ``:288`` 的
   ``return ... kline_hour_baseline ...`` 处炸成 ``UnboundLocalError``。
 
-8.3 尚未有日线集合，故日线路径当前恒返回 ``None`` —— 这是**预期状态**，
-不是缺陷。接口先在这里备好，日线迁移完成后无需改动本模块或 service 层。
+日线集合**已就绪**（2026-09-20 实测：``stock_day`` 17,871,122 行、
+``index_day`` 8,602,127 行），故 :func:`get_kline_price_v3` 与
+:func:`GQ_fetch_stock_day_adv` 的日线路径已是活路径。早先「日线迁移未完成、
+恒返回 ``None``」的说法已作废 —— 当时确实如此，现在不是。
 """
 from __future__ import annotations
 
@@ -68,10 +70,20 @@ import pandas as pd
 
 from GolemQ.core.constants import MARKET_TYPE
 
-from . import DATABASE_STOCK_CN
+from .datastruct import frame_to_datastruct
 from .symbol import is_stock_cn
 
-__all__ = ['KlineResult', 'get_kline_price_min', 'get_kline_price_v3']
+__all__ = [
+    'KlineResult',
+    'GQ_fetch_stock_day_adv',
+    'get_kline_price_min',
+    'get_kline_price_v3',
+]
+
+# 日线的默认回看窗口。``_read_timeseries`` 的 800 天默认是给分钟线定的；
+# 日线上 ``start=None`` 时 800 天只够 3 年，会静默截断到 1990 年至今的一小段。
+# A 股最早的数据是 1991-12-23（实测 ``stock_day`` 里 ``000001`` 的首行）。
+_DAY_DEFAULT_DAYS = 365 * 40
 
 
 class KlineResult:
@@ -116,6 +128,19 @@ def _market_prefix(codelist, market_type=None):
     return 'index' if market_type in (MARKET_TYPE.INDEX_CN, MARKET_TYPE.FUND_CN) else 'stock'
 
 
+def _collection(name):
+    """取 8.3 库里的集合句柄。**函数级导入是刻意的。**
+
+    ``markets/StockCN/__init__.py:55`` 先 ``from .quotes import StockCNQuotes``，
+    到 ``:70`` 才定义 ``DATABASE_STOCK_CN``。``quotes.py`` 会在模块级导入本模块，
+    所以顶层 ``from . import DATABASE_STOCK_CN`` 会抛
+    ``ImportError: cannot import name ... from partially initialized module``。
+    ``datastruct.py`` 出于同一原因也这样写。
+    """
+    from . import DATABASE_STOCK_CN
+    return DATABASE_STOCK_CN[name]
+
+
 def _read_timeseries(codelist, start, end, frequency, market,
                      default_days=800, limit=None):
     """按 ``(code, ts)`` 查询时序集合，返回 naive 北京时间索引的 DataFrame。
@@ -124,7 +149,7 @@ def _read_timeseries(codelist, start, end, frequency, market,
     任何全表扫描都不可接受。
     """
     name = f'{market}_{frequency}'
-    coll = DATABASE_STOCK_CN[name]
+    coll = _collection(name)
 
     if isinstance(end, str) and len(end.strip()) == 10:
         # 只给到日则补到当天 23:59:59，否则 start=end='2017-03-14' 会塌成零长区间
@@ -224,7 +249,36 @@ def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
     codename = codelist[0] if isinstance(codelist, (list, tuple, set)) else codelist
     if df.empty:
         if verbose:
-            print(f'GolemQ Warning: {market}_{frequency} 在 8.3 无数据 '
-                  f'（日线迁移未完成），返回 None。code={codelist}')
+            print(f'GolemQ Warning: {market}_{frequency} 在 8.3 无数据，'
+                  f'返回 None。code={codelist} start={start} end={end}')
         return None, codename
     return KlineResult(_to_kline_frame(df)), codename
+
+
+def GQ_fetch_stock_day_adv(codelist, start=None, end=None, market_type=None,
+                           verbose=False):
+    """日线 → ``GQ_DataStruct_*``。**替代 QUANTAXIS 的 ``QA_fetch_stock_day_adv``。**
+
+    存在的理由：``quotes.py`` 与 ``fetch.py`` 直接调 QUANTAXIS 的那个函数，而它
+    读的是 4.4 的 ``quantaxis`` 库。本函数读 8.3 的 ``stock_day`` / ``index_day``
+    —— 实测**两个库的同名集合逐行相同**（``600519`` 各 6006 行、``000001`` 各
+    8252 行，日期范围一致、收盘价最大差 0），所以换读 8.3 不是换数据源。
+
+    返回类型按标的自动选：股票 → ``GQ_DataStruct_Stock_day``（有 ``to_qfq``）；
+    指数 / ETF → ``GQ_DataStruct_Index_day``（**没有** ``to_qfq``，与 QUANTAXIS
+    一致，见 ``datastruct.py`` 的模块说明）。ETF 与指数共用 ``index_*`` 集合，
+    分类交给既有的 :func:`is_stock_cn`，不自己猜代码段。
+
+    **无数据返回 ``None``**，与 QUANTAXIS 一致 —— 调用方有 ``is None`` 分支
+    （``fetch.py:1264``、``quotes.py:64``），见 ``markets/base_market.py``
+    关于空值契约刻意不对称的说明。
+    """
+    market = _market_prefix(codelist, market_type)
+    df = _read_timeseries(codelist, start, end, 'day', market,
+                          default_days=_DAY_DEFAULT_DAYS)
+    if df.empty:
+        if verbose:
+            print(f'GolemQ Warning: {market}_day 无数据，返回 None。'
+                  f'code={codelist} start={start} end={end}')
+        return None
+    return frame_to_datastruct(df, market=market, frequency='day')
