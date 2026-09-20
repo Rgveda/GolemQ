@@ -150,7 +150,37 @@ class StockCN(BaseMarket):
     ):
         """获取单只股票分钟线历史行情"""
         return self.quotes.get_kline_quotes_min(code, start, end, frequency, fq)
-            
+
+    # ---- 门面契约的实现（`GolemQ/fetch/*` 调度到这里）----------------------
+    #
+    # 委托给 `kline83`（MongoDB 8.3 时序读路径）。契约与空值语义见
+    # `markets/base_market.py` 的声明，两处**必须一致**。
+
+    def get_kline_price_min(self, codelist, start=None, end=None,
+                            verbose=False, realtime=True):
+        """分钟线（A 股）。见 `base_market.py` 的契约说明。"""
+        from .kline83 import get_kline_price_min as _impl
+        return _impl(codelist, start=start, end=end,
+                     verbose=verbose, realtime=realtime)
+
+    def get_kline_price_v3(self, codelist, start=None, end=None,
+                           verbose=False, realtime=True):
+        """日线（A 股）。无数据返回 `None`，见 `base_market.py`。"""
+        from .kline83 import get_kline_price_v3 as _impl
+        return _impl(codelist, start=start, end=end,
+                     verbose=verbose, realtime=realtime)
+
+    def get_stock_concept_kline(self, symbol, start=None, end=None, freq=None):
+        """概念 K 线（A 股）。
+
+        **当前未实现** —— 真实实现在老树 `GolemQ_old/fetch/concept.py:865`（读 4.4），
+        尚未移植。此处抛 `NotImplementedError` 而非返回空表：
+        返回空会让「未实现」与「真的没有概念数据」无从区分。
+        """
+        raise NotImplementedError(
+            'A 股概念 K 线尚未实现；真实实现待从 GolemQ_old/fetch/concept.py:865 移植。')
+
+
     # Trading calendar methods
     def is_trading_day(self, date: str) -> bool:
         """Check if a date (YYYY-MM-DD format) is a trading day"""

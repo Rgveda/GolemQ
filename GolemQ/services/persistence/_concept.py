@@ -50,7 +50,7 @@ from GolemQ.core.constants import (
 )
 from GolemQ.models.massive import MAS
 from GolemQ.features.empirical import load_massive_reviews
-from GolemQ.markets.StockCN.kline83 import get_kline_price_min
+from GolemQ.fetch.kline import get_kline_price_min
 # TODO: 概念 K 线尚无真实实现 —— GolemQ.fetch.concept 仍是 stub，
 # 真实版本只存在于 GolemQ_old/fetch/concept.py:865（读 4.4）。待移植。
 from GolemQ.fetch.concept import get_stock_concept_kline

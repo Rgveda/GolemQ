@@ -53,10 +53,24 @@ class StockHK(BaseMarket):
     def name(self) -> str:
         return self._name
         
-    def get_all_stock_codes(self) -> List[str]:
-        """获取港股全部股票代码，格式如['0001.HK', '0700.HK']"""
+    def get_stock_codes(self) -> List[str]:
+        """获取港股全部股票代码，格式如['0001.HK', '0700.HK']。
+
+        方法名由 `get_all_stock_codes` 修正而来 —— `BaseMarket` 声明的是
+        `get_stock_codes`，名字不一致导致本类**永远是抽象类、从不被注册**，
+        自动发现只会打一行「跳过抽象类」。命名不符是常见且难查的这类缺陷：
+        不报错，只是静默地不生效。
+        """
         return [f"{str(i).zfill(4)}.{self._exchange_code}" for i in range(1, 100)]
-        
+
+    def purge_historical_collections(self) -> List[str]:
+        """清理历史数据集合。**港股尚未实现**，抛 `NotImplementedError`。
+
+        不返回空列表 —— 返回空会让「没实现」与「确实没有历史集合」无法区分。
+        """
+        raise NotImplementedError('港股尚未实现（StockHK 目前是 stub）')
+
+
     def get_kline_quotes(
         self,
         code: str,
@@ -92,5 +106,22 @@ class StockHK(BaseMarket):
             'price': 50.0 + i*0.1,
             'volume': 2000
         } for i in range(0, 240, freq_min)]
-        
+
         return pd.DataFrame(data)
+
+    # ---- 门面契约（fetch/ 调度用）------------------------------------------
+    #
+    # 本市场是 stub，三个方法**一律抛 NotImplementedError**。
+    # 返回空结果会让「港股还没实现」与「港股确实没有这段数据」无从区分 ——
+    # 前者是开发状态，后者是数据事实，混在一起会让排障找不到方向。
+
+    def get_kline_price_min(self, codelist, start=None, end=None,
+                            verbose=False, realtime=True):
+        raise NotImplementedError('港股分钟线尚未实现（StockHK 目前是 stub）')
+
+    def get_kline_price_v3(self, codelist, start=None, end=None,
+                           verbose=False, realtime=True):
+        raise NotImplementedError('港股日线尚未实现（StockHK 目前是 stub）')
+
+    def get_stock_concept_kline(self, symbol, start=None, end=None, freq=None):
+        raise NotImplementedError('港股概念 K 线尚未实现（StockHK 目前是 stub）')

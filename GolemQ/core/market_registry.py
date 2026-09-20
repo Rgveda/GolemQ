@@ -123,7 +123,15 @@ def get_active_market():
 
 
 def get_market(name: str):
-    """按名取市场实例（不影响激活状态）。未注册则明确报错。"""
+    """按名取市场实例（不影响激活状态）。
+
+    **与 :func:`get_active_market` 一样会触发惰性发现** —— 否则「按名取」与
+    「取激活市场」在同一个空注册表下行为不一致：前者报未注册、后者自动发现。
+    实测踩过：`get_kline_price_min(..., market=MARKET_TYPE.STOCK_HK)` 在
+    全新进程里报「未注册」，而随后一次不传 market 的调用却成功注册了两个市场。
+    """
+    if name not in GQMARKETS:
+        _ensure_registered()
     if name not in GQMARKETS:
         raise KeyError(f'市场 {name!r} 未注册。已注册: {sorted(GQMARKETS)}')
     return GQMARKETS[name]

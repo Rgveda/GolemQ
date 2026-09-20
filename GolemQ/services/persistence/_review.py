@@ -49,7 +49,7 @@ from GolemQ.core.constants import (
     STATE as STE,
 )
 from GolemQ.features.empirical import load_massive_reviews
-from GolemQ.markets.StockCN.kline83 import get_kline_price_min
+from GolemQ.fetch.kline import get_kline_price_min
 from GolemQ.services.persistence._schema import (
     stock_review_columns_of_persistence,
     calc_masked_tail_missing_index,
