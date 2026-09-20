@@ -49,16 +49,24 @@ from .base import (  # noqa: F401
 from . import pytdx_source  # noqa: F401,E402
 from . import qmt_source  # noqa: F401,E402
 from . import akshare_source  # noqa: F401,E402
+from . import tencent_source  # noqa: F401,E402
+from . import baostock_source  # noqa: F401,E402
+from . import tushare_source  # noqa: F401,E402
+from . import eastmoney_source  # noqa: F401,E402
+from . import tdxaidata_source  # noqa: F401,E402
 
-#: 每个集合按序尝试的源。本轮只填了已接入的。
+#: 每个集合按序尝试的源。**顺序即优先级，且只列已实测可用的源**。
+#: 骨架源（baostock/tushare/eastmoney/tdxaidata）不在此表 —— 它们的
+#: `available()` 恒为 False，列进来只会让调用方多走一次注定失败的分支。
 COLLECTION_SOURCE_PRIORITY = {
-    STOCK_LIST: ['pytdx', 'qmt'],
+    STOCK_LIST: ['pytdx', 'qmt', 'tencent'],
     STOCK_BLOCK: ['pytdx', 'qmt'],
     # pytdx 优先：get_finance_info 给的字段名与目标 schema 逐字相同，且**无需
     # QMT 客户端在线**。QMT 降为备选。（早期误判 pytdx 拿不到股本，已更正。）
     STOCK_INFO: ['pytdx', 'qmt'],
-    ETF_LIST: [],         # akshare 适配器未接入，当前复用 scribe.GQ_get_etf_list
-    FINANCIAL: [],        # baostock 适配器未接入
+    ETF_LIST: ['akshare'],
+    # 原定 baostock，实测其服务器不可达，改用 akshare（已实测可用）
+    FINANCIAL: ['akshare'],
 }
 
 
