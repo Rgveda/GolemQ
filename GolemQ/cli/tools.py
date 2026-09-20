@@ -27,7 +27,7 @@ import sys
 import importlib
 import inspect
 from pathlib import Path
-from GolemQ import GQMARKETS
+from GolemQ.core.market_registry import GQMARKETS, register_market
 
 
 def auto_register_markets():
@@ -62,9 +62,9 @@ def auto_register_markets():
                                 continue
                                 
                             try:
-                                # 实例化并注册
+                                # 实例化并注册（register_market 默认不覆盖）
                                 market_instance = obj()
-                                GQMARKETS[market_name] = market_instance
+                                register_market(market_name, market_instance)
                                 print(f"[ok] 自动注册市场: {market_name}")
                                 break
                             except Exception as e:

@@ -34,11 +34,24 @@ from . import supervisor
 """GolemQ - A Python package for quantum-inspired algorithms."""
 from .core.settings import DATABASE, DATABASE_ASYNC
 
-# 全局市场注册表
-GQMARKETS = {}
-GQSUBSCRIBER = {}
+# 市场注册表与「当前激活市场」—— 实现在 core/market_registry.py，此处再导出
+# 以保持既有 `from GolemQ import GQMARKETS` 的写法可用。
+from .core.market_registry import (  # noqa: F401
+    DEFAULT_MARKET,
+    GQMARKETS,
+    GQSUBSCRIBER,
+    active_market_name,
+    get_active_market,
+    get_market,
+    register_market,
+    register_subscriber,
+    set_active_market,
+)
 
 __version__ = "0.1.1"
 __all__ = ['core', 'agents', 'analysis',
            'services', 'pipeline', 'supervisor',
-           'DATABASE', 'DATABASE_ASYNC', 'GQMARKETS', 'GQSUBSCRIBER']
+           'DATABASE', 'DATABASE_ASYNC',
+           'GQMARKETS', 'GQSUBSCRIBER', 'DEFAULT_MARKET',
+           'get_active_market', 'set_active_market', 'get_market',
+           'active_market_name', 'register_market', 'register_subscriber']

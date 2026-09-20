@@ -29,9 +29,9 @@ from typing import Optional, List
 from GolemQ.markets.base_market import BaseMarket
 from GolemQ.core.settings import GQSETTING
 from GolemQ.core.mongo import GQ_util_mongodb_client
-from GolemQ import (
-    GQMARKETS,
-    GQSUBSCRIBER,
+from GolemQ.core.market_registry import (
+    register_market,
+    register_subscriber,
 )
 from .realtime import (
     sub_l1_from_tencent,
@@ -108,11 +108,11 @@ class StockCN(BaseMarket):
             self.GQREALTIME = DATABASE.GolemQ_StockCN_REALTIME
             self.quotes = StockCNQuotes()
 
-            # 注册到全局市场注册表（确保只注册一次）
-            if 'StockCN' not in GQMARKETS:
-                GQMARKETS['StockCN'] = self
-            if 'l1_tencent' not in GQSUBSCRIBER:
-                GQSUBSCRIBER['l1_tencent'] = sub_l1_from_tencent
+            # 注册到全局市场注册表。register_market/register_subscriber 默认
+            # 不覆盖，重复注册返回 False —— 语义与原先的 `if ... not in` 一致，
+            # 但把「重复注册怎么办」收敛到一处，不在每个市场里各写一遍。
+            register_market('StockCN', self)
+            register_subscriber('l1_tencent', sub_l1_from_tencent)
 
     @property
     def name(self) -> str:
