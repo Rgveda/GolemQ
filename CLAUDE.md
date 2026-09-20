@@ -71,6 +71,34 @@ explicit keeps the code correct on Linux too.
 path or symbol compares unequal to its own literal; `UnicodeDecodeError` on a
 file that looks fine in an editor.
 
+### Hook Maintenance (after any `ruflo init`)
+
+`ruflo init` regenerates `.claude/settings.json` and will undo the hook fix in
+commit `7e542fe`. Re-apply it with:
+
+```bash
+python tools/fix_ruflo_hooks.py            # this project + ~/.claude
+python tools/fix_ruflo_hooks.py --dry-run  # report only
+python tools/fix_ruflo_hooks.py --scan     # every project under Y:/Projects, Y:/代码
+```
+
+The generated hooks wrap the node call as
+`cmd /c "IF EXIST "..." (...) ELSE (...)"`. The `\"` in the JS template looks
+like escaping but collapses to a bare quote, so the command fragments and
+pieces of it get created as 0-byte files in the working directory. Upgrading
+ruflo does not help — the template is byte-identical in `@claude-flow/cli`
+3.10.2, 3.41.2 and 3.42.4.
+
+The replacement must use **bash** syntax (`${CLAUDE_PROJECT_DIR:-.}`,
+`$USERPROFILE`), never `%VAR%` — the hook executor is bash, which does not
+expand `%VAR%`, and node then reports
+`Cannot find module '...\%USERPROFILE%\...'`. That mistake disables every
+hook while appearing to cure the stray files.
+
+**Verify with metacharacters.** `c=$(echo x); echo "brace {a,b}" 'quote'
+"1e-12)" && ls -a | wc -l` — a plain `echo` reproduces nothing either way and
+gives a false pass. The `Stop` hook also surfaces path errors on session exit.
+
 ## Commands
 
 ```bash
