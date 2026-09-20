@@ -47,13 +47,16 @@ from .base import (  # noqa: F401
 
 # 导入即注册。新增源在此加一行 import 即可进入注册表。
 from . import pytdx_source  # noqa: F401,E402
+from . import qmt_source  # noqa: F401,E402
 
 #: 每个集合按序尝试的源。本轮只填了已接入的。
 COLLECTION_SOURCE_PRIORITY = {
-    STOCK_LIST: ['pytdx'],
-    STOCK_BLOCK: ['pytdx'],
-    STOCK_INFO: [],       # MiniQMT 适配器未接入，见模块文档
-    ETF_LIST: [],         # akshare 复用 scribe.GQ_get_etf_list，暂不经本注册表
+    STOCK_LIST: ['pytdx', 'qmt'],
+    STOCK_BLOCK: ['pytdx', 'qmt'],
+    # pytdx 优先：get_finance_info 给的字段名与目标 schema 逐字相同，且**无需
+    # QMT 客户端在线**。QMT 降为备选。（早期误判 pytdx 拿不到股本，已更正。）
+    STOCK_INFO: ['pytdx', 'qmt'],
+    ETF_LIST: [],         # akshare 适配器未接入，当前复用 scribe.GQ_get_etf_list
     FINANCIAL: [],        # baostock 适配器未接入
 }
 
