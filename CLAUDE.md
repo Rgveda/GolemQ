@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 顺序 | 文档 | 读它干什么 |
 |:--|:--|:--|
+| 0 | [`HANDOFF.md`](HANDOFF.md) | **当前进度与下一步**（含待用户决定的事项）。跨会话的进度载体，**接手先读它** |
 | 1 | [`PITFALLS.md`](PITFALLS.md) | **已知陷阱。看起来像 bug 的刻意设计，勿"修正"** |
 | 2 | [`DECISIONS.md`](DECISIONS.md) | 已定的架构决定与**弃案理由**，别重新论证 |
 | 3 | [`GLOSSARY.md`](GLOSSARY.md) | 行话。第四节的词**几乎全是老代码继承**，别当拼写错误改 |
@@ -16,6 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 6 | [`API_INDEX.md`](API_INDEX.md) | **导航索引**（110 模块 / 名称 + 一行摘要）。找东西先查它，比逐个 `Read` 源文件省一个数量级 |
 
 **改代码前先查 `PITFALLS.md` 与 `GLOSSARY.md`。**
+**每告一段落就更新 `HANDOFF.md`** —— 进度写进文件才算存下来，留在对话里会随上下文一起丢。
 
 另：`git log --oneline -30` 的 commit message 记录了当时的决定、弃案与验证方式 ——
 它们是事实上的 ADR，成本为零且已有内容。
