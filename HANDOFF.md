@@ -43,6 +43,8 @@ ts   用 datetime → 7 行 ✓
 | 任务 | 内容 | 状态 |
 |:--|:--|:--|
 | **A** | 5 个参考集合灌进 MongoDB 8.3 | **4/5** —— `financial` 待你决定 |
+| **D-ETF** | ETF 前复权（`etf_fq.py` 回迁） | ✅ 提交 `c83b593` |
+| **D-min** | 分钟线读取器重写 | ✅ 提交 `fe2fd95` |
 | **C1** | `portfolio/` 骨架（strategy/sizing/costs/rules）| ✅ 提交 `f993d31` |
 | **C2** | `zen_bt.py` 撮合按契约移植进 `engine.py` | ⛔ **阻塞在你**：需先写策略实现 |
 | **D** | QUANTAXIS 完全解耦 | **进行中** —— 替身已完成，import **11 → 7**，见第三节 |
@@ -137,21 +139,45 @@ QUANTAXIS import 计数：**32 → 11**（另有 37 处注释/文档提及，非
    `GQ_DataStruct_Index_day`（按设计无 `to_qfq`），而 `quotes.py` 无条件调
    `.to_qfq()` → `AttributeError`。`_apply_fq` 一并修掉。
 
-### 一条刻意分歧（勿当 bug「修」回去）
+### ✅ 分钟线读取器已重写（2026-09-21，提交 `fe2fd95`）
 
-QUANTAXIS 基类构造里的 `DataFrame.drop_duplicates()` **不带参数 → 只比列值、
-不看索引**，而那时 `date`/`code` 已进索引。于是**任何 OHLCV 与更早一根完全相同
-的 K 线会被静默删除**（`000001` 丢 1993-06-04 与 1998-06-20，都是真实交易日）。
-替身**不复制**这个缺陷。详见 `datastruct.py` 模块 docstring。
+`GQ_fetch_stock_min` 不是「改个库名」——旧实现**五个缺陷叠加、从未返回过数据**：
+读 `DATABASE.stock_min`（golemq 库无此集合）→ 空游标 → `res.vol` 抛 → 被光秃秃的
+`except` 吞成 `None`。**实测每次调用都返回 None。**
+
+重写后读 8.3 分频集合，并：去掉 `collections=` 参数、频率归一化收敛到
+`kline83.normalize_frequency`（原表抄了三份、失败处理各不相同）、改按 `(code, ts)`
+查询（`ts` 是时序 timeField，能分桶剪枝；8.3 没有 `type` 字段）、`format='numpy'`
+无数据返回 `None` 而非 0 维 object 数组。`_adv` 现在**按市场选容器**（ETF/指数 →
+`GQ_DataStruct_Index_min`）。
+
+验证：分钟对照 QUANTAXIS **354 行 0 差**；日线复跑 **8,011 行 0 差**；bar 数自洽
+（1min=240 / 5min=48 / 15min=16 / 30min=8 / 60min=4 = 一个交易日）。
+
+**顺带修掉一个静默读空**：`_read_timeseries` 现在把代码截到 6 位。`quotes.py` 传的是
+`normalize_code(code)`（`'600519.XSHG'`），而集合里存 `'600519'` —— 分钟路径因此
+返回 0 行，日线路径也只差一个 `[:6]` 就会同样静默读空。
+
+### 两条刻意分歧（勿当 bug「修」回去）
+
+**① QUANTAXIS 的 `drop_duplicates()` 会吞真实 K 线。** 基类构造里的
+`DataFrame.drop_duplicates()` **不带参数 → 只比列值、不看索引**，而那时
+`date`/`code` 已进索引。于是**任何 OHLCV 与更早一根完全相同的 K 线会被静默删除**
+（`000001` 丢 1993-06-04 与 1998-06-20，都是真实交易日）。替身**不复制**。
+详见 `datastruct.py` 模块 docstring。
+
+**② 零成交分钟的 bar 保留。** QUANTAXIS 的 `QA_fetch_stock_min` 有
+`.query('volume>1')`，**丢掉所有零成交的分钟**（600519 在 2024-01-02 的 1min 因此
+少 2 根：14:58/14:59，均 `volume=0`）。本树**不过滤** —— 消费方需要看见它们：
+`quotes.py` 的分钟路径与 `get_kline_price_min` 都有专门的 zero_trading 处理
+（删 4 根一组的午休段、修正 13:00 时间戳），**bar 不在就永远不会触发**。
+这是全树「适配器只管取数，编排层决定范围」的同一条分工（`PITFALLS.md` P1）。
 
 ### 仍未做
 
-- **分钟线读取**：`fetch.py` 的 `GQ_fetch_stock_min` 读 `DATABASE.stock_min`
-  （`golemq` 库，该集合**不存在**）→ **实测恒返回 None**。老树同样这么写，
-  所以是**数据迁移**（`stock_min` 搬到 8.3 的 `stock_1min` 等分频集合）造成的，
-  **不是重构回归**。正确修法是改指 `kline83`，属迁移收尾。
-- 同类的「绑错库」还有 `fetch.py:110 collections=DATABASE.stock_day`、
-  `scribe.py` 的 `QA_fetch_stock_list/index_list/stock_terminated` 默认值
+- 同类的「绑错库」还有 `fetch.py` 的 `GQ_fetch_stock_list_day`
+  （`collections=DATABASE.stock_day` 默认值）、`scribe.py` 的
+  `QA_fetch_stock_list/index_list/stock_terminated` 默认值
   （`stock_list` 只在 8.3 有；`index_list`/`stock_terminated` **两个库都没有**）。
 
 ---
