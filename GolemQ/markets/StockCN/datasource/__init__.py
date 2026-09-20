@@ -59,14 +59,17 @@ from . import tdxaidata_source  # noqa: F401,E402
 #: 骨架源（baostock/tushare/eastmoney/tdxaidata）不在此表 —— 它们的
 #: `available()` 恒为 False，列进来只会让调用方多走一次注定失败的分支。
 COLLECTION_SOURCE_PRIORITY = {
-    STOCK_LIST: ['pytdx', 'qmt', 'tencent'],
-    STOCK_BLOCK: ['pytdx', 'qmt'],
+    # tdxaidata 列首位是因为它**唯一覆盖北交所**（348 只）；但它只给代码集，
+    # 不给 name/pre_close。pytdx 给名称与昨收但缺北交所。两者都填入才能得到
+    # 完整的 stock_list —— 这是接口边界，不是谁有 bug。
+    STOCK_LIST: ['tdxaidata', 'pytdx', 'qmt', 'tencent'],
+    STOCK_BLOCK: ['pytdx', 'qmt', 'tdxaidata'],
     # pytdx 优先：get_finance_info 给的字段名与目标 schema 逐字相同，且**无需
-    # QMT 客户端在线**。QMT 降为备选。（早期误判 pytdx 拿不到股本，已更正。）
-    STOCK_INFO: ['pytdx', 'qmt'],
-    ETF_LIST: ['akshare'],
+    # QMT 客户端在线**。tdxaidata 的 get_gb_info 同样给股本，作为第二源。
+    STOCK_INFO: ['pytdx', 'tdxaidata', 'qmt'],
+    ETF_LIST: ['akshare', 'tdxaidata'],
     # 原定 baostock，实测其服务器不可达，改用 akshare（已实测可用）
-    FINANCIAL: ['akshare'],
+    FINANCIAL: ['akshare', 'tdxaidata'],
 }
 
 
