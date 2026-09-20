@@ -32,9 +32,21 @@ implemented as a singleton pattern (AKA class) for easy access and management.
 
 
 class _StubMeta(type):
-    """Metaclass that returns stub values for undefined attributes."""
+    """未定义的常量一律 **抛 AttributeError**。
+
+    此前它返回 ``f'{类名小写}_{属性名小写}'`` —— 一个「看起来合理」的假名。
+    后果见 ``PITFALLS.md`` P1：假名在数据里从不存在，取值静默失败，
+    回测「跑通了」却零成交，**没有任何报错**。
+
+    ⚠️ **不要改回返回值。** 若某常量抛 AttributeError，正解是从
+    ``GolemQ_old/utils/parameter.py`` 取它的**真实值**补上 ——
+    那才是该字段在 MongoDB 里的实际存储名（如 ``'ZPLagMajR'``）。
+    """
     def __getattr__(cls, name):
-        return f'{cls.__name__.lower()}_{name.lower()}'
+        raise AttributeError(
+            f'{cls.__name__}.{name} 未定义。本类不再伪造常量名'
+            f'（见 PITFALLS.md P1）。请从 GolemQ_old/utils/parameter.py '
+            f'取真实值补上 —— 那是数据在 MongoDB 里的实际字段名。')
 
 
 class MARKET_TYPE():

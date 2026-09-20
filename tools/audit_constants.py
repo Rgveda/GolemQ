@@ -36,34 +36,44 @@ from collections import defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-#: 代码里的别名 → **新树的类名**（统一用新树名做基准，避免两棵树类名不同导致查不到）
+#: 代码里的别名 → **规范化类名**（统一基准，避免两棵树类名不同导致查不到）
 ALIAS_TO_CLASS = {
     'AKA': 'AKA',
     'FIELD': 'FIELD', 'FLD': 'FIELD',
     'FEATURES': 'FEATURES', 'FTR': 'FEATURES',
     'TREND_STATUS': 'TREND_STATUS', 'ST': 'TREND_STATUS',
     'STATE': 'STATE', 'STE': 'STATE',
+    'MAS': 'MAS',
+    'RSK': 'RSK',
+    'LTT': 'LTT',
 }
 
-#: 新树类名 → 老树类名。**两棵树的类名不一样**（新树 `FIELD` vs 老树
-#: `INDICATOR_FIELD`）—— 早先的版本直接拿别名映射到老树名去查新树，
-#: 于是永远查不到、把已定义的常量全报成 MISSING，验证等于没验证。
-OLD_NAME_OF = {
-    'AKA': 'AKA',
-    'FIELD': 'INDICATOR_FIELD',
-    'FEATURES': 'FEATURES',
-    'TREND_STATUS': 'TREND_STATUS',
-    'STATE': 'STATE',
-}
-
-#: 新树文件 → 其中定义的类名
-NEW_CLASS_FILES = {
-    'GolemQ/core/constants.py': ('AKA', 'FIELD', 'FEATURES', 'TREND_STATUS', 'STATE'),
-}
-#: 老树文件 → 其中定义的类名
-OLD_CLASS_FILES = {
-    'GolemQ_old/utils/parameter.py':
-        ('AKA', 'FEATURES', 'INDICATOR_FIELD', 'STATE', 'TREND_STATUS'),
+#: 规范化类名 → (新树文件, 新树类名, 老树文件, 老树类名)。
+#: **两棵树的类名与文件都可能不同**（新树 `FIELD` 在 `core/constants.py`，
+#: 老树 `INDICATOR_FIELD` 在 `utils/parameter.py`；`RSK` 新树在
+#: `models/risk.py`、老树在 `models/alias.py`）。
+#:
+#: 早先的版本只覆盖 `core/constants.py`，于是 **`MAS` / `RSK` 的同类漂移
+#: 完全没被查到** —— 实测 `MAS.CONCEPT_XGB_ECHO_TIMING_LAG_COMBO` 新树写
+#: `'concept_xgb_echo_timing_lag_combo'`、老树是 `'cmXgbLagCmb'`，
+#: `RSK.CVaR_PEAK_PRICE` 新树 `'cvar_peak_price'`、老树 `'ES_PEAK_P'`。
+CONST_SOURCES = {
+    'AKA': ('GolemQ/core/constants.py', 'AKA',
+            'GolemQ_old/utils/parameter.py', 'AKA'),
+    'FIELD': ('GolemQ/core/constants.py', 'FIELD',
+              'GolemQ_old/utils/parameter.py', 'INDICATOR_FIELD'),
+    'FEATURES': ('GolemQ/core/constants.py', 'FEATURES',
+                 'GolemQ_old/utils/parameter.py', 'FEATURES'),
+    'TREND_STATUS': ('GolemQ/core/constants.py', 'TREND_STATUS',
+                     'GolemQ_old/utils/parameter.py', 'TREND_STATUS'),
+    'STATE': ('GolemQ/core/constants.py', 'STATE',
+              'GolemQ_old/utils/parameter.py', 'STATE'),
+    'MAS': ('GolemQ/models/massive.py', 'MAS',
+            'GolemQ_old/models/massive.py', 'MAS'),
+    'RSK': ('GolemQ/models/risk.py', 'RSK',
+            'GolemQ_old/models/alias.py', 'RSK'),
+    'LTT': ('GolemQ/models/alias.py', 'LTT',
+            'GolemQ_old/models/alias.py', 'LTT'),
 }
 
 
@@ -117,15 +127,14 @@ def main() -> int:
                     help='只输出 MISSING/WRONG 的赋值语句，便于直接粘贴')
     args = ap.parse_args()
 
-    # 老树的键统一改用**新树类名**做基准，否则两棵树类名不同会永远查不到
-    old = {}
-    for rel, classes in OLD_CLASS_FILES.items():
-        for (old_cls, name), val in _class_consts(os.path.join(ROOT, rel), classes).items():
-            new_cls = next((k for k, v in OLD_NAME_OF.items() if v == old_cls), old_cls)
-            old[(new_cls, name)] = val
-    new = {}
-    for rel, classes in NEW_CLASS_FILES.items():
-        new.update(_class_consts(os.path.join(ROOT, rel), classes))
+    old, new = {}, {}
+    for canon, (new_rel, new_cls, old_rel, old_cls) in CONST_SOURCES.items():
+        for (_, name), val in _class_consts(
+                os.path.join(ROOT, new_rel), (new_cls,)).items():
+            new[(canon, name)] = val
+        for (_, name), val in _class_consts(
+                os.path.join(ROOT, old_rel), (old_cls,)).items():
+            old[(canon, name)] = val
 
     used = used_constants()
 
