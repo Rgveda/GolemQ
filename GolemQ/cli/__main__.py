@@ -474,17 +474,21 @@ def main() -> None:
             
     elif args.save_status:
         # 只读：报告库存量与各源可用性，不写库
-        from GolemQ.pipeline.refdata import format_status
+        from GolemQ.markets.StockCN.refdata_save import format_status
         print(format_status())
 
     elif args.save_x or args.save_qmt:
-        # CLI 只做参数校验，业务逻辑在 pipeline/refdata.py
-        from GolemQ.pipeline.refdata import format_status, save_refdata
+        # CLI 只做参数校验，业务逻辑在 markets/StockCN/refdata_save.py
+        # —— 这 5 个集合是 A 股特有概念，获取逻辑归市场本身，不属于通用 pipeline
+        from GolemQ.markets.StockCN.refdata_save import (
+            ALL_REF_COLLECTIONS,
+            format_status,
+            save_refdata,
+        )
 
         collections = None
         if args.save_collections:
             collections = [c.strip() for c in args.save_collections.split(',') if c.strip()]
-            from GolemQ.pipeline.refdata import ALL_REF_COLLECTIONS
             unknown = [c for c in collections if c not in ALL_REF_COLLECTIONS]
             if unknown:
                 print(f"未知集合: {unknown}；可用: {list(ALL_REF_COLLECTIONS)}")

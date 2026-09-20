@@ -1,42 +1,54 @@
 # coding:utf-8
-"""参考集合的取数与落库编排 —— CLI 只做参数校验后委托到这里。
+"""A 股参考集合的取数与落库编排 —— 对应 CLI 的 `--save-x` / `--save-qmt`。
 
-对应 CLI
-========
-* ``--save-x``   多源自动选（按 `COLLECTION_SOURCE_PRIORITY`）
-* ``--save-qmt`` 强制走 MiniQMT
+为什么在 `markets/StockCN/` 而不是 `pipeline/`
+=============================================
+这 5 个集合（`stock_list`/`stock_info`/`etf_list`/`stock_block`/`financial`）
+**全是 A 股特有概念**：源是通达信/东财/新浪，schema 是 A 股口径，目标是 A 股库。
+它们的获取逻辑属于市场本身，不属于通用数据加工。
+
+`pipeline/` 的实际内容是 `base.py` + 三个 benchmark —— 那是**数据加工流水线**
+（特征计算、基准对比），不是数据获取。CLI 里已有的先例也印证这一点：
+`--stock-min-aligned` 委托给的是 `markets/StockCN/align.py`。
+
+CLAUDE.md 那条「CLI 只做参数校验再委托」的重点是**别把业务逻辑留在 CLI 层**，
+而非「必须放 pipeline」。
+
+为什么不并进 `refdata.py`
+=========================
+`refdata.py` 是**读取叶子**，只依赖 `core.settings` 与 `pandas`，谁都能轻量
+import 它。本模块要用 `datasource/` 整包与 `writer`，并进去会让读路径被迫
+拖进整个适配层与网络依赖。读写分开。
 
 设计要点
 ========
 **取数与落库分离。** 适配器（`datasource/`）只产出行、不碰 DB；落库由
-`datasource/writer.py` 完成。本模块负责把两者接起来并决定用哪个源。
+`datasource/writer.py` 完成。本模块把两者接起来并决定用哪个源。
 
 **不支持的集合要显式报错，不能静默跳过。** 用户点的是"保存全部"，若某个
-集合没有可用源，静默跳过会让人以为存过了 —— 这正是本次重构反复要消除的
-那类失败。故返回结果里逐集合标注 `status`（ok / skipped / failed）。
-
-**`stock_list` 需要跨源补字段**（见 `_supplement_stock_list`）：tdxaidata 是
-唯一覆盖北交所的源，但它只给代码集、不给名称；pytdx 有名称却到不了北交所。
-单用任一个都得不到可用结果，故按优先级取主源后，再用下一个能供同集合的源
-补 `name`/`pre_close`。
+集合没有可用源，静默跳过会让人以为存过了 —— 这正是本次重构要消除的那类失败。
+故返回结果里逐集合标注 `status`（ok / skipped / failed）。
 """
 from __future__ import annotations
 
 import datetime as dt
 
-from GolemQ.markets.StockCN import DATABASE_STOCK_CN
-from GolemQ.markets.StockCN.datasource import (
-    COLLECTION_SOURCE_PRIORITY,
-    get_source,
-)
-from GolemQ.markets.StockCN.datasource.base import (
-    DataSourceNotAvailable,
-    UnsupportedCollection,
-)
-from GolemQ.markets.StockCN.datasource.writer import (
-    save_block_collection,
-    save_collection,
-)
+from . import DATABASE_STOCK_CN
+from .datasource import COLLECTION_SOURCE_PRIORITY, get_source
+from .datasource.base import DataSourceNotAvailable, UnsupportedCollection
+from .datasource.writer import save_block_collection, save_collection
+
+__all__ = [
+    'ALL_REF_COLLECTIONS',
+    'UNIQUE_KEYS',
+    'DELTA_DELETE',
+    'save_refdata',
+    'refdata_status',
+    'format_status',
+]
+
+#: 5 个参考集合
+ALL_REF_COLLECTIONS = ('stock_list', 'stock_info', 'etf_list', 'stock_block', 'financial')
 
 #: 各集合的 upsert 键。`stock_block` 是复合键 —— 一只股票属于多个板块。
 UNIQUE_KEYS = {
@@ -51,8 +63,6 @@ UNIQUE_KEYS = {
 #: `etf_list` 是快照非权威名单，删差量会误删停牌/新上市未收录的品种。
 #: `financial` 是历史累积，本次没拉到不代表没有，**绝不能删**。
 DELTA_DELETE = {'stock_list', 'stock_info'}
-
-ALL_REF_COLLECTIONS = ('stock_list', 'stock_info', 'etf_list', 'stock_block', 'financial')
 
 
 def _pick_source(collection: str, source: str = None, verbose: bool = False):
@@ -78,7 +88,6 @@ def _supplement_stock_list(rows: list, primary_name: str, verbose: bool) -> list
     """给缺 `name`/`pre_close` 的行从下一个可用源补上。
 
     只补空字段，**不覆盖主源给的值** —— 主源是权威，补充源只填空。
-    以 `code` 为键合并。
     """
     need = [r for r in rows if not r.get('name') or r.get('pre_close') in (None, 0)]
     if not need:
@@ -98,8 +107,7 @@ def _supplement_stock_list(rows: list, primary_name: str, verbose: bool) -> list
 
         # 建索引时**显式处理同码**：裸 6 位代码在跨市场时可能重复
         # （沪市指数 000001 ↔ 深市股票 000001）。静默用后写覆盖先写，
-        # 会把指数的名字填进股票记录 —— 实测踩过。这里按 sse 保留与
-        # 主源标记一致的那条，不一致就留痕。
+        # 会把指数的名字填进股票记录 —— 实测踩过。
         extra: dict = {}
         dup = 0
         for r in fetched:
@@ -110,6 +118,7 @@ def _supplement_stock_list(rows: list, primary_name: str, verbose: bool) -> list
             extra[c] = r
         if dup and verbose:
             print(f'[refdata] 补充源 {name} 有 {dup} 个重复 code，已保留首条')
+
         filled = 0
         for r in rows:
             e = extra.get(r['code'])
