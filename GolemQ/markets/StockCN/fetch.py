@@ -72,6 +72,7 @@ from .datastruct import (
 )
 import warnings
 from .kline83 import GQ_fetch_stock_day_adv
+from .etf_fq import GQ_apply_etf_qfq
 from .refdata import (
     GQ_fetch_stock_block,
     GQ_fetch_stock_list,
@@ -1428,16 +1429,15 @@ def get_kline_price_v3(
             # 在 res 中 drop zero_trading
             data_day.data = data_day.data.drop(zero_trading.index)
 
-            # QA 不支持 ETF 复权
-            data_day.data[FLD.PCT_CHANGE_MAJOR] = np.log(data_day.data[AKA.CLOSE] / data_day.data[AKA.CLOSE].shift(1))
-            fq_ckpo = data_day.data.query(f'({FLD.PCT_CHANGE_MAJOR} > 0.10832) | ({FLD.PCT_CHANGE_MAJOR} < -0.10832)')
-            if (len(fq_ckpo) > 1e-12) and ((len(fq_ckpo) == 1) or (len(data_day.data.query(f'({FLD.PCT_CHANGE_MAJOR} > 0.20) | ({FLD.PCT_CHANGE_MAJOR} < -0.20)')))):
-                if (is_stock_cn(codelist)[1] == MARKET_TYPE.INDEX_CN):
-                    pass
-                else:
-                    print(f'\nETF {codelist[0]} 需要人工复权：\n', fq_ckpo)
-
-            # data_day = data_day.to_qfq()
+            # ETF 前复权。
+            #
+            # 这里原先是一段「替代品」：重构把 `markets/StockCN/etf_fq.py`
+            # 整个丢了，只留下「检测到大跳空就 print 一句『ETF 需要人工复权』」
+            # —— `MIGRATION_STATUS.md` HIGH #9（约 10% 假跳空污染 ETF 回测）。
+            # 现按老树的做法调用真实实现。
+            #
+            # 真指数在 `etf_adj` 里没有行，本调用对它是 no-op，且一次 Mongo 都不查。
+            data_day = GQ_apply_etf_qfq(data_day, codelist=codelist, verbose=verbose)
             if (len(codelist)==1):
                 data_day.data[AKA.FULL_SYMBOL] = normalize_code(codelist[0], market_type=market_type)
                 data_day.data[AKA.MARKET_TYPE] = market_type

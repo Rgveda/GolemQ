@@ -111,6 +111,32 @@ QUANTAXIS import 计数：**32 → 11**（另有 37 处注释/文档提及，非
 | 日线读取器 | `kline83.GQ_fetch_stock_day_adv` | 端到端 `StockCNQuotes` **8,011 行 0 差** |
 | `quotes.py` / `fetch.py` 接线 | —— | 单测 12/12；全量测试与基线**逐项相同** |
 
+### ✅ ETF 复权已恢复（2026-09-21）
+
+`markets/StockCN/etf_fq.py` 已从老树回迁 —— 这正是 `MIGRATION_STATUS.md`
+**HIGH #9**（重构把整个模块丢了，只留一句「ETF 需要人工复权」的打印）。
+
+调用点（**每条路径恰好一次**，因为重复调用会二次乘因子）：
+
+| 路径 | 位置 |
+|:--|:--|
+| 门面 | `kline83.get_kline_price_v3` / `get_kline_price_min` |
+| legacy 行情 | `quotes.py` 的 `_apply_fq`（按标的选 `to_qfq` 或 ETF 复权）|
+| legacy fetch | `fetch.py` 里原打印提示的桩 |
+
+验证：**独立重算 `qfq == raw × adj(date)` 逐根 0 差**；除权日上原始收益
+−0.73%/−2.13%/−2.49% → 复权后 +1.27%/+0.29%/+0.10%，修正量与因子台阶精确吻合；
+股票与真指数原样返回、一次 Mongo 都不查。
+
+**顺带修了两件事：**
+
+1. 回迁时发现老树 docstring **声称幂等但从未实现**（它置 `if_fq='qfq'` 却从不读），
+   连调两次会乘两遍因子（实测比值 0.931873 = 其除权因子）。新模块补了 `if_fq` 早退。
+   **这是接线时必须逐路径核对「只调一次」的原因。**
+2. 上一轮我给 `quotes.py` 换日线读取器时**引入过一个回归**：ETF 现在返回
+   `GQ_DataStruct_Index_day`（按设计无 `to_qfq`），而 `quotes.py` 无条件调
+   `.to_qfq()` → `AttributeError`。`_apply_fq` 一并修掉。
+
 ### 一条刻意分歧（勿当 bug「修」回去）
 
 QUANTAXIS 基类构造里的 `DataFrame.drop_duplicates()` **不带参数 → 只比列值、
@@ -120,8 +146,6 @@ QUANTAXIS 基类构造里的 `DataFrame.drop_duplicates()` **不带参数 → �
 
 ### 仍未做
 
-- **ETF 复权**：老树 `GQ_apply_etf_qfq` 未移植，ETF 走 INDEX 分支拿不到
-  `to_qfq()` → **新树 ETF 当前不复权**（`etf_adj` 仅覆盖 294 只）。上一轮定：另开一轮。
 - **分钟线读取**：`fetch.py` 的 `GQ_fetch_stock_min` 读 `DATABASE.stock_min`
   （`golemq` 库，该集合**不存在**）→ **实测恒返回 None**。老树同样这么写，
   所以是**数据迁移**（`stock_min` 搬到 8.3 的 `stock_1min` 等分频集合）造成的，

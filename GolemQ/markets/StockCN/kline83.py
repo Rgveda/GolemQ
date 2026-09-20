@@ -71,6 +71,7 @@ import pandas as pd
 from GolemQ.core.constants import MARKET_TYPE
 
 from .datastruct import frame_to_datastruct
+from .etf_fq import GQ_apply_etf_qfq
 from .symbol import is_stock_cn
 
 __all__ = [
@@ -222,7 +223,13 @@ def get_kline_price_min(codelist, start=None, market_type=None, frequency='60min
                   f'code={codelist} start={start} end={end}')
         raise
     codename = codelist[0] if isinstance(codelist, (list, tuple, set)) else codelist
-    return KlineResult(_to_kline_frame(df)), codename
+    result = KlineResult(_to_kline_frame(df))
+    # ETF 前复权。真指数与股票在这里都是 **no-op**：股票不做（走 `to_qfq` +
+    # `stock_adj`，由各自调用点负责），真指数在 `etf_adj` 里没有行 ——
+    # `GQ_apply_etf_qfq` 对非 ETF 一次 Mongo 都不查。
+    # 这是 `MIGRATION_STATUS.md` HIGH #9 的正解：老树在每个 kline 取数函数里都调了它。
+    GQ_apply_etf_qfq(result, codelist=codelist, verbose=verbose)
+    return result, codename
 
 
 def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
@@ -252,7 +259,11 @@ def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
             print(f'GolemQ Warning: {market}_{frequency} 在 8.3 无数据，'
                   f'返回 None。code={codelist} start={start} end={end}')
         return None, codename
-    return KlineResult(_to_kline_frame(df)), codename
+    result = KlineResult(_to_kline_frame(df))
+    # ETF 前复权，同 `get_kline_price_min`。老树在每个 kline 取数函数里都调了它；
+    # 重构把它连同整个 `etf_fq.py` 一起丢了 —— `MIGRATION_STATUS.md` HIGH #9。
+    GQ_apply_etf_qfq(result, codelist=codelist, verbose=verbose)
+    return result, codename
 
 
 def GQ_fetch_stock_day_adv(codelist, start=None, end=None, market_type=None,

@@ -31,7 +31,31 @@ from .symbol import normalize_code
 # QUANTAXIS。返回类型 `GQ_DataStruct_Stock_day` 与 `QA_DataStruct_Stock_day`
 # 同接口：`.data` / `.to_qfq()`。
 from .kline83 import GQ_fetch_stock_day_adv
+from .etf_fq import GQ_apply_etf_qfq, GQ_is_etf
 from .fetch import GQ_fetch_stock_min_adv
+
+
+def _apply_fq(data, code, fq):
+    """按标的种类选复权方式。三种情形，**互斥且都有明确归属**：
+
+    - **ETF** → `GQ_apply_etf_qfq`（因子表 `etf_adj`）。ETF 与真指数共用
+      `index_*` 集合，拿到的容器**没有** `to_qfq` —— QUANTAXIS 的 Index
+      datastruct 本就没有（见 `datastruct.py`），ETF 复权一直是
+      `etf_fq.py` 单独负责的。
+    - **股票** → 容器的 `.to_qfq()`（因子表 `stock_adj`）。
+    - **真指数** → 不复权，原样返回。真指数在 `etf_adj` 里没有行，
+      `GQ_apply_etf_qfq` 也不会为它查库。
+
+    判据用 `hasattr(..., 'to_qfq')` 而不是 `isinstance`：问的是「这个容器提不提供
+    股票式复权」，而 `to_qfq` 只挂在 Stock 类上正是 `datastruct.py` 刻意的层级设计。
+    """
+    if not fq:
+        return data
+    if GQ_is_etf(code):
+        return GQ_apply_etf_qfq(data, codelist=code)
+    if hasattr(data, 'to_qfq'):
+        return data.to_qfq()
+    return data
 
 
 class StockCNQuotes:
@@ -66,9 +90,8 @@ class StockCNQuotes:
         if data_day is None:
             return pd.DataFrame()
 
-        # 前复权
-        if fq:
-            data_day = data_day.to_qfq()
+        # 前复权（股票走 stock_adj，ETF 走 etf_adj，真指数不复权）
+        data_day = _apply_fq(data_day, short_code, fq)
 
         data_day.data[AKA.FULL_SYMBOL] = normalize_code(code)
         data_day.data[AKA.MARKET_TYPE] = 'stock_cn'
@@ -190,11 +213,10 @@ class StockCNQuotes:
                 if drop_indices:
                     data_min.data = data_min.data.drop(drop_indices)
 
-        # 前复权
-        if fq:
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore', category=FutureWarning)
-                data_min = data_min.to_qfq()
+        # 前复权（股票走 stock_adj，ETF 走 etf_adj，真指数不复权）
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', category=FutureWarning)
+            data_min = _apply_fq(data_min, normalize_code(code)[:6], fq)
 
         data_min.data[AKA.FULL_SYMBOL] = normalize_code(code)
         data_min.data[AKA.MARKET_TYPE] = 'stock_cn'

@@ -43,8 +43,33 @@ core/constants.py:34-37  _StubMeta.__getattr__ 伪造字段名（静默，不抛
 | 6 | **真实 kline 实现就在同一棵树里，`services/` 却接了 stub** —— 真实代码在 `markets/StockCN/fetch.py:721`(`get_kline_price_min`)、`:1176`(`get_kline_price_v3`)，而 `fetch/kline.py` 退化成 23 行空 stub | 调用方 `persistence/_daily.py:56`、`_stock.py:54`、`_review.py:52`、`_concept.py:53` | **接线错误** |
 | 7 | **`models/alias.py` 是空类** → `services/align.py:336-338` 使用 `LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY` 时 **AttributeError** | 老 `models/alias.py:732`（完整常量注册表）→ 新 `models/alias.py:7` `class LTT: pass` | 未迁移 |
 | 8 | **模型字段常量与存储 schema 不再匹配** —— 见下表 | `models/massive.py`、`models/risk.py` | **新引入** |
-| 9 | **ETF 前复权模块整删** —— 拉 ETF 日线（如 510300）跨除权日时，老代码返回**连续的前复权 OHLC**，新代码只打印"ETF 需要人工复权"就返回**不复权数据**，产生约 10% 假跳空，**污染 ETF 回测** | 老 `markets/StockCN/etf_fq.py`（260 行 / 3 函数，`GQ_is_etf` / `GQ_fetch_etf_adj` / `GQ_apply_etf_qfq`）→ 新 `markets/StockCN/fetch.py:1416-1423` 仅打印提示 | **逻辑丢失** |
+| 9 | ~~**ETF 前复权模块整删**~~ **✅ 已于 2026-09-21 修复** —— 拉 ETF 日线（如 510300）跨除权日时，老代码返回**连续的前复权 OHLC**，新代码只打印"ETF 需要人工复权"就返回**不复权数据**，产生约 10% 假跳空，**污染 ETF 回测** | 老 `markets/StockCN/etf_fq.py`（260 行 / 3 函数，`GQ_is_etf` / `GQ_fetch_etf_adj` / `GQ_apply_etf_qfq`）→ 新 `markets/StockCN/fetch.py:1416-1423` 仅打印提示 | **逻辑丢失** → 已回迁 |
 | 10 | **K线新鲜度告警消失** —— 数据源静默断流（pytdx/QMT 返回空包、QUANTAXIS 吞掉）不再触发任何告警 | 老 `supervisor/data_freshness.py` + `cli/__main__.py:1465-1469` 调 `notify_if_stale()` → 新 `cli/__main__.py:198-227` 无检查 | **逻辑丢失** |
+
+### #9 的修复记录（2026-09-21，与 3.8 并列，不进编号）
+
+`markets/StockCN/etf_fq.py` 已回迁（`GQ_is_etf` / `GQ_fetch_etf_adj` /
+`GQ_apply_etf_qfq`），并在**每条产出 K 线的路径上各调用一次**：`kline83` 的
+`get_kline_price_v3` / `get_kline_price_min`（门面路径）、`quotes.py` 的
+`_apply_fq`（legacy 路径）、`fetch.py` 里那段打印提示的桩。
+
+验证（2026-09-21，全部实测）：
+
+- **独立重算**：`qfq == raw × adj(date)` 逐根 0 差（510300 日线 659 行、
+  159119/159118 分钟线共 400 行）。
+- **除权日连续性**：510300 三个除权日上，原始收益 −0.73% / −2.13% / −2.49%
+  → 复权后 +1.27% / +0.29% / +0.10%；修正量与因子台阶精确吻合
+  （`1.0127/0.9927 = 1.0201 = 0.950618/0.931873`）。
+- **非 ETF 不受影响**：股票与真指数原样返回，`if_fq` 不被改写，一次 Mongo 都不查。
+
+两条**移植时发现并已修**的事：
+
+1. 老树 docstring 声称 `GQ_apply_etf_qfq` **幂等**，但**从未实现** —— 它置
+   `if_fq='qfq'` 却从不读它，连调两次会把因子乘两遍（实测 510300 第二次/第一次
+   = 0.931873，正是其除权因子）。新模块补上 `if_fq` 早退，使契约成真。
+   因此**每条路径只能调用一次**，接线时已逐路径核对。
+2. 该模块的 `DATABASE_QA.etf_adj` 与 8.3 的 `golemq_stock_cn.etf_adj`
+   **逐行相同**（397,499 行 / 294 只），故取 8.3。
 
 ### 3.8 字段名漂移明细
 
