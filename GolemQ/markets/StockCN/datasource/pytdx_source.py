@@ -93,8 +93,24 @@ from .base import (
 #: 2026-09-20 实测可用。仅作为兜底，正常应由配置提供。
 DEFAULT_HOSTS = (('123.125.108.14', 7709),)
 
-#: 4.4 `quantaxis.stock_list` 实测的代码前缀分布（合计 5591）。
-#: pytdx 的证券列表混有基金/债券/指数，必须按此前缀过滤才能得到与既有数据一致的集合。
+#: **按市场各自的**股票代码前缀。
+#:
+#: 早先用一张统一的前缀表 ``('00','30','60','68','82','92')`` 过滤所有市场 ——
+#: **那是错的**：沪市列表里的 ``00xxxx`` 全是**指数**（``000001`` 上证指数、
+#: ``000300`` 沪深300），与深市股票**同码**。统一前缀会把它们当股票收进来，
+#: 于是 ``000001`` 同时出现两次 —— 一次是上证指数(sh)、一次是平安银行(sz)，
+#: 下游按裸 code 建字典时静默丢掉一条，把指数的名字填进股票记录
+#: （实测症状：``000001`` 显示 name='上证指数' 却挂 sse='sz'）。
+#:
+#: 老代码的 docstring 记过同一个坑（「指数池与股票池交集 216 个 000xxx」），
+#: 解法同样是**别按裸代码判断市场**。
+MARKET_CODE_PREFIXES = {
+    0: ('00', '30'),   # 深市：主板 + 创业板
+    1: ('60', '68'),   # 沪市：主板 + 科创板（**不含 00xxxx，那些是指数**）
+    2: ('82', '92'),   # 北交所
+}
+
+#: 兼容旧名：全部市场前缀的并集（仅用于「像不像股票代码」的粗判）
 STOCK_CODE_PREFIXES = ('00', '30', '60', '68', '82', '92')
 
 #: 板块文件 → GolemQ 的 type 取值
@@ -226,7 +242,9 @@ class TdxSource(DataSource):
         )
 
         rows: list = []
+        seen: set = set()
         for market, sse in market_enum:
+            allowed = MARKET_CODE_PREFIXES.get(market, ())
             try:
                 total = api.get_security_count(market)
             except Exception:
@@ -242,8 +260,18 @@ class TdxSource(DataSource):
                     break
                 for r in batch:
                     code = str(r.get('code', ''))
-                    if not code.startswith(STOCK_CODE_PREFIXES):
+                    # **按市场各自的前缀**过滤，不是统一前缀 —— 见
+                    # MARKET_CODE_PREFIXES 的说明：沪市 00xxxx 是指数，
+                    # 与深市股票同码，统一前缀会制造重复与张冠李戴。
+                    if not code.startswith(allowed):
                         continue
+                    if code in seen:
+                        # 同码跨市场（理论上修好前缀后不该出现）—— 保留先到的
+                        # 并留痕，而不是静默覆盖。
+                        if verbose:
+                            print(f'[pytdx] 重复 code {code}（{sse}）已跳过')
+                        continue
+                    seen.add(code)
                     rows.append({
                         'code': code,
                         'volunit': r.get('volunit'),
@@ -252,6 +280,7 @@ class TdxSource(DataSource):
                         'pre_close': r.get('pre_close'),
                         'sse': sse,
                         'sec': 'stock_cn',
+                        'source': self.name,
                     })
         return rows
 
