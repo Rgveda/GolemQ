@@ -27,7 +27,7 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime as dt
-from datetime import timedelta
+from datetime import timedelta, timezone
 from .constants import TRADE_DATE_SSE
 from functools import lru_cache
 from GolemQ.core.constants import MARKET_TYPE
@@ -332,3 +332,32 @@ def GQ_util_time_stamp(time_):
     else:
         timestr = str(time_)[0:19]
         return time.mktime(time.strptime(timestr, '%Y-%m-%d %H:%M:%S'))
+
+
+def GQ_util_timestamp_to_str(ts_epoch=None, local_tz=None):
+    """时间戳 → ``'%Y-%m-%d %H:%M:%S'`` 字符串（**默认 UTC+8**）。
+
+    行为对齐 ``QUANTAXIS.QAUtil.QADate_Adv.QA_util_timestamp_to_str`` ——
+    已实测两者对同一输入返回同值。传入 ``None`` 取当前时间。
+
+    ⚠️ 默认时区是 **UTC+8 而非 UTC**。这是 A 股价量数据的口径，不是笔误：
+    对齐原实现，改成本地时区会让日志时间戳在非中国时区的机器上静默偏移。
+
+    >>> GQ_util_timestamp_to_str(1704124800)      # 2024-01-02 00:00 UTC+8
+    '2024-01-02 00:00:00'
+    >>> GQ_util_timestamp_to_str(dt(2024, 1, 2, 10, 30, 0))
+    '2024-01-02 10:30:00'
+    >>> len(GQ_util_timestamp_to_str())           # 不给参数 → 当前时间
+    19
+    """
+    if local_tz is None:
+        local_tz = timezone(timedelta(hours=8))
+
+    if ts_epoch is None:
+        ts_epoch = dt.now(timezone(timedelta(hours=8)))
+
+    if isinstance(ts_epoch, dt):
+        return ts_epoch.astimezone(local_tz).strftime('%Y-%m-%d %H:%M:%S')
+
+    # 数值时间戳
+    return dt.fromtimestamp(float(ts_epoch), local_tz).strftime('%Y-%m-%d %H:%M:%S')

@@ -38,10 +38,8 @@ from datetime import (
 import datetime
 import traceback
 import random
-import QUANTAXIS as QA
-from QUANTAXIS.QAUtil.QADate_Adv import (
-    QA_util_timestamp_to_str,
-)
+from GolemQ.core.constants import MARKET_TYPE, FREQUENCE
+from GolemQ.markets.StockCN.date_utils import GQ_util_timestamp_to_str
 
 from GolemQ.core.settings import DATABASE as DATABASE_GolemQ
 from GolemQ.core.constants import (
@@ -68,7 +66,7 @@ from GolemQ.services.persistence._schema import (
 
 def dataloader_concept_check(symbol=None,
                              offset: str = '',
-                             market_type=QA.MARKET_TYPE.STOCK_CN,
+                             market_type=MARKET_TYPE.STOCK_CN,
                              verbose: bool = False,
                              peek_column: list = [MAS.CONCEPT_MACD_COMPOUDED_RATIO_MEDIAN],
                              debug: bool = False, ):
@@ -87,7 +85,7 @@ def dataloader_concept_check(symbol=None,
     if (len(offset) == 0):
         try:
             ret_concept_kline = get_stock_concept_kline(symbol,
-                                                        freq=QA.FREQUENCE.HOUR, )
+                                                        freq=FREQUENCE.HOUR, )
             hour_baseline = ret_concept_kline
             codelist = sorted(hour_baseline.index.get_level_values(level=1).unique())
             each_day = sorted(hour_baseline.index.get_level_values(level=0).unique())
@@ -109,7 +107,7 @@ def dataloader_concept_check(symbol=None,
         ret_concept_kline = get_stock_concept_kline(symbol,
                                                     start=start,
                                                     end=end,
-                                                    freq=QA.FREQUENCE.HOUR, )
+                                                    freq=FREQUENCE.HOUR, )
         persistence_features = load_massive_reviews(symbol,
                                                     start=start,
                                                     end=end,
@@ -187,7 +185,7 @@ def dataloader_concept_check(symbol=None,
         persistence_ratio['hourly']['masked'] = sorted(list(set([*persistence_ratio['hourly']['masked'],
                                                                   *persistence_ratio['kline']['masked']])))
     if (verbose):
-        print(u'[{}] {} 板块走势先验数据妥善率：{:.2%},{:.2%},{:.2%} Total:{}'.format(QA_util_timestamp_to_str(),
+        print(u'[{}] {} 板块走势先验数据妥善率：{:.2%},{:.2%},{:.2%} Total:{}'.format(GQ_util_timestamp_to_str(),
                                                                                       symbol, persistence_ratio['hourly']['ratio'], ), )
 
     return persistence_ratio, hour_baseline, persistence_features
@@ -196,7 +194,7 @@ def dataloader_concept_check(symbol=None,
 def dataloader_massive_check(revision: str = 'compact',
                              eval_range: str = 'fast',
                              offset: str = '',
-                             market_type=QA.MARKET_TYPE.STOCK_CN,
+                             market_type=MARKET_TYPE.STOCK_CN,
                              peek_column=[MAS.MACD_COMPOUDED_BAND_RATIO_MEDIAN],
                              verbose: bool = False,
                              collections=DATABASE_GolemQ.stock_massive_models, ):
@@ -275,7 +273,7 @@ def dataloader_massive_check(revision: str = 'compact',
                                                                                 baseline=kline_hour_baseline,
                                                                                 persistence_ratio=persistence_ratio['hourly']['ratio'])
         if (verbose):
-            print(u'[{}] {} 大盘势态先验数据前置妥善率：{:.2%}, Total:{}'.format(QA_util_timestamp_to_str(),
+            print(u'[{}] {} 大盘势态先验数据前置妥善率：{:.2%}, Total:{}'.format(GQ_util_timestamp_to_str(),
                                                                                   eval_range,
                                                                                   persistence_ratio['hourly']['ratio'],
                                                                                   persistence_ratio['hourly']['total'], ), )

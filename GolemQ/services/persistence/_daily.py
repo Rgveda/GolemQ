@@ -38,10 +38,8 @@ from datetime import (
 import datetime
 import traceback
 import random
-import QUANTAXIS as QA
-from QUANTAXIS.QAUtil.QADate_Adv import (
-    QA_util_timestamp_to_str,
-)
+from GolemQ.core.constants import MARKET_TYPE, FREQUENCE
+from GolemQ.markets.StockCN.date_utils import GQ_util_timestamp_to_str
 
 from GolemQ.core.settings import DATABASE as DATABASE_GolemQ
 from GolemQ.core.constants import (
@@ -65,7 +63,7 @@ from GolemQ.services.persistence._schema import (
 def dataloader_persistence_daily_check(
         symbol=None,
         offset: str = '',
-        market_type=QA.MARKET_TYPE.STOCK_CN,
+        market_type=MARKET_TYPE.STOCK_CN,
         verbose: bool = False,
         peek_column: list = [FLD.STOCK_SCORE_M15],
         debug: bool = False,
@@ -151,15 +149,15 @@ def dataloader_persistence_daily_check(
 
         try:
             if (stock_metadata_pd is not None) and \
-               (market_type == QA.MARKET_TYPE.STOCK_CN):
+               (market_type == MARKET_TYPE.STOCK_CN):
                 persistence_features = data_baseline.data.join(stock_metadata_pd[stock_metadata_pd.columns.difference(data_baseline.data.columns)])
             elif (stock_metadata_pd is not None) and \
-                 (market_type == QA.MARKET_TYPE.INDEX_CN):
+                 (market_type == MARKET_TYPE.INDEX_CN):
                 persistence_features = data_baseline.data.join(stock_metadata_pd[stock_metadata_pd.columns.difference(data_baseline.data.columns)])
             else:
-                if (market_type == QA.MARKET_TYPE.STOCK_CN):
+                if (market_type == MARKET_TYPE.STOCK_CN):
                     print(u'\nCode:{} missing stock_metadata: stock_reality_feat_day'.format(symbol, ))
-                elif (market_type == QA.MARKET_TYPE.INDEX_CN):
+                elif (market_type == MARKET_TYPE.INDEX_CN):
                     print(u'\nCode:{} missing index_metadata: index_reality_feat_day'.format(symbol, ))
         except Exception as e:
             print('code:{}'.format(symbol), e, '\n')
@@ -245,7 +243,7 @@ def dataloader_persistence_daily_check(
                                                                                persistence_ratio=persistence_ratio['daily']['ratio'])
 
         if (verbose):
-            print(u'[{}] {} 先验数据前置妥善率：({}) {:.2%}, ({}) {:.2%} Total:{}(H:{})'.format(QA_util_timestamp_to_str(),
+            print(u'[{}] {} 先验数据前置妥善率：({}) {:.2%}, ({}) {:.2%} Total:{}(H:{})'.format(GQ_util_timestamp_to_str(),
                                                                                                 symbol,
                                                                                                 (len(persistence_features[FTR.ZEN_PEAK_TIMING_LAG_MAJOR_REAL].dropna())),
                                                                                                 persistence_ratio['daily']['ratio'],

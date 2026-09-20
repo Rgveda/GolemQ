@@ -37,10 +37,8 @@ from datetime import (
 )
 import datetime
 import traceback
-import QUANTAXIS as QA
-from QUANTAXIS.QAUtil.QADate_Adv import (
-    QA_util_timestamp_to_str,
-)
+from GolemQ.core.constants import MARKET_TYPE, FREQUENCE
+from GolemQ.markets.StockCN.date_utils import GQ_util_timestamp_to_str
 
 from GolemQ.core.settings import DATABASE as DATABASE_GolemQ
 from GolemQ.core.constants import (
@@ -76,7 +74,7 @@ def dataloader_review_check_reflush(persistence_ratio: pd.DataFrame = None,
 def dataloader_review_check(symbol=None,
                             features: pd.DataFrame = None,
                             offset: str = '',
-                            market_type=QA.MARKET_TYPE.STOCK_CN,
+                            market_type=MARKET_TYPE.STOCK_CN,
                             verbose: bool = False,
                             peek_column=[STE.MACD_COMPOUDED_BAND_RATIO],
                             collections=DATABASE_GolemQ.stock_ta_reviews, ):
@@ -207,7 +205,7 @@ def dataloader_review_check(symbol=None,
                                                         hour_baseline=hour_baseline, )
 
     if (verbose):
-        print(u'[{}] {} 先验数据前置妥善率：{:.2%},{:.2%},{:.2%} Total:{}'.format(QA_util_timestamp_to_str(),
+        print(u'[{}] {} 先验数据前置妥善率：{:.2%},{:.2%},{:.2%} Total:{}'.format(GQ_util_timestamp_to_str(),
                                                                                   symbol, persistence_ratio['hourly']['ratio'], ), )
 
     return persistence_ratio, hour_baseline, persistence_features

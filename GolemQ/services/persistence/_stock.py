@@ -38,10 +38,8 @@ from datetime import (
 import datetime
 import traceback
 import random
-import QUANTAXIS as QA
-from QUANTAXIS.QAUtil.QADate_Adv import (
-    QA_util_timestamp_to_str,
-)
+from GolemQ.core.constants import MARKET_TYPE, FREQUENCE
+from GolemQ.markets.StockCN.date_utils import GQ_util_timestamp_to_str
 
 from GolemQ.core.settings import DATABASE as DATABASE_GolemQ
 from GolemQ.core.constants import (
@@ -65,7 +63,7 @@ from GolemQ.services.persistence._schema import (
 
 def dataloader_persistence_check(symbol=None,
                                  offset: str = '',
-                                 market_type=QA.MARKET_TYPE.STOCK_CN,
+                                 market_type=MARKET_TYPE.STOCK_CN,
                                  verbose: bool = False,
                                  peek_column: list = [FLD.RENKO_TREND_S_TIMING_LAG],
                                  debug: bool = False, ):
@@ -137,11 +135,11 @@ def dataloader_persistence_check(symbol=None,
                                                                 realtime=False)
         kline_hour_baseline = hour_baseline.data
 
-        if (market_type == QA.MARKET_TYPE.STOCK_CN):
+        if (market_type == MARKET_TYPE.STOCK_CN):
             persistence_features = attach_reality_features(features_dummy=kline_hour_baseline,
                                                            annual=1008,
                                                            collections=DATABASE_GolemQ.stock_reality_features, )
-        elif (market_type == QA.MARKET_TYPE.INDEX_CN):
+        elif (market_type == MARKET_TYPE.INDEX_CN):
             persistence_features = attach_reality_features(features_dummy=kline_hour_baseline,
                                                            annual=1008,
                                                            collections=DATABASE_GolemQ.index_reality_features, )
@@ -263,7 +261,7 @@ def dataloader_persistence_check(symbol=None,
                                                                                persistence_ratio=persistence_ratio['daily']['ratio'])
 
         if (verbose):
-            print(u'[{}] {} 先验数据前置妥善率：({}) {:.2%}, ({}) {:.2%}, ({}) {:.2%}, ({}) {:.2%}, ({}) {:.2%} Total:{}(H:{})'.format(QA_util_timestamp_to_str(),
+            print(u'[{}] {} 先验数据前置妥善率：({}) {:.2%}, ({}) {:.2%}, ({}) {:.2%}, ({}) {:.2%}, ({}) {:.2%} Total:{}(H:{})'.format(GQ_util_timestamp_to_str(),
                                                                                                                                        symbol,
                                                                                                                                        (len(persistence_features[FTR.ZEN_PEAK_TIMING_LAG_MAJOR_REAL].dropna())),
                                                                                                                                        persistence_ratio['daily']['ratio'],
