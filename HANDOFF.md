@@ -173,14 +173,19 @@ QUANTAXIS import 计数：**32 → 11**（另有 37 处注释/文档提及，非
 （删 4 根一组的午休段、修正 13:00 时间戳），**bar 不在就永远不会触发**。
 这是全树「适配器只管取数，编排层决定范围」的同一条分工（`PITFALLS.md` P1）。
 
-### ⚠️ 新发现（未修）：门面路径的**股票**前复权也丢了
+### ✅ 门面路径的股票前复权已修（2026-09-21）
 
-`MIGRATION_STATUS.md` HIGH #11。老树 `get_kline_price_v3` 在**股票分支**里调
-`to_qfq()`，新树 `kline83` 只接了我刚补的 ETF 那条 → **股票返回不复权价**
-（实测 `600519` 2024-01-02：新 `1685.01` = 原始值，老 `1531.145598`）。
-`services/persistence/*` 全树 grep `qfq`/`复权` **零命中**，所以下游不会自行补。
-**修法就是在 `kline83` 的股票分支加一次 `to_qfq()`**，但那会改动所有 persistence
-消费方拿到的数据，属行为变更，**等你定要不要现在做**。
+`MIGRATION_STATUS.md` HIGH #11。老树 `get_kline_price_v3` 里 **`:906 to_qfq()`
+（股票）+ `:1068 GQ_apply_etf_qfq`（ETF）两条都做**，新树此前只接了 ETF 那条。
+
+`kline83` 新增 `_apply_adjustments(result, market, codelist, verbose)`，
+两个读取器各调一次：`market=='stock'` → `datastruct.apply_qfq`（`stock_adj`）；
+`market=='index'` → `GQ_apply_etf_qfq`（`etf_adj`）。**互斥由 `market` 保证**，
+不存在二次复权。
+
+验证：`600519` 2024-01-02 门面现给 **`1531.145598`**（= 老树值，修复前是
+`1685.01`）；门面日线 6 只 **9,640 行 0 差**；门面分钟 36 行 0 差；真指数保持原始；
+`quotes.py` 路径未被二次复权。
 
 ### 仍未做
 

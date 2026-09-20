@@ -45,7 +45,30 @@ core/constants.py:34-37  _StubMeta.__getattr__ 伪造字段名（静默，不抛
 | 8 | **模型字段常量与存储 schema 不再匹配** —— 见下表 | `models/massive.py`、`models/risk.py` | **新引入** |
 | 9 | ~~**ETF 前复权模块整删**~~ **✅ 已于 2026-09-21 修复** —— 拉 ETF 日线（如 510300）跨除权日时，老代码返回**连续的前复权 OHLC**，新代码只打印"ETF 需要人工复权"就返回**不复权数据**，产生约 10% 假跳空，**污染 ETF 回测** | 老 `markets/StockCN/etf_fq.py`（260 行 / 3 函数，`GQ_is_etf` / `GQ_fetch_etf_adj` / `GQ_apply_etf_qfq`）→ 新 `markets/StockCN/fetch.py:1416-1423` 仅打印提示 | **逻辑丢失** → 已回迁 |
 | 10 | **K线新鲜度告警消失** —— 数据源静默断流（pytdx/QMT 返回空包、QUANTAXIS 吞掉）不再触发任何告警 | 老 `supervisor/data_freshness.py` + `cli/__main__.py:1465-1469` 调 `notify_if_stale()` → 新 `cli/__main__.py:198-227` 无检查 | **逻辑丢失** |
-| 11 | **门面路径的股票前复权消失**（2026-09-21 新发现）—— 老树 `get_kline_price_v3` 在**股票分支**里调 `to_qfq()`（`:906`）**且**在指数分支调 `GQ_apply_etf_qfq`（`:1068`）；新树 `kline83` 只做了后者，**股票返回不复权价**。实测 `600519` 2024-01-02 新路径给 `1685.01`（= 库中原始值），老树给复权价 `1531.145598`。`services/persistence/*` 全树 grep `qfq`/`复权` **零命中**，即下游不会自行补 —— 所有 persistence 消费方拿到的都是原始价 | 老 `GolemQ_old/fetch/kline.py:906` → 新 `markets/StockCN/kline83.py` 的 `get_kline_price_v3`（只接了 ETF 那条）| **逻辑丢失** |
+| 11 | ~~**门面路径的股票前复权消失**~~ **✅ 已于 2026-09-21 修复**（见下方修复记录）—— 老树 `get_kline_price_v3` 在**股票分支**里调 `to_qfq()`（`:906`）**且**在指数分支调 `GQ_apply_etf_qfq`（`:1068`）；新树 `kline83` 只做了后者，**股票返回不复权价**。实测 `600519` 2024-01-02 新路径给 `1685.01`（= 库中原始值），老树给复权价 `1531.145598`。`services/persistence/*` 全树 grep `qfq`/`复权` **零命中**，即下游不会自行补 —— 所有 persistence 消费方拿到的都是原始价 | 老 `GolemQ_old/fetch/kline.py:906` → 新 `markets/StockCN/kline83.py` 的 `get_kline_price_v3`（只接了 ETF 那条）| **逻辑丢失** → 已修 |
+
+### #11 的修复记录（2026-09-21）
+
+`kline83` 新增 `_apply_adjustments(result, market, codelist, verbose)`，在
+`get_kline_price_v3` 与 `get_kline_price_min` 两处各调一次：
+
+- `market == 'stock'` → `datastruct.apply_qfq`（因子表 `stock_adj`）
+- `market == 'index'` → `GQ_apply_etf_qfq`（因子表 `etf_adj`；真指数 no-op）
+
+**互斥由 `market` 保证**：ETF 经 `market_prefix` 归类为 `'index'`，所以股票分支
+碰不到 ETF 数据、反之亦然，**不存在二次复权**。老树两个函数同构
+（日线 `:906`+`:1068`，分钟 `:1484`+`:1666`）。
+
+验证（2026-09-21 实测）：
+
+- **靶子是已知正确值**：`600519` 2024-01-02 门面现给 `1531.145598`，与老树一致
+  （修复前是 `1685.01` = 库中原始值）。
+- **门面日线 6 只 × 2020 至今日线 vs QUANTAXIS**：**9,640 行，最大差 0**。
+- **门面分钟 2 只 vs QUANTAXIS 的分钟 `to_qfq()`**：36 行，最大差 0
+  （顺带证实 QA 分钟那套兜底算法 `QA_data_stock_to_fq` 与 `stock_adj` 乘法数值一致）。
+- **真指数**（`000300`）保持原始价、`if_fq` 不被设置。
+- **`quotes.py` 路径未被二次复权**（它走 `GQ_fetch_stock_day_adv` + `to_qfq`，
+  不过 `_apply_adjustments`）：与 QUANTAXIS 最大差 0。
 
 ### #9 的修复记录（2026-09-21，与 3.8 并列，不进编号）
 

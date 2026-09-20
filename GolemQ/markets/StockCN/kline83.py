@@ -70,7 +70,7 @@ import pandas as pd
 
 from GolemQ.core.constants import MARKET_TYPE
 
-from .datastruct import frame_to_datastruct
+from .datastruct import apply_qfq, frame_to_datastruct
 from .etf_fq import GQ_apply_etf_qfq
 from .symbol import is_stock_cn
 
@@ -271,11 +271,7 @@ def get_kline_price_min(codelist, start=None, market_type=None, frequency='60min
         raise
     codename = codelist[0] if isinstance(codelist, (list, tuple, set)) else codelist
     result = KlineResult(_to_kline_frame(df))
-    # ETF 前复权。真指数与股票在这里都是 **no-op**：股票不做（走 `to_qfq` +
-    # `stock_adj`，由各自调用点负责），真指数在 `etf_adj` 里没有行 ——
-    # `GQ_apply_etf_qfq` 对非 ETF 一次 Mongo 都不查。
-    # 这是 `MIGRATION_STATUS.md` HIGH #9 的正解：老树在每个 kline 取数函数里都调了它。
-    GQ_apply_etf_qfq(result, codelist=codelist, verbose=verbose)
+    _apply_adjustments(result, market, codelist, verbose=verbose)
     return result, codename
 
 
@@ -307,10 +303,37 @@ def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
                   f'返回 None。code={codelist} start={start} end={end}')
         return None, codename
     result = KlineResult(_to_kline_frame(df))
-    # ETF 前复权，同 `get_kline_price_min`。老树在每个 kline 取数函数里都调了它；
-    # 重构把它连同整个 `etf_fq.py` 一起丢了 —— `MIGRATION_STATUS.md` HIGH #9。
-    GQ_apply_etf_qfq(result, codelist=codelist, verbose=verbose)
+    _apply_adjustments(result, market, codelist, verbose=verbose)
     return result, codename
+
+
+def _apply_adjustments(result, market, codelist, verbose=False):
+    """给读取结果套上该市场的复权。两条**互斥**路径，与老树同构。
+
+    - ``market == 'stock'`` → 股票前复权（因子表 ``stock_adj``）。
+      老树在股票分支里调的是 QUANTAXIS 的 ``to_qfq()``（日线 `kline.py:906`、
+      分钟 `:1484`）；重构只把 ETF 那条接了过来，于是**股票返回不复权价** ——
+      见 ``MIGRATION_STATUS.md`` HIGH #11。
+    - ``market == 'index'`` → ETF 前复权（因子表 ``etf_adj``）。真指数在
+      ``etf_adj`` 里没有行，是 no-op，且一次 Mongo 都不查。
+
+    互斥由 ``market`` 保证：ETF 经 :func:`market_prefix` 归类为 ``'index'``，
+    所以股票分支不会碰到 ETF 数据、反之亦然。**每条路径只应用一次** —— 重复
+    应用会二次缩放（`etf_fq.py` 的 docstring 记着这个坑）。
+
+    内存量级与改动前一致：股票因子是一次 ``$in`` 区间查询后整体 join，老树的
+    ``to_qfq()`` 也是这么做的（``_QA_fetch_stock_adj`` + ``join``）。
+    """
+    if result is None or len(getattr(result, 'data', ())) == 0:
+        return result
+    if market == 'stock':
+        result.data = apply_qfq(result.data, verbose=verbose)
+        try:
+            result.if_fq = 'qfq'
+        except Exception:  # noqa: BLE001
+            pass
+    GQ_apply_etf_qfq(result, codelist=codelist, verbose=verbose)
+    return result
 
 
 def read_min_frame(codelist, start=None, end=None, frequence='1min',
