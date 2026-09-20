@@ -1,168 +1,255 @@
-# A 股特有代码的归属调整方案
+# 数据接口分层方案（修正版）
 
 > 建立日期：2026-09-20
-> 判据来源：项目所有者提出 ——「若某个模块**只对 A 股有意义**，它就该在 `markets/StockCN/` 下；若它对多市场通用（哪怕当前只实现了 A 股），留顶层。」
-> 状态：**方案，未执行**
+> 方案来源：**项目所有者提出**，取代本文件早先的「A 股特有就搬进 `markets/StockCN/`」版本
+> 状态：方案，未执行
 
 ---
 
-## 一、为什么现在做
+## 一、修正：早先判据错在哪
 
-**因为大多数待迁模块还是 stub。**
+早先版本的判据是「只对 A 股有意义 → 迁进 `markets/StockCN/`」。**这条判据有个根本错误：**
 
-| 模块 | 行数 | 性质 |
-|:--|--:|:--|
-| `models/alias.py` | 9 | stub |
-| `fetch/concept.py` | 12 | stub |
-| `features/reviews.py` | 12 | stub |
-| `analysis/timeseries.py` | 18 | stub |
-| `fetch/kline.py` | 22 | stub（已被 `kline83.py` 取代）|
-| `models/risk.py` | 26 | stub |
-| `features/empirical.py` | 27 | stub |
-| `models/massive.py` | 42 | stub |
-| `models/poolcoef.py` | **371** | **真实代码** |
-| `pipeline/*.py` | 111–451 | 真实代码 |
+> **它把「当前只有一种实现」当成了「概念上属于 A 股」。**
 
-**在 stub 阶段搬家，成本几乎为零；等实现完再搬，就要改一大片 import。**
-这是本次调整最主要的时机理由 —— 越晚做越贵。
+`fetch/` 是**门面（facade）**。门面即使当前只有一个实现，它仍然是门面 ——
+把它搬进 `markets/StockCN/` 等于**把市场写死**，那是反解耦的，不是解耦。
+同理 `features/`（技术分析特征）、`models/`（特征集合）、`pipeline/`（批处理管线）
+都是**抽象层**，只是恰好当前只有一个市场的实现。
 
-### 这不是重构引入的问题
+按旧判据搬完，将来加港股要做的不是「新增一个市场」，而是**把抽象层从 A 股目录里再拆出来** —— 白做一遍。
 
-老树的结构与新树**一样**：顶层同样有 `fetch/` `features/` `models/` `analysis/`，
-而且老树的 `StockCN/` **同时存在于顶层和 `markets/` 下**（`StockCN/base.py kline.py realtime.py`）。
-属历史遗留，重构只是原样继承。
+**结论：`fetch/` `features/` `models/` `pipeline/` `cookbooks/` 全部不迁移。**
 
 ---
 
-## 二、逐模块判定
+## 二、各模块的正确定位
 
-判据：**只对 A 股有意义 → 迁；对多市场通用 → 留**。
-
-| 模块 | 判定 | 依据 |
+| 模块 | 定位 | 当前状态 |
 |:--|:--|:--|
-| `fetch/` | **迁** | 两个文件全是 A 股：`kline.py`（A股K线，且已被 `markets/StockCN/kline83.py` 取代）、`concept.py`（A股概念）|
-| `features/` | **迁** | `empirical.py`/`reviews.py` 处理 ZEN_*_TIMING_LAG、MAGIC_NINE_TURNS 等 A 股特征 |
-| `models/` | **迁** | `alias.py`(LTT/TRD)、`massive.py`(MAS)、`poolcoef.py`(筹码系数)、`risk.py`(RSK) —— 全是 A 股特征常量与模型 |
-| `pipeline/` | **迁** | `mainstream_benchmark`(主力)、`poolcoef_benchmark`(筹码)、`compact_benchmark` —— 都是 A 股概念 |
-| `cookbooks/` | **迁** | `ckpo_align_stock_turnover_rate.ipynb` —— A 股换手率对齐 |
-| `analysis/` | **拆** | `timeseries.py` 是通用工具（重采样/时间轴）→ **留**；但里面的 stub 内容若只服务 A 股需具体判断 |
-| `services/` | **留** | DB 操作层，按 CLAUDE.md 约定；其中 `iwencai`(问财) 是 CN 特有的，见「待定」 |
-| `core/` `cli/` `supervisor/` `agents/` | **留** | 通用设施 |
-| `gateway/xtquant/` | **留**（待议）| MiniQMT 是 A 股券商通道，但它是**交易网关**而非市场数据，且 `markets/StockCN/` 装不下交易职责。见「待定」 |
+| `fetch/` | **抽象、隐含的 datasource 接口** —— 门面 | stub，待按门面实现 |
+| `features/` | **技术分析特征** —— 由 `analysis/` 技术分析产出的指标特征，**多市场通用** | stub |
+| `models/` | **features 的技术分析特征集合** | 多为 stub（`poolcoef.py` 371 行是真实代码）|
+| `pipeline/` | **默认市场的批处理管线** —— 多股、多核计算的抽象封装，结果提交给 `portfolio` | 真实代码，但 import 悬空 |
+| `cookbooks/` | 研究笔记本 | 真实内容 |
+| `analysis/` | 技术分析算子（重采样/时间轴）—— `features` 的上游 | stub |
+| `markets/StockCN/` | **A 股市场的具体实现** | 已就位（`kline83.py` `refdata*.py` `datasource/`）|
 
-### 待定项（需所有者判断）
+### 与已落地代码的关系
 
-1. **`gateway/xtquant/`** —— MiniQMT 只服务 A 股，按判据该迁；但它是交易/下单通道，`markets/StockCN/` 目前只装市场数据。**建议保留在顶层**，因为「网关」是与「市场」并列的一类职责，不是它的子类。
-2. **`services/iwencai.py`** —— 问财是 CN 特有服务，但它在 services 层（DB 操作层）的定位优先。**建议保留**。
-3. **`pipeline/`** —— 若将来要支持港股同类 benchmark，留在顶层更合理。**当前三个 benchmark 全是 A 股概念，故判为迁。**
+已完成的 `markets/StockCN/kline83.py`（8.3 时序读取）**位置正确** ——
+它是**A 股实现**，门面 `fetch/kline.py` 将来调度到它。同理 `refdata*.py`
+与 `datasource/` 都是 A 股实现，留在 `markets/StockCN/` 下没错。
 
 ---
 
-## 三、引用面（迁动的真实成本）
+## 三、核心机制：`Active Market`
 
-| 目标模块 | 外部引用 | 引用位置 |
-|:--|--:|:--|
-| `fetch/` | 1 | `services/persistence/_concept.py:56` |
-| `features/` | 6 | `_concept.py:52,206`、`_daily.py:52`、`_review.py:51`、`_stock.py:52,53` |
-| `models/` | 8 | `services/align.py:79`、`_concept.py:51`、`_schema.py:43,44`、`pipeline/mainstream_benchmark.py:34,38`、`pipeline/poolcoef_benchmark.py:34,38` |
-| `analysis/` | 2 | `_concept.py:57`（`timeseries`）—— **留则不用改** |
-| `pipeline/` | **0（真实）** | 仅 `GolemQ/__init__.py:31,43` 的包注册；**注意**其内部 benchmark 引用 `models/mainstream`、`models/poolcoef`、`pipeline/compact` —— 而这两个 models 模块**在新树根本不存在**（悬空 import）|
-| `cookbooks/` | **0** | 无 |
+### 设计
 
-**总计需改约 15 处 import。**
+`GQMARKETS` 已是现成的注册表（`GolemQ/__init__.py:38`，由
+`markets/StockCN/__init__.py:112-113` 注册、`cli/tools.py:33-75` 自动发现）。
+在此之上再加一个**「当前激活市场」指针**，系统即获得一个**默认证券市场属性**。
 
-### 顺带发现的既有缺陷（搬迁时一并处理）
+```python
+# GolemQ/__init__.py
+GQMARKETS = {}                     # 已存在：所有已注册市场
+GQSUBSCRIBER = {}                  # 已存在
 
-- `GolemQ/__init__.py:29` 的 `# from . import models` 是**被注释掉的**，`__all__` 里也没有 `models` —— 但 `services/` 在引用它。即 `models` 不在包注册内。
-- `pipeline/*_benchmark.py` 的 import 目标 `models/mainstream.py`、`pipeline/compact.py` **在新树不存在**，是悬空 import（见 `MIGRATION_STATUS.md` 问题 4）。
+_active_market_name = 'StockCN'    # 新增：默认市场（系统的隐含属性）
+
+def register_market(name, instance):
+    """注册市场。由市场模块自注册或 cli/tools.py 自动发现调用。"""
+    GQMARKETS[name] = instance
+    if name not in GQSUBSCRIBER:
+        pass
+
+def set_active_market(name: str):
+    """切换激活市场。未注册则明确报错，不静默回落。"""
+    if name not in GQMARKETS:
+        raise KeyError(f'市场 {name!r} 未注册；已注册: {sorted(GQMARKETS)}')
+    global _active_market_name
+    _active_market_name = name
+
+def get_active_market():
+    """返回当前激活的市场实例。
+
+    **惰性触发注册**：若注册表为空，先走一次自动发现（`cli/tools.py`
+    的 `auto_register_markets`），避免 import 顺序决定成败。
+    """
+    if not GQMARKETS:
+        from GolemQ.cli.tools import auto_register_markets
+        auto_register_markets()
+    if _active_market_name not in GQMARKETS:
+        raise KeyError(f'默认市场 {_active_market_name!r} 未注册；'
+                       f'已注册: {sorted(GQMARKETS)}')
+    return GQMARKETS[_active_market_name]
+```
+
+### 为什么这样比搬文件更好
+
+* **加新市场 = 新增一个市场包**，不改任何抽象层。
+* **切换市场 = 一次 `set_active_market()` 调用**，而非改 import。
+* `fetch/` `features/` `pipeline/` 里的代码**完全不含市场判断**，市场差异全部收敛到「当前激活的是谁」。
 
 ---
 
-## 四、搬迁方案
+## 四、`fetch/` 门面的调度设计
 
-### 目标结构
+### 契约归属
+
+门面定义**调用方需要的契约**，`BaseMarket` 声明对应的抽象方法，
+`markets/StockCN/` 提供实现。三者关系：
 
 ```
-GolemQ/
-  markets/
-    StockCN/
-      __init__.py  base.py  kline83.py  refdata.py  refdata_save.py
-      MONGODB83.md
-      datasource/        ← 已有
-      fetch/             ← 迁入
-      features/          ← 迁入
-      models/            ← 迁入
-      pipeline/          ← 迁入
-      cookbooks/         ← 迁入
-  core/ analysis/ cli/ services/ agents/ gateway/ supervisor/   ← 不变
+services/persistence/*          调用方
+        │
+        ▼
+GolemQ/fetch/kline.py           门面：定义契约 + 调度（无市场逻辑）
+        │
+        ▼
+BaseMarket.get_kline_price_min() 抽象声明
+        │
+        ▼
+markets/StockCN/__init__.py       A 股实现 → 委托给 kline83.py
 ```
 
-### 分批顺序（按成本从低到高）
+### `fetch/kline.py` 形态
 
-**批次 1 —— 零引用，先搬（成本最低，用来验证搬迁流程）**
+```python
+def get_kline_price_min(symbol, start=None, end=None, verbose=False, realtime=True):
+    """分钟线。**本函数不含任何市场知识** —— 一律调度给当前激活市场。"""
+    return get_active_market().get_kline_price_min(
+        symbol, start=start, end=end, verbose=verbose, realtime=realtime)
+```
 
-- `pipeline/` → `markets/StockCN/pipeline/`
-  - 改 `GolemQ/__init__.py:31,43`（去掉注册；A 股特有的 benchmark 不该在包根注册）
-  - 同时修 `mainstream_benchmark.py:34/38`、`poolcoef_benchmark.py:34/38` 的悬空 import
-- `cookbooks/` → `markets/StockCN/cookbooks/`（0 引用，纯移动）
+### `BaseMarket` 需要新增的抽象方法
 
-**批次 2 —— 单引用 + stub，搬完立刻可验证**
+现有 5 个抽象成员（`name` / `get_stock_codes` / `get_kline_quotes` /
+`get_kline_quotes_min` / `purge_historical_collections`）**不足以覆盖门面契约**：
 
-- `fetch/` → `markets/StockCN/fetch/`
-  - 改 `services/persistence/_concept.py:56`
-  - ⚠️ `fetch/kline.py` 已被 `kline83.py` 取代，**搬迁时一并删除**（当前无人引用它）
+| 门面函数 | 需要的市场方法 | 现状 |
+|:--|:--|:--|
+| `get_kline_price_min` | 同名方法，返回 `(result, codename)` | **缺**（现有 `get_kline_quotes_min` 返回裸 DataFrame，签名不符）|
+| `get_kline_price_v3` | 同名方法 | **缺** |
+| `get_stock_concept_kline` | 同名方法 | **缺** |
 
-**批次 3 —— 多引用但多为 stub**
+即：`BaseMarket` 要按门面契约补三个抽象方法（或把一个统一的 `fetch` 子对象挂到市场上）。
+**这是本方案的主要新增工作量。**
 
-- `features/` → `markets/StockCN/features/`
-  - 改 6 处：`_concept.py:52,206`、`_daily.py:52`、`_review.py:51`、`_stock.py:52,53`
+### 空值契约（沿用既有约定，勿改）
 
-**批次 4 —— 多引用且有真实代码（收尾）**
+* `get_kline_price_v3`（日线）空 → 返回 `None`，命中 `_daily.py:105` 的既有分支
+* `get_kline_price_min`（分钟）空 → 返回**空对象**，因 `_stock.py:138` 无 `None` 保护且未预初始化
 
-- `models/` → `markets/StockCN/models/`
-  - 改 8 处（含 pipeline 内部 4 处）
-  - 顺带修正 `GolemQ/__init__.py:29` 的注册状态（搬走后本就不该在包根注册，注释掉的 `import models` 应直接删除）
+详见 `markets/StockCN/MONGODB83.md`。
 
-### 每批的验证
+---
 
+## 五、`pipeline/` 与 `portfolio`
+
+你描述 `pipeline/` 的职责是「多股、多核计算的抽象封装，**最后计算结果提交给 `portfolio` 进行交易策略组合**」。
+
+⚠️ **`portfolio/` 在新树不存在** —— 重构时被删除。老树有：
+
+```
+GolemQ_old/portfolio/   __init__.py  __main__.py  base.py  ...
+```
+
+**故 `pipeline/` 当前的「提交给 portfolio」这一步在新树里是断的。**
+需要你定：
+
+1. `portfolio/` 是否恢复？按什么形态？
+2. 若恢复，它属于抽象层（顶层）还是市场实现（`markets/StockCN/`）？
+   —— 从「交易策略组合」的语义看，策略是**跨市场**的，应在顶层。
+3. 若不恢复，`pipeline/` 的结果提交到哪里？
+
+**在这一步定下来之前，`pipeline/` 不宜改动** —— 它是真实代码，且下游去向未定。
+
+---
+
+## 六、顺带查出的既有缺陷
+
+| # | 缺陷 | 位置 |
+|:--|:--|:--|
+| 1 | `# from . import models` **被注释掉**，`__all__` 里也没有 `models`，但 `services/` 在引用它 —— `models` 不在包注册内 | `GolemQ/__init__.py:29,43` |
+| 2 | `mainstream_benchmark.py` / `poolcoef_benchmark.py` 引用的 `models/mainstream`、`models/compact`、`pipeline/compact` **在新树不存在**，是悬空 import（基准跑不起来，静默返回 None）| `pipeline/*.py:34,38,42` |
+| 3 | `models` 的 `_StubMeta.__getattr__` **静默返回假字段名**，拼错不报错 | `core/constants.py:34-37` |
+| 4 | `fetch/kline.py` 已被 `markets/StockCN/kline83.py` 取代，当前无人引用（门面化时可删）| `GolemQ/fetch/kline.py` |
+
+---
+
+## 七、实施步骤
+
+**前提：本方案不搬任何目录，只做「门面化 + 激活市场」。**
+
+### 步骤 1 —— 引入 `Active Market`（可独立验证）
+
+* 在 `GolemQ/__init__.py` 增加 `_active_market_name` / `get_active_market` / `set_active_market`
+* 把 `markets/StockCN/__init__.py:112-113` 的自注册改为调用 `register_market()`
+* `cli/tools.py` 的自动发现同步改走 `register_market()`
+
+验证：
+```python
+python -c "import GolemQ; from GolemQ import get_active_market; print(get_active_market().name)"
+```
+应输出 `中国A股市场`。
+
+### 步骤 2 —— 给 `BaseMarket` 补门面契约
+
+* 新增 `get_kline_price_min` / `get_kline_price_v3` / `get_stock_concept_kline` 三个抽象方法
+* `StockCN` 实现之，委托给 `markets/StockCN/kline83.py` 与后续的概念实现
+* `StockHK`（stub）实现为抛 `NotImplementedError`，**不返回空** —— 空与未实现必须区分
+
+验证：
+```python
+python -c "from GolemQ import get_active_market as g; m=g(); print(m.get_kline_price_min('600496')[0].data.shape)"
+```
+
+### 步骤 3 —— 把 `fetch/` 改成门面
+
+* `fetch/kline.py` 重写为调度层（`get_active_market().xxx(...)`）
+* `fetch/concept.py` 同
+* 4 个 `services/persistence/*` 的 import **不用改** —— 它们从 `GolemQ.fetch.kline` 导入是**正确**的（门面就该从那里调）
+
+验证：
 ```bash
-# 1. 无悬空引用
-grep -rn "from GolemQ\.\(fetch\|features\|models\|pipeline\)" GolemQ/ --include=*.py
-
-# 2. 四个 persistence 模块仍可导入（它们是最密集的引用方）
-python -c "import GolemQ.services.persistence._concept, GolemQ.services.persistence._daily, GolemQ.services.persistence._review, GolemQ.services.persistence._stock"
-
-# 3. 包仍可导入、市场仍注册
-python -c "import GolemQ; from GolemQ import GQMARKETS; print(sorted(GQMARKETS))"
-
-# 4. CLI 仍工作
-python -m GolemQ.cli --save-status
+grep -rn "from GolemQ.fetch" GolemQ/ --include=*.py   # 应仍指向 fetch/
+python -m GolemQ.cli --save-status                     # 回归
 ```
 
----
+### 步骤 4 —— 修既有缺陷 1/2/4
 
-## 五、风险
+* 删除 `GolemQ/__init__.py:29` 的死注释，明确 `models` 的注册策略
+* 修 `pipeline/*` 的悬空 import（属 `MIGRATION_STATUS.md` 问题 4）
+* 删除已被取代的 `fetch/kline.py` 旧 stub 内容（步骤 3 会覆盖）
 
-1. **`services/` 是最大引用方（12 处）** —— 而它是 DB 操作层，改 import 不影响逻辑，但要逐处确认符号名没变（只改模块路径，不改函数名）。
-2. **`models/` 的 `_StubMeta` 会在拼错时静默返回假名** —— 搬迁期间若路径写错，`from ... import AKA` 会抛 `ImportError`（模块级），比字段名错误好定位。但仍建议先修 `_StubMeta`（见 `MIGRATION_STATUS.md` 问题 3），否则搬迁掩盖的字段问题仍无法暴露。
-3. **`pipeline/` 从包根注册中移除后**，若有外部代码靠 `GolemQ.pipeline` 访问会断 —— 当前树内 0 引用，但**外部使用者未核实**。
-4. **`cookbooks/` 若含硬编码相对路径**（notebook 常见），移动后会断。搬迁前需检查 notebook 内的路径。
-5. **建议与 QUANTAXIS 解耦合并做** —— `services/` 的 12 处 import 与解耦要改的 `QA_util_*` 在同一批文件里，分两轮改等于改两遍同一个文件。
+### 步骤 5（待定，见第五节）
 
----
-
-## 六、不在本方案范围
-
-- QUANTAXIS 解耦（115 处，见 `MIGRATION_STATUS.md`）
-- `_StubMeta` 改为抛 `AttributeError`
-- `gateway/xtquant/` 与 `services/iwencai.py` 的归属（见「待定项」，建议不动）
-- `StockHK/` 的实现
+`portfolio/` 恢复后再接 `pipeline/` 的下游。
 
 ---
 
-## 附：判据本身的边界
+## 八、判据的重新表述
 
-「只对 A 股有意义」在某些模块上不是非黑即白：
+旧判据（作废）：
+> ~~只对 A 股有意义 → 进 `markets/StockCN/`~~
 
-- `analysis/timeseries.py` 的重采样是**通用工具**，但 `services/persistence/_concept.py` 用它处理 A 股概念数据 —— **工具留顶层，用法在 A 股侧**，这是正确的分层。
-- `pipeline/base.py`（抽象基类，含 joblib 并行）是通用的，却是三个 A 股 benchmark 的父类。**建议 `base.py` 跟随 `pipeline/` 一起迁**，因为它的抽象是为这三个子类设计的；若将来港股要复用，再提取到顶层不迟。
+新判据：
+> **如果它在描述「做什么」（接口、特征、加工、组合），它属于抽象层，留顶层；
+> 如果它在描述「某市场怎么做」，它属于 `markets/<Market>/`。**
+>
+> 当前只有一种实现**不构成**抽象层该下沉的理由。
+
+按新判据复核已落地的代码：
+
+| 已落地 | 判定 |
+|:--|:--|
+| `markets/StockCN/kline83.py` | ✅ 正确 —— A 股的 8.3 时序读法，是「怎么做」 |
+| `markets/StockCN/refdata*.py` | ✅ 正确 —— A 股参考集合的读写 |
+| `markets/StockCN/datasource/` | ✅ 正确 —— 但见下 |
+| `markets/StockCN/MONGODB83.md` | ✅ 正确 —— A 股的库布局 |
+
+> **一处待议**：`datasource/` 里的适配器（pytdx/akshare/baostock/tushare…）
+> 多数**不只服务 A 股**（tushare/akshare 也有港股美股）。按新判据它们倾向顶层。
+> 但它们当前的产出 schema 与集合名是 A 股口径。**建议暂留**，待出现第二个市场时再提取公共部分。
