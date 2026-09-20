@@ -47,7 +47,7 @@ ts   用 datetime → 7 行 ✓
 | **D-min** | 分钟线读取器重写 | ✅ 提交 `fe2fd95` |
 | **C1** | `portfolio/` 骨架（strategy/sizing/costs/rules）| ✅ 提交 `f993d31` |
 | **C2** | `zen_bt.py` 撮合按契约移植进 `engine.py` | ⛔ **阻塞在你**：需先写策略实现 |
-| **D** | QUANTAXIS 完全解耦 | **进行中** —— 替身已完成，import **11 → 7**，见第三节 |
+| **D** | QUANTAXIS 完全解耦 | ✅ **完成** —— 只剩 `core/settings.py`（D9 定的暂留）|
 
 ### A —— 集合计数（本轮实测）
 
@@ -79,30 +79,37 @@ QUANTAXIS import 计数：**32 → 11**（另有 37 处注释/文档提及，非
 
 ---
 
-## 三、D —— 替身已完成，剩 7 处 import
+## 三、D —— **QUANTAXIS 已解耦到只剩 1 处**
 
-提交 `7fcb5ec`：`QA_DataStruct_*` 替身 + 日线读取器 + block/list 本地化已完成。
+```
+$ grep -rn "^ *import QUANTAXIS\|^ *from QUANTAXIS" GolemQ/ | wc -l
+1        # 只有 core/settings.py:34（QA_Setting）—— D9 定的「暂留」
+$ # 裸 QA.* 前缀引用（排除注释/docstring）：0
+```
 
-### QUANTAXIS import：11 → 7
+**这一节的内容已全部完成**：替身（`7fcb5ec`）、ETF 复权（`c83b593`）、
+分钟读取器重写（`fe2fd95`）、HIGH #11 股票复权（`ed3a994`）、
+最后六个模块解耦 + 未定义名清零（`ce58c0d`）。
 
-| 文件:行 | 内容 |
+### 解耦时查到的事实（都写进了 commit message，此处只留索引）
+
+| 事项 | 结论 |
 |:--|:--|
-| `core/settings.py:34` | 根（QA_Setting）。**D9 已定：数据不搬，暂留** |
-| `markets/StockCN/align.py:65` | 裸 `import QUANTAXIS as QA` |
-| `markets/StockCN/crawler.py:51` | 同上 |
-| `markets/StockCN/realtime.py:68` | resample 栈（`QA_data_min_resample` 等）|
-| `pipeline/base.py:49` | 同上（`QA_AVAILABLE` 仍是活逻辑，**勿拆 try**）|
-| `pipeline/compact_benchmark.py:35` | 同上 |
-| `services/align.py:34` | 同上 |
+| `QA.MARKET_TYPE` vs `GolemQ.core.constants.MARKET_TYPE` | **12 个常量值全同** → 等价替换 |
+| `symbol.GQ_fetch_index_name` 默认集合 | 原为 `etf_list`（**复制粘贴错**，来自 `GQ_fetch_etf_name`）。`etf_list` 无真指数（`000300` 命中 0），而 `index_list` 里是 `'沪深300'`。QA 自己的默认就是 `index_list`。该函数零调用者 → 修它不改变既有行为 |
+| `realtime.py` 的 QA 实时兜底 | 读 `quantaxis` 库，**该库 realtime_\* 集合数为 0**（`QAREALTIME` 有 10 个）→ 只能返回 None，移除无代价 |
+| `QA_data_min_resample` / `min_to_day` | 已回迁到 `analysis/timeseries.py`，与 QUANTAXIS **逐值 0 差**（960 根 1min → 5/15/30/60min 与 1D 全部形状与数值相同）|
+| `fetch.py` 的 26 处未定义 `QA.` | 回归已清（`ce58c0d`）。INDEX 分支接 `GQ_fetch_stock_day_adv` / `GQ_fetch_index_min_adv`；**CRYPTOCURRENCY 分支改抛 `NotImplementedError`** —— 本树无数字货币数据源，返回空会让「未实现」与「没有数据」无从区分（两处都不在 try 内，抛得出去）|
+| `services/features.py` / `_hourly_fetch.py` | 也用 `QA.MARKET_TYPE` 却**从未 import QUANTAXIS**（未定义名）。逐文件普查漏了它们，靠**全树普查**才捞出来 —— 教训：普查要按「有没有用」而不是「有没有 import」|
 
-另有 **26 处裸 `QA.` 前缀引用**分布在上述模块里。
+### ⚠️ 新发现（未修）：`services/features/` 整个目录不可达
 
-### ⚠️ 未修的已知缺陷：`fetch.py` 的 `QA` 是未定义名
-
-老树 `GolemQ_old/fetch/kline.py:31` 在 `try` 里写了 `import QUANTAXIS as QA`，
-**新树 port 把 import 丢了、26 处 `QA.` 用法全留着**。今天**不可达**
-（StockCN 绑定的是 `kline83` 的实现，`align.py` 只走 STOCK_CN 分支），
-但一执行就是 `NameError`。**这是重构回归，不是老树缺陷。**
+`GolemQ/services/features/` 是**没有 `__init__.py` 的目录**，而同层有
+`features.py` —— Python 解析 `GolemQ.services.features` 时**模块优先于命名空间包**，
+所以目录里那 6 个文件（`_daily_crud` / `_daily_fetch` / `_daily_save` /
+`_hourly_fetch` / `_reality_save` / `_valuation`）**全部加载不到**，且全树零引用。
+看起来是一次「把 900 行的 `features.py` 拆成包」的重构没做完（旧模块没删、
+`__init__.py` 没建）。**待你定**：补齐成包，还是删掉目录。
 
 ### 已完成部分（全部实测）
 
@@ -189,10 +196,12 @@ QUANTAXIS import 计数：**32 → 11**（另有 37 处注释/文档提及，非
 
 ### 仍未做
 
-- 同类的「绑错库」还有 `fetch.py` 的 `GQ_fetch_stock_list_day`
-  （`collections=DATABASE.stock_day` 默认值）、`scribe.py` 的
-  `QA_fetch_stock_list/index_list/stock_terminated` 默认值
-  （`stock_list` 只在 8.3 有；`index_list`/`stock_terminated` **两个库都没有**）。
+- 「绑错库」残留：`fetch.py` 的 `GQ_fetch_stock_list_day`
+  （`collections=DATABASE.stock_day` 默认值 → `golemq` 库无此集合）、`scribe.py`
+  的 `QA_fetch_stock_list/index_list/stock_terminated` 默认值
+  （`stock_list` 只在 8.3 有；`index_list` 在 **`quantaxis`** 库有；
+  `stock_terminated` **两个库都没有**）。
+  注：`GQ_fetch_stock_list_day` 全树零调用者，属潜在缺陷不是活 bug。
 
 ---
 
