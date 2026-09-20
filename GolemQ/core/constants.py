@@ -271,8 +271,8 @@ class AKA(metaclass=_StubMeta):
     # 标识与时间
     CODE = 'code'
     ISOCODE = 'isocode'
-    FULL_SYMBOL = 'full_symbol'
-    MARKET_TYPE = 'market_type'
+    FULL_SYMBOL = 'FULL_SYMBOL'
+    MARKET_TYPE = 'MARKET_TYPE'
     NAME = 'name'
     DATE = 'date'
     DATETIME = 'datetime'
@@ -345,6 +345,14 @@ class AKA(metaclass=_StubMeta):
     # 系统
     SYSTEM_NAME = 'GolemQuant'
     TRADE_CAL = 'trade_calendar'
+    COST5_PRICE = 'cost5Prz'
+    RETURN_COST95 = 'RetCost95'
+    COST15_PRICE = 'cost15Prz'
+    CATALOG = 'catalog'
+    LENGTH = 'length'
+    FROZEN = 'FrozenExpired'
+    CHECKPOINT = 'ChkPoi'
+    STAGE = 'STAGE'
 
     def __new__(cls):
         """Singleton pattern implementation"""
@@ -365,7 +373,7 @@ class FIELD(metaclass=_StubMeta):
     LOW = 'low'
     CLOSE = 'close'
     TURNOVER_RATE = 'TurnoverRate'
-    PCT_CHANGE = 'pctChg'
+    PCT_CHANGE = 'PCT_CHG'
 
     DATE = 'date'
     DATETIME = 'datetime'
@@ -389,6 +397,60 @@ class FIELD(metaclass=_StubMeta):
 
     # Trading calendar
     TRADE_CAL = 'trade_calendar'  # 交易日历常量
+    PCT_CHANGE_MAJOR = 'PCT_CHG_MAJ'
+    DEA_ZERO_TIMING_LAG_MAJOR = 'DEA_O_LAG_MAJ'
+    CHARTSCAN_BUY_BEFORE_DUMMY = 'ChrScBuyBfD'
+    CHARTSCAN_BUY_BEFORE_MINOR_DUMMY = 'ChrScBuyBfMinD'
+    MACD_CROSS_SX_BEFORE_MAJOR = 'MACD_SX_BF_MAJ'
+    CHARTSCAN_BUY_BEFORE_MAJOR_DUMMY = 'ChrScBuyBfMajD'
+    ZEN_DASH_TIMING_LAG_DUMMY = 'zDLagD'
+    RENKO_BOOST_S_TIMING_LAG = 'renkosBstLag'
+    MACD_MAJOR = 'MACD_MAJ'
+    STOCK_SCORE_M15 = 'Score_M15'
+    MAXFACTOR = 'MAXFACTOR'
+    MAXFACTOR_MAJOR = 'MFT_MAJ'
+    MACD_ZERO_TIMING_LAG = 'MACD_O_LAG'
+    BOLL_LB_HMA5_TIMING_LAG = 'BOLL_L_HMA5_LAG'
+    DEA_NORM = 'DEA_NOR'
+    DIF_NORM = 'DIF_NORM'
+    MTM_NORM = 'MTM_NORM'
+    MAPOWER30 = 'MPWR3'
+    MACD_ZERO_TIMING_LAG_MAJOR = 'MACD_O_LAG_MAJ'
+    BOLL_LB_HMA5_TIMING_LAG_MAJOR = 'BOLL_L_HMA5_LAG_MAJ'
+    DEA_NORM_MAJOR = 'DEA_NORM_MAJ'
+    DIF_NORM_MAJOR = 'DIF_NORM_MAJ'
+    MTM_NORM_MAJOR = 'MTM_NORM_MAJ'
+    MAPOWER30_MAJOR = 'MPWR3_MAJ'
+    MA5_MAJOR = 'maVMaj'
+    MA10_MAJOR = 'maXMaj'
+    FBPROPHET_LB_MAJOR = 'PROPHET_LB_MAJ'
+    FBPROPHET_LB = 'PROPHET_LB'
+    GARIDENT_PRICE = 'GAR_P'
+    GARIDENT_PRICE_COUNT = 'GAR_P_COUNT'
+    GARIDENT_PRICE_CLEARANCE = 'GAR_P_CLR'
+    GARIDENT_STAGE_TIMING_LAG = 'GAR_S_LAG'
+    BOOTSTRAP_STAGE_BEFORE = 'BST_STG_BF'
+    ENDPOINT_STAGE_BEFORE = 'EP_STG_BF'
+    STOCK_SCORE_M15_NORM = 'SSM15_NORM'
+    MAGIC_NINE_TURNS = 'm9t'
+    MAGIC_NINE_TURNS_MAJOR = 'm9tMaj'
+    MAGIC_NINE_TURNS_BASELINE = 'm9tBsl'
+    MAGIC_NINE_TURNS_BASELINE_TIMING_LAG = 'm9tBslLag'
+    MAGIC_NINE_TURNS_BEFORE = 'm9tBf'
+    MAGIC_NINE_TURNS_SX_BEFORE = 'm9tSxBf'
+    POLYNOMIAL9_NORM_MAJOR = 'poly9pwr3_MAJ'
+    RENKO_TREND_S_TIMING_LAG = 'renkosBarLag'
+    RENKO_TREND_S_LB = 'renkosBarLb'
+    RENKO_TREND_S_UB = 'renkosBarUb'
+    STOCK_SCORE_M15_TIMING_LAG = 'Score_M15_LAG'
+    STOCK_SCORE_M15_NORM_TIMING_LAG = 'SSM15_NORM_LAG'
+    POLYNOMIAL9 = 'poly9'
+    ATR_Stopline_TIMING_LAG = 'ATR_Stopline_LAG'
+    ATR_SuperTrend_TIMING_LAG = 'ATR_SUPTRD_LAG'
+    ATR_Stopline_TIMING_LAG_MAJOR = 'ATR_Stopline_LAG_MAJ'
+    ATR_SuperTrend_TIMING_LAG_MAJOR = 'ATR_SUPTRD_LAG_MAJ'
+    ATR_Stopline_PRICE_MAJOR = 'ATRStplnPrcMaj'
+    ATR_Stopline_PRICE_WEEKLY = 'ATRStplnPrcWek'
 
     def __new__(cls):
         """Singleton pattern implementation"""
@@ -406,33 +468,33 @@ class FEATURES(metaclass=_StubMeta):
     _instance = None
 
     # Zen/Dash timing lag features
-    ZEN_DASH_TIMING_LAG_MINOR_REAL = 'zen_dash_timing_lag_minor_real'
-    ZEN_DASH_TIMING_LAG_MAJOR_REAL = 'zen_dash_timing_lag_major_real'
-    ZEN_DASH_TIMING_LAG_WEEKLY_REAL = 'zen_dash_timing_lag_weekly_real'
-    ZEN_PEAK_TIMING_LAG_MAJOR_REAL = 'zen_peak_timing_lag_major_real'
-    ZEN_PEAK_TIMING_LAG_REAL = 'zen_peak_timing_lag_real'
-    ZEN_PEAK_TIMING_LAG_MINOR_REAL = 'zen_peak_timing_lag_minor_real'
+    ZEN_DASH_TIMING_LAG_MINOR_REAL = 'zDLagMinR'
+    ZEN_DASH_TIMING_LAG_MAJOR_REAL = 'zDLagMajR'
+    ZEN_DASH_TIMING_LAG_WEEKLY_REAL = 'zDLagWekR'
+    ZEN_PEAK_TIMING_LAG_MAJOR_REAL = 'ZPLagMajR'
+    ZEN_PEAK_TIMING_LAG_REAL = 'zPLagR'
+    ZEN_PEAK_TIMING_LAG_MINOR_REAL = 'zPLagMinR'
 
     # CVaR risk features
-    CVaR_risk90 = 'cvar_risk90'
-    CVaR_risk95 = 'cvar_risk95'
-    CVaR_risk90_MAJOR = 'cvar_risk90_major'
-    CVaR_risk95_MAJOR = 'cvar_risk95_major'
+    CVaR_risk90 = 'EsRisk90'
+    CVaR_risk95 = 'EsRisk95'
+    CVaR_risk90_MAJOR = 'EsRisk90Maj'
+    CVaR_risk95_MAJOR = 'EsRisk95Maj'
 
     # Polynomial features
-    POLYNOMIAL9_WEEKLY_REAL = 'polynomial9_weekly_real'
-    POLYNOMIAL9_NORM_WEEKLY_REAL = 'polynomial9_norm_weekly_real'
-    POLYNOMIAL9_MAJOR_REAL = 'polynomial9_major_real'
-    POLYNOMIAL9_NORM_MAJOR_REAL = 'polynomial9_norm_major_real'
+    POLYNOMIAL9_WEEKLY_REAL = 'poly9WekR'
+    POLYNOMIAL9_NORM_WEEKLY_REAL = 'poly9NorWekR'
+    POLYNOMIAL9_MAJOR_REAL = 'poly9MajR'
+    POLYNOMIAL9_NORM_MAJOR_REAL = 'poly9NorMajR'
 
     # Magic Nine Turns features
-    MAGIC_NINE_TURNS_MAJOR_REAL = 'magic_nine_turns_major_real'
-    MAGIC_NINE_TURNS_TIMING_LAG_MAJOR_REAL = 'magic_nine_turns_timing_lag_major_real'
+    MAGIC_NINE_TURNS_MAJOR_REAL = 'm9tMajR'
+    MAGIC_NINE_TURNS_TIMING_LAG_MAJOR_REAL = 'm9tLagMajR'
 
     # Regression tree features
-    REGTREE_PRICE_MAJOR_REAL = 'regtree_price_major_real'
-    REGTREE_TIMING_LAG_MAJOR_REAL = 'regtree_timing_lag_major_real'
-    REGTREE_SLOPE_MAJOR_REAL = 'regtree_slope_major_real'
+    REGTREE_PRICE_MAJOR_REAL = 'rTrePrcMajR'
+    REGTREE_TIMING_LAG_MAJOR_REAL = 'rTreLagMajR'
+    REGTREE_SLOPE_MAJOR_REAL = 'rTreSlopMajR'
 
     def __new__(cls):
         if cls._instance is None:
@@ -447,7 +509,7 @@ class TREND_STATUS(metaclass=_StubMeta):
     Used by services/persistence/ for cluster group checkpoint tracking.
     """
     _instance = None
-    CLUSTER_GROUP_CHECKPOINTS = 'cluster_group_checkpoints'
+    CLUSTER_GROUP_CHECKPOINTS = 'CLT_GRP_CHK'
 
     def __new__(cls):
         if cls._instance is None:
@@ -462,7 +524,7 @@ class STATE(metaclass=_StubMeta):
     Used by services/persistence/ for data quality checks.
     """
     _instance = None
-    MACD_COMPOUDED_BAND_RATIO = 'macd_compouded_band_ratio'
+    MACD_COMPOUDED_BAND_RATIO = 'sMacdCpdBandRto'
 
     def __new__(cls):
         if cls._instance is None:
