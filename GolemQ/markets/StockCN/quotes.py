@@ -30,7 +30,7 @@ from .symbol import normalize_code
 # 日线读取改走本树自己的 8.3 路径（`kline83` + `datastruct`），不再依赖
 # QUANTAXIS。返回类型 `GQ_DataStruct_Stock_day` 与 `QA_DataStruct_Stock_day`
 # 同接口：`.data` / `.to_qfq()`。
-from .kline83 import GQ_fetch_stock_day_adv
+from .kline83 import GQ_fetch_stock_day_adv, normalize_frequency
 from .etf_fq import GQ_apply_etf_qfq, GQ_is_etf
 from .fetch import GQ_fetch_stock_min_adv
 
@@ -132,16 +132,9 @@ class StockCNQuotes:
             pd.DataFrame with columns: open, high, low, close, volume, datetime, code
             返回空DataFrame如果无数据
         """
-        if frequency in ['1min', '1m']:
-            frequency = '1min'
-        elif frequency in ['5min', '5m']:
-            frequency = '5min'
-        elif frequency in ['15min', '15m']:
-            frequency = '15min'
-        elif frequency in ['30min', '30m']:
-            frequency = '30min'
-        elif frequency in ['60min', '60m']:
-            frequency = '60min'
+        # 别名归一化收敛到 kline83 一处。未知频率**抛 ValueError**（原来三份
+        # 抄本各自静默沿用原值，会拼出不存在的集合名 → 空结果）。
+        frequency = normalize_frequency(frequency)
 
         # 补全时间部分
         if len(str(start)) == 10:

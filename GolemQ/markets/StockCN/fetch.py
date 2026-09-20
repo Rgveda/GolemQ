@@ -34,7 +34,6 @@ from GolemQ.core import GQ_util_code_tolist
 from .date_utils import (
     GQ_util_date_valid,
     GQ_util_date_stamp,
-    GQ_util_time_stamp,
     GQ_util_get_last_day,
 )
 from GolemQ.core.preprocessing import (
@@ -71,7 +70,12 @@ from .datastruct import (
     GQ_DataStruct_Stock_block,
 )
 import warnings
-from .kline83 import GQ_fetch_stock_day_adv
+from .kline83 import (
+    GQ_fetch_stock_day_adv,
+    market_prefix,
+    normalize_frequency,
+    read_min_frame,
+)
 from .etf_fq import GQ_apply_etf_qfq
 from .refdata import (
     GQ_fetch_stock_block,
@@ -586,72 +590,53 @@ def GQ_fetch_stock_min(
     end,
     format='numpy',
     frequence='1min',
-    collections=DATABASE.stock_min
+    market_type=None
 ):
-    '获取股票分钟线'
-    if frequence in ['1min', '1m']:
-        frequence = '1min'
-    elif frequence in ['5min', '5m']:
-        frequence = '5min'
-    elif frequence in ['15min', '15m']:
-        frequence = '15min'
-    elif frequence in ['30min', '30m']:
-        frequence = '30min'
-    elif frequence in ['60min', '60m']:
-        frequence = '60min'
-    else:
-        print(
-            "QA Error QA_fetch_stock_min parameter frequence=%s is none of 1min 1m 5min 5m 15min 15m 30min 30m 60min 60m"
-            % frequence
-        )
+    """A 股分钟线（MongoDB 8.3 时序库）。返回以 ``datetime`` 为索引的扁平帧。
 
-    # code checking
-    code = GQ_util_code_tolist(code)
+    本函数是**重写**，不是改库名。改动前的每一处都是缺陷：
 
-    cursor = collections.find(
-        {
-            'code': {
-                '$in': code
-            },
-            "time_stamp":
-                {
-                    "$gte": GQ_util_time_stamp(start),
-                    "$lte": GQ_util_time_stamp(end)
-                },
-            'type': frequence
-        },
-        {"_id": 0},
-        batch_size=10000
-    )
+    1. **读 8.3 的分频集合**（``stock_1min`` / ``index_5min`` …），不再读
+       ``DATABASE.stock_min`` —— 那个集合在 ``golemq`` 库里**不存在**，实测本函数
+       恒返回 ``None``（空游标 → ``res.vol`` 抛 ``AttributeError`` → 被下面那个
+       光秃秃的 ``except`` 吞成 ``None``）。
+    2. **去掉 ``collections=`` 参数**。它让调用方能指错库，而实测正是指错的；
+       集合改由 :func:`kline83.market_prefix` 按标的判定 —— ETF 与指数共用
+       ``index_*``，「按代码段猜」会读空。需要显式指定市场时传 ``market_type``。
+    3. **频率归一化收敛到** :func:`kline83.normalize_frequency`（原来同一张别名表
+       抄了三个模块，且未知频率只打印一行就继续拿原值拼集合名 → 静默空结果；
+       现在统一抛 ``ValueError``）。
+    4. **按 ``(code, ts)`` 查询**，不再用 ``time_stamp`` + ``type`` 字段 ——
+       ``ts`` 是时序集合的 ``timeField``，规划器靠它分桶剪枝（见 ``kline83``
+       模块说明）；8.3 的频率在**集合名**里，没有 ``type`` 字段。
+    5. **``format='numpy'`` 且无数据时返回 ``None``**，不再是 ``np.asarray(None)``
+       —— 那是个 0 维 object 数组，既不是 None 也不能当帧用。
 
-    res = pd.DataFrame([item for item in cursor])
+    ⚠️ **一处刻意不照搬：零成交量 bar 保留。** QUANTAXIS 的 ``QA_fetch_stock_min``
+    里有 ``.query('volume>1')``，会**丢掉所有零成交的分钟**（实测 600519 在
+    2024-01-02 的 1min 因此少 2 根：14:58 / 14:59，都是 ``volume=0``）。本函数
+    **不过滤** —— 读取器如实返回库里存的，由消费方决定丢什么：``quotes.py`` 的
+    分钟路径与 ``get_kline_price_min`` 都有专门的 zero_trading 处理（删 4 根一组的
+    午休段、修正 13:00 时间戳等），**它们需要看见这些 bar 才能做判断**。
+    这是全树「适配器只管取数，编排层决定范围」的同一条分工（见 ``PITFALLS.md`` P1）。
+
+    :param format: ``'pd'`` 返回 DataFrame（唯一有消费方的取值），另有
+        ``json`` / ``numpy`` / ``list``；未知取值返回 ``None``。
+    :return: 帧（列含 ``datetime`` / ``code`` / ``volume`` / OHLC / ``amount``）；
+        **无数据或 format 非法时返回 ``None``**。
+    """
     try:
-        if (frequence in ['15min', '15m']) or \
-            (frequence in ['5min', '5m']) or \
-            (frequence in ['1min', '1m']) or \
-            (frequence in ['30min', '30m']) or \
-            (frequence in ['60min', '60m']):
-            res = res.assign(
-                volume=res.vol,
-                datetime=pd.to_datetime(res.datetime, utc=False)
-            ).drop_duplicates([
-                'datetime',
-                'code']).set_index(
-                    'datetime',
-                    drop=False
-                )
-        else:
-            res = res.assign(
-                volume=res.vol,
-                datetime=pd.to_datetime(res.datetime, utc=False)
-            ).query('volume>1').drop_duplicates(['datetime',
-                                                'code']).set_index(
-                                                    'datetime',
-                                                    drop=False
-                                                )
-        # return res
-    except Exception:
-        res = None
+        res = read_min_frame(code, start, end, frequence, market_type=market_type)
+    except ValueError as e:
+        print(f'GolemQ Error GQ_fetch_stock_min: {e}')
+        return None
+    if res is None or len(res) == 0:
+        return None
+
+    res = (res.drop_duplicates(['datetime', 'code'])
+              .set_index('datetime', drop=False)
+              .sort_index())
+
     if format in ['P', 'p', 'pandas', 'pd']:
         return res
     elif format in ['json', 'dict']:
@@ -683,22 +668,18 @@ def GQ_fetch_stock_min_adv(
     :param end:   字符串str 结束日期 eg 2011-05-01
     :param frequence: 字符串str 分钟线的类型 支持 1min 1m 5min 5m 15min 15m 30min 30m 60min 60m 类型
     :param if_drop_index: Ture False ， dataframe drop index or not
-    :param collections: mongodb 数据库
-    :return: GQ_DataStruct_Stock_min 类型
+    :return: 股票为 ``GQ_DataStruct_Stock_min``；ETF/指数为
+        ``GQ_DataStruct_Index_min``（**与 QUANTAXIS 一致：指数类没有
+        ``to_qfq``**，复权由 ``etf_fq.py`` 负责）
     '''
-    if frequence in ['1min', '1m']:
-        frequence = '1min'
-    elif frequence in ['5min', '5m']:
-        frequence = '5min'
-    elif frequence in ['15min', '15m']:
-        frequence = '15min'
-    elif frequence in ['30min', '30m']:
-        frequence = '30min'
-    elif frequence in ['60min', '60m']:
-        frequence = '60min'
-    else:
+    # 别名归一化收敛到 kline83 一处（原来三个模块各抄一份，失败处理还各不相同）。
+    # 本函数保留「非法输入返回 None」的既有契约 —— 它的调用方（quotes.py）都有
+    # `is None` 分支；quotes.py 自己也会先归一化一次，非法频率在那边就抛错了。
+    try:
+        frequence = normalize_frequency(frequence)
+    except ValueError as e:
         if (verbose):
-            print(f"GolemQ Error GQ_fetch_stock_min_adv parameter frequence={frequence:%s} is none of 1min 1m 5min 5m 15min 15m 30min 30m 60min 60m")
+            print(f'GolemQ Error GQ_fetch_stock_min_adv: {e}')
         return None
 
     # __data = [] 未使用
@@ -719,17 +700,20 @@ def GQ_fetch_stock_min_adv(
 
     # 🛠 todo 报告错误 如果开始时间 在 结束时间之后
     res = GQ_fetch_stock_min(code, start, end, format='pd', frequence=frequence)
-    
+
     if res is None:
         if (verbose):
-            print(f"QA Error GQ_fetch_stock_min_adv parameter code={code:%s}, start={start:%s}, end={end:%s} frequence={frequence:%s} call QA_fetch_stock_min return None")
+            print(f"QA Error GQ_fetch_stock_min_adv parameter code={code:%s}, start={start:%s}, end={end:%s} frequence={frequence:%s} call GQ_fetch_stock_min return None")
         return None
     else:
         res_set_index = res.set_index(['datetime', 'code'], drop=if_drop_index)
-        # if res_set_index is None:
-        #     print("QA Error QA_fetch_stock_min_adv set index 'datetime, code'
-        #     return None")
-        #     return None
+        # 容器类型跟随**数据所属的市场**，而不是函数名里的 "stock"：ETF 与指数
+        # 共用 index_* 集合，拿它们的数据装进 Stock 容器会让
+        # `isinstance(data_min, GQ_DataStruct_Index_min)` 恒为假 —— `fetch.py`
+        # 靠那两个 isinstance 决定去取股票名还是 ETF 名。
+        probe = code[0] if isinstance(code, (list, tuple, set)) else code
+        if market_prefix(probe) == 'index':
+            return GQ_DataStruct_Index_min(res_set_index)
         return GQ_DataStruct_Stock_min(res_set_index)
     
 

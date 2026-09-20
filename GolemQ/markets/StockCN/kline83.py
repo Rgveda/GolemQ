@@ -76,6 +76,10 @@ from .symbol import is_stock_cn
 
 __all__ = [
     'KlineResult',
+    'FREQUENCY_ALIASES',
+    'normalize_frequency',
+    'market_prefix',
+    'read_min_frame',
     'GQ_fetch_stock_day_adv',
     'get_kline_price_min',
     'get_kline_price_v3',
@@ -112,12 +116,46 @@ def _bj_date(x):
     return t.tz_convert('UTC').to_pydatetime()
 
 
-def _market_prefix(codelist, market_type=None):
+#: 频率别名 → 8.3 集合名里的规范频率。集合名是 ``f'{market}_{frequency}'``，
+#: 所以规范值必须是 ``1min``/``5min``/``15min``/``30min``/``60min``。
+FREQUENCY_ALIASES = {
+    '1m': '1min', '1min': '1min',
+    '5m': '5min', '5min': '5min',
+    '15m': '15min', '15min': '15min',
+    '30m': '30min', '30min': '30min',
+    '60m': '60min', '60min': '60min',
+}
+
+
+def normalize_frequency(frequence):
+    """频率别名 → 规范频率；不认识的值抛 ``ValueError``。
+
+    **幂等**：规范值传进来还是它自己，所以各层都可以放心再调一次。
+
+    旧实现把这张表抄了三份（`fetch.py` 的 `GQ_fetch_stock_min` 与
+    `GQ_fetch_stock_min_adv`、`quotes.py` 的 `get_kline_quotes_min`），三份的
+    失败处理还不一样：`GQ_fetch_stock_min` 只打印一行就**继续拿原值拼集合名**
+    （拼出不存在的集合 → 静默空结果），`_adv` 返回 `None`，`quotes.py` 直接沿用
+    原值。收敛到一处后统一**抛错** —— 未知频率是编程错误，不该退化成空数据。
+    """
+    key = str(frequence).strip().lower()
+    if key not in FREQUENCY_ALIASES:
+        raise ValueError(
+            f'未知的频率 {frequence!r}；支持 '
+            f'{sorted(set(FREQUENCY_ALIASES))}')
+    return FREQUENCY_ALIASES[key]
+
+
+def market_prefix(codelist, market_type=None):
     """决定读 ``stock_*`` 还是 ``index_*``。
 
     代码本身有歧义（``000001`` 既可能是上证指数也可能是平安银行），故复用
     既有的 :func:`is_stock_cn` 分类器，而不是自己猜。``market_type`` 显式传入
     时以传入值为准。
+
+    公开这个函数是因为**装 K 线数据的容器类型也由它决定**：ETF 与指数共用
+    ``index_*`` 集合，因此拿到的是指数类容器（没有 ``to_qfq``，复权归
+    ``etf_fq.py``）。`fetch.py` 的 ``GQ_fetch_stock_min_adv`` 据此选容器类。
     """
     if market_type is None:
         probe = codelist[0] if isinstance(codelist, (list, tuple, set)) else codelist
@@ -127,6 +165,10 @@ def _market_prefix(codelist, market_type=None):
             market_type = MARKET_TYPE.STOCK_CN
     # ETF 基金在迁移时与指数共用 index_* 集合
     return 'index' if market_type in (MARKET_TYPE.INDEX_CN, MARKET_TYPE.FUND_CN) else 'stock'
+
+
+# 旧名，模块内部仍在用；新代码用 `market_prefix`。
+_market_prefix = market_prefix
 
 
 def _collection(name):
@@ -159,7 +201,12 @@ def _read_timeseries(codelist, start, end, frequency, market,
     lo = _bj_date(start) if start is not None else hi - dt.timedelta(days=default_days)
 
     codes = codelist if isinstance(codelist, (list, tuple, set)) else [codelist]
-    codes = [str(c) for c in codes]
+    # 一律截到 6 位。集合里存的是 6 位代码，而调用方常传带后缀的形式
+    # （`normalize_code()` 给的是 `'600519.XSHG'`）—— 直接拿去查会**静默读空**，
+    # 症状是「这只票没有分钟数据」。`code[:6]` 是全树既有的惯例写法。
+    # 注意这也让 `market_prefix` 对带后缀代码的判断保持一致（它由 `is_stock_cn`
+    # 处理，同样只看前 6 位）。
+    codes = [str(c)[:6] for c in codes]
 
     query = {'code': {'$in': codes}, 'ts': {'$gte': lo, '$lte': hi}}
     cur = coll.find(query, {'_id': 0}).sort('ts', 1)
@@ -264,6 +311,26 @@ def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
     # 重构把它连同整个 `etf_fq.py` 一起丢了 —— `MIGRATION_STATUS.md` HIGH #9。
     GQ_apply_etf_qfq(result, codelist=codelist, verbose=verbose)
     return result, codename
+
+
+def read_min_frame(codelist, start=None, end=None, frequence='1min',
+                   market_type=None):
+    """分钟线**扁平帧**（8.3 时序）。列含 ``datetime`` / ``code`` / ``volume``。
+
+    与 :func:`get_kline_price_min` 的区别：那个返回 ``(KlineResult, codename)``
+    给门面用，本函数返回裸 DataFrame 给需要自己摆索引的调用方（如
+    ``fetch.py`` 的 ``GQ_fetch_stock_min``）。时间一律是 **naive 北京时间**，
+    耗时区换算在 :func:`_read_timeseries` 里一处完成。
+
+    无数据返回**空 DataFrame**（不是 ``None``）—— 由调用方按各自契约处理：
+    ``GQ_fetch_stock_min`` 把空表映射成 ``None``，``_adv`` 再映射成空容器。
+
+    市场（``stock_*`` / ``index_*`` 集合）由 :func:`market_prefix` 判定；
+    ETF 与指数共用 ``index_*``，所以「按代码段猜」会读空。
+    """
+    frequency = normalize_frequency(frequence)
+    market = market_prefix(codelist, market_type)
+    return _read_timeseries(codelist, start, end, frequency, market)
 
 
 def GQ_fetch_stock_day_adv(codelist, start=None, end=None, market_type=None,
