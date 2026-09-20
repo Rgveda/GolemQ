@@ -48,6 +48,7 @@ from .base import (  # noqa: F401
 # 导入即注册。新增源在此加一行 import 即可进入注册表。
 from . import pytdx_source  # noqa: F401,E402
 from . import qmt_source  # noqa: F401,E402
+from . import akshare_source  # noqa: F401,E402
 
 #: 每个集合按序尝试的源。本轮只填了已接入的。
 COLLECTION_SOURCE_PRIORITY = {
