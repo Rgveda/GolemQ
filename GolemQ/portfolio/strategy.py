@@ -95,6 +95,33 @@ class Strategy(abc.ABC):
 
         在这里统一校验，而不是让引擎逐个方法去查 —— 契约检查集中一处，
         新策略接进来时不需要改动引擎。
+
+        >>> import pandas as pd
+        >>> idx = pd.MultiIndex.from_tuples(
+        ...     [('2024-01-02', '600519'), ('2024-01-02', '000001')],
+        ...     names=['date', 'code'])
+        >>> fd = pd.DataFrame({'sig': [0.5, -0.5]}, index=idx)
+        >>> class S(Strategy):
+        ...     name = 's'
+        ...     def hold_signal(self, f): return f['sig'] > 0
+        ...     def priority(self, f): return f['sig']
+        >>> hold, prio = S().signals_for(fd)
+        >>> list(hold)
+        [True, False]
+        >>> list(prio)
+        [0.5, -0.5]
+
+        索引错位会被**拦下** —— 否则回测会按错误标的成交且不报错：
+
+        >>> class Bad(Strategy):
+        ...     name = 'bad'
+        ...     def hold_signal(self, f): return pd.Series([True])
+        ...     def priority(self, f): return pd.Series([1.0])
+        >>> Bad().signals_for(fd)
+        Traceback (most recent call last):
+            ...
+        GolemQ.portfolio.strategy.StrategyError: hold_signal() 的索引与 features_dummy 不一致 ...
+
         """
         hold = self.hold_signal(features_dummy)
         prio = self.priority(features_dummy)

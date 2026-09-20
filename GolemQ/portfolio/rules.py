@@ -38,10 +38,24 @@ class TradeRules:
 
         **按自然日序号差判断，不按 bar 数** —— 参照实现的口径是「已持仓 ≥ 1 个
         交易日」，用 bar 数会在半日市或停牌时算错。
+
+        >>> import datetime as dt
+        >>> r = ASHARE_RULES          # T+1
+        >>> r.can_sell(dt.date(2024, 1, 2), dt.date(2024, 1, 2))   # 当日买入不可卖
+        False
+        >>> r.can_sell(dt.date(2024, 1, 2), dt.date(2024, 1, 3))
+        True
+
+        T+0 市场（港股/美股）当日即可卖：
+
+        >>> TradeRules(t_plus=0).can_sell(dt.date(2024, 1, 2), dt.date(2024, 1, 2))
+        True
         """
         if self.t_plus <= 0:
             return True
-        return (current_date - buy_date) >= self.t_plus
+        # `.days`：`date - date` 得到 timedelta，直接与 int 比较会 TypeError。
+        # 这个 bug 是加 doctest 时当场抓到的 —— 文档与实现不符，且代码根本跑不通。
+        return (current_date - buy_date).days >= self.t_plus
 
 
 #: A 股口径预设。来源：`GolemQ_old` 的 `benchmark/zen_bt.py` 文档头

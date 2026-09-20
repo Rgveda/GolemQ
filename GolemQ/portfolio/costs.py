@@ -39,20 +39,55 @@ class CostModel:
     transfer_rate: float = 0.0
 
     def buy_fee(self, turnover: float) -> float:
-        """买入侧费用（佣金有下限、无印花税）。"""
+        """买入侧费用（佣金有下限、**无印花税**）。
+
+        >>> c = ASHARE_COST
+        >>> round(c.buy_fee(100_000), 2)        # 万0.85 × 10万 = 8.5
+        8.5
+
+        小额成交额时触发每笔最低 ¥5：
+
+        >>> round(c.buy_fee(1_000), 2)          # 0.085 → 取最低 5.0
+        5.0
+
+        >>> c.buy_fee(0)
+        0.0
+        """
         commission = max(turnover * self.commission_rate, self.commission_min) \
             if turnover > 0 else 0.0
         return commission + turnover * self.transfer_rate
 
     def sell_fee(self, turnover: float) -> float:
-        """卖出侧费用（佣金有下限 + 印花税 + 过户费）。"""
+        """卖出侧费用（佣金有下限 + **印花税** + 过户费）。
+
+        买卖不对称是刻意的（印花税只在卖出收）—— **差额应恰好等于印花税**：
+
+        >>> c = ASHARE_COST
+        >>> round(c.sell_fee(100_000) - c.buy_fee(100_000), 2)
+        50.0
+
+        这个断言能挡住「把两侧合成一个费率」的"简化" —— 那种改法算出来的
+        差额随换手率变化，**不易察觉**。
+        """
         commission = max(turnover * self.commission_rate, self.commission_min) \
             if turnover > 0 else 0.0
         return commission + turnover * self.stamp_rate + turnover * self.transfer_rate
 
     def fill_price(self, price: float, side: str) -> float:
         """滑点后的成交价。买入抬价、卖出压价 —— **方向不能反**，
-        反了会让回测凭空盈利，且参数越极端盈利越好看，非常难自查。"""
+        反了会让回测凭空盈利，且参数越极端盈利越好看，非常难自查。
+
+        >>> c = ASHARE_COST          # 单边滑点 10bp
+        >>> round(c.fill_price(10.0, 'B'), 4)
+        10.01
+        >>> round(c.fill_price(10.0, 'S'), 4)
+        9.99
+
+        无滑点时两侧相等：
+
+        >>> CostModel().fill_price(10.0, 'B') == CostModel().fill_price(10.0, 'S') == 10.0
+        True
+        """
         if side.upper().startswith('B'):
             return price * (1.0 + self.slippage)
         return price * (1.0 - self.slippage)

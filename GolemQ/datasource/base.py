@@ -37,7 +37,41 @@ _REGISTRY: dict = {}
 
 
 def register(cls):
-    """类装饰器：把数据源登记进注册表。以 `cls.name` 为键。"""
+    """类装饰器：把数据源登记进注册表。以 `cls.name` 为键。
+
+    导入即注册 —— 这正是「机制层不认识市场、注册由导入实现层触发」的实现方式。
+
+    >>> @register
+    ... class _Demo(DataSource):
+    ...     name = '__doctest_demo__'
+    ...     collections = (STOCK_LIST,)
+    ...     def fetch(self, collection, **kw): return []
+    >>> '__doctest_demo__' in registry()
+    True
+
+    未声明 `name` 直接报错（不静默登记成空键）：
+
+    >>> @register
+    ... class _NoName(DataSource):
+    ...     def fetch(self, collection, **kw): return []
+    Traceback (most recent call last):
+        ...
+    ValueError: _NoName 必须有类属性 name
+
+    集合名写错同样报错 —— 否则该源永远匹配不上任何集合且不报错：
+
+    >>> @register
+    ... class _BadColl(DataSource):
+    ...     name = '__doctest_bad__'
+    ...     collections = ('stock_lits',)      # 拼错
+    ...     def fetch(self, collection, **kw): return []
+    Traceback (most recent call last):
+        ...
+    ValueError: _BadColl.collections 含未知集合: ['stock_lits']
+
+    >>> _REGISTRY.pop('__doctest_demo__', None) is not None
+    True
+    """
     if not getattr(cls, 'name', None):
         raise ValueError(f'{cls.__name__} 必须有类属性 name')
     unknown = set(getattr(cls, 'collections', ())) - set(ALL_COLLECTIONS)

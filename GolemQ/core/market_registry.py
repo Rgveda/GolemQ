@@ -51,6 +51,31 @@ def register_market(name: str, instance, replace: bool = False) -> bool:
     :param replace: 默认 False —— 重复注册返回 False 而非静默覆盖。
         静默覆盖会让「哪个实例在用」变得不可知，是难查的 bug 来源。
     :returns: 是否真的写入了
+
+    >>> class Fake:
+    ...     name = 'FAKE'
+    >>> register_market('__doctest__', Fake())
+    True
+
+    重复注册**不覆盖**，返回 False（而不是抛错，也不是静默替换）：
+
+    >>> register_market('__doctest__', Fake())
+    False
+
+    显式 `replace=True` 才替换：
+
+    >>> register_market('__doctest__', Fake(), replace=True)
+    True
+
+    用例结束后清掉，避免污染全局注册表：
+
+    >>> GQMARKETS.pop('__doctest__', None) is not None
+    True
+
+    >>> register_market('', Fake())
+    Traceback (most recent call last):
+        ...
+    ValueError: 市场名不能为空
     """
     if not name:
         raise ValueError('市场名不能为空')
@@ -80,6 +105,31 @@ def set_active_market(name: str) -> str:
 
     **未注册则明确报错，不静默回落到默认市场** —— 回落的后果是「你以为是美股，
     实际取的是 A 股数据」，这种错误比直接失败危险得多。
+
+    >>> import GolemQ.core.market_registry as reg
+    >>> prev = reg._active_market_name          # 先存，用例结束要还原
+    >>> class Fake:
+    ...     name = 'US'
+    >>> register_market('__doctest_us__', Fake())
+    True
+    >>> set_active_market('__doctest_us__')
+    '__doctest_us__'
+    >>> active_market_name()
+    '__doctest_us__'
+
+    未注册的市场**抛错**，不回落到默认：
+
+    >>> set_active_market('NoSuchMarket')
+    Traceback (most recent call last):
+        ...
+    KeyError: ...'NoSuchMarket' 未注册...
+
+    ⚠️ 本函数改的是模块级全局状态，**doctest 必须自行还原**，
+    否则会污染同一次 doctest 运行里的后续用例：
+
+    >>> reg._active_market_name = prev
+    >>> GQMARKETS.pop('__doctest_us__', None) is not None
+    True
     """
     global _active_market_name
     if name not in GQMARKETS:

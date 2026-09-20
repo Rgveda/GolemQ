@@ -40,6 +40,18 @@ class SourceThrottle:
         self._lock = threading.Lock()
 
     def interval(self, name: str) -> float:
+        """某源的最小间隔：按源覆盖优先，否则用默认（30s）。
+
+        >>> t = SourceThrottle(default_interval=30.0, per_source={'pytdx': 0})
+        >>> t.interval('pytdx')          # 显式覆盖
+        0.0
+
+        >>> t.interval('akshare')        # 未覆盖 → 用默认
+        30.0
+
+        >>> SourceThrottle().interval('任何未配置的源')
+        30.0
+        """
         return self.overrides.get(name, self.default_interval)
 
     def wait(self, name: str) -> float:

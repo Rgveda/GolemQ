@@ -2,6 +2,43 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 接手本项目，按此顺序读
+
+**Claude Code 每次会话自动加载本文件**，所以阅读入口放在这里 —— 其余文档挂在下面。
+
+| 顺序 | 文档 | 读它干什么 |
+|:--|:--|:--|
+| 1 | [`PITFALLS.md`](PITFALLS.md) | **已知陷阱。看起来像 bug 的刻意设计，勿"修正"** |
+| 2 | [`DECISIONS.md`](DECISIONS.md) | 已定的架构决定与**弃案理由**，别重新论证 |
+| 3 | [`GLOSSARY.md`](GLOSSARY.md) | 行话。第四节的词**几乎全是老代码继承**，别当拼写错误改 |
+| 4 | [`RESTRUCTURE_PLAN.md`](RESTRUCTURE_PLAN.md) | 两层模型、Active Market、portfolio 方案 |
+| 5 | [`MIGRATION_STATUS.md`](MIGRATION_STATUS.md) | 重构遗留缺陷清单（含修复顺序建议）|
+
+**改代码前先查 `PITFALLS.md` 与 `GLOSSARY.md`。**
+
+另：`git log --oneline -30` 的 commit message 记录了当时的决定、弃案与验证方式 ——
+它们是事实上的 ADR，成本为零且已有内容。
+
+### 为什么有这几份文档
+
+上下文容量有限（本项目实测约两天就需要重来一轮），而**代码与 docstring 装不下**
+四类东西：**决策与弃案、当前进度、行话、陷阱**。这四份文档就是补这个缺口。
+
+写这些文档时的一条纪律：**只写已验证的事实**。没验证过的宁可留空 ——
+一份「猜的」文档比没有文档更坏，因为它会被当成依据。
+
+### doctest
+
+纯函数（`portfolio/`、`core/market_registry`、`datasource/` 的机制部分）的 docstring
+里带 doctest，由 `GolemQ/test_cases/test_doctests.py` 收集进 `unittest` 发现。
+
+```bash
+python -m unittest GolemQ.test_cases.test_doctests -v
+```
+
+**需要 DB / 网络 / QMT 客户端的函数不要加 doctest** —— 加了也跑不了，
+只会让测试套件变慢变红。它们的正确性验证在 `PITFALLS.md` 的边界条件里。
+
 ## Project Overview
 
 GolemQ is a quantitative trading framework for the Chinese A-share stock market. It provides market data ingestion, feature engineering, backtesting, live trading via XTQuant, and monitoring/scheduling — backed by MongoDB and RabbitMQ.

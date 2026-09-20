@@ -83,6 +83,22 @@ def resolve_market(market=None):
 
     **未知值明确报错，不静默回落** —— 回落会让你「以为在取美股、实际拿到 A 股」，
     比直接失败危险得多。
+
+    映射的层级关系（`INDEX_CN` 也是 A 股市场，不是另一个市场）：
+
+    >>> MARKET_TYPE_TO_MARKET[MARKET_TYPE.STOCK_CN]
+    'StockCN'
+    >>> MARKET_TYPE_TO_MARKET[MARKET_TYPE.INDEX_CN]
+    'StockCN'
+    >>> MARKET_TYPE_TO_MARKET[MARKET_TYPE.STOCK_HK]
+    'StockHK'
+
+    未登记的品种类型报错，并提示该往哪加：
+
+    >>> resolve_market(MARKET_TYPE.STOCK_US)
+    Traceback (most recent call last):
+        ...
+    ValueError: 未知的市场类型 'stock_us'。已登记: ...若这是新市场的品种类型，请在 fetch/kline.py 的 MARKET_TYPE_TO_MARKET 中登记。
     """
     if market is None:
         return get_active_market()

@@ -74,6 +74,22 @@ class NotionalSlotSizer(PositionSizer):
             raise ValueError(f'entry_fractions 之和必须为 1.0，得到 {sum(self._ladder)}')
 
     def target_slots(self, equity: float) -> int:
+        """当前权益下的槽位数。
+
+        >>> s = NotionalSlotSizer(notional=100_000, base=33)
+
+        口径来自参照实现（每 500 万 +50 槽，等价于每 10 万元 1 槽）：
+
+        >>> [s.target_slots(e) for e in (5_000_000, 10_000_000, 20_000_000, 30_000_000)]
+        [50, 100, 200, 300]
+
+        低于下限时回落到 `base`（不是 0）：
+
+        >>> s.target_slots(1_000_000)      # 1_000_000 // 100_000 = 10 < 33
+        33
+        >>> s.target_slots(0)
+        33
+        """
         return max(int(self.base), int(float(equity) // self.notional))
 
     def slot_notional(self, equity: float, n_slots: int) -> float:
@@ -82,6 +98,20 @@ class NotionalSlotSizer(PositionSizer):
         注意：**不是**固定的 `self.notional`。固定金额会在权益变化时让总仓位
         无法跟随（33 槽 × 10 万 = 330 万，而权益 1000 万时只用了 33%），
         故按权益摊分；`notional` 只用来决定**槽位数**。
+
+        >>> s = NotionalSlotSizer(notional=100_000, base=33)
+        >>> round(s.slot_notional(3_300_000, 33), 2)
+        100000.0
+
+        槽位数变多则单仓变小 —— 这正是「优化仓位」而非「放大仓位」：
+
+        >>> round(s.slot_notional(3_300_000, 330), 2)
+        10000.0
+
+        >>> s.slot_notional(1_000_000, 0)
+        Traceback (most recent call last):
+            ...
+        ValueError: n_slots 必须为正
         """
         if n_slots <= 0:
             raise ValueError('n_slots 必须为正')

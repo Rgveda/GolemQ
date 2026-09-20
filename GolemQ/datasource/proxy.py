@@ -44,6 +44,17 @@ class ProxyConfig:
 
     @property
     def enabled(self) -> bool:
+        """是否启用了代理。空串、纯空白、None 一律视为**未启用**。
+
+        >>> ProxyConfig().enabled                    # 不传 = 未配置
+        False
+        >>> ProxyConfig('').enabled                  # 空串同样未启用
+        False
+        >>> ProxyConfig('   ').enabled               # 纯空白也归为未启用
+        False
+        >>> ProxyConfig('http://127.0.0.1:7890').enabled
+        True
+        """
         return self.url is not None
 
     def apply(self, session):
