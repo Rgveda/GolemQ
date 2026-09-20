@@ -54,16 +54,27 @@
 ``province`` / ``industry`` 为整型编码，无码表可映射，故**原样存整型** ——
 比旧 QMT writer 写 ``None`` 是改进；但若日后要展示，需要另建码表。
 
-⚠️ 已知缺口：**北交所取不到**（已实测）
-=====================================
-``get_security_count(2)`` 会报 383 只，但 ``get_security_list(2, 0)`` **恒返回 0 行**。
-已在 4 台服务器（123.125.108.14 / 180.153.18.170 / 115.238.90.165 / 124.71.187.122）
-上复现，且 ``get_security_list2`` / ``get_security_list3`` 同样为 0 ——
-是 **pytdx 库对 market 2 的能力缺口**，换服务器无用。
+⚠️ 北交所（market=2）**不只是取不到，还会毒死连接**
+=================================================
+``get_security_count(2)`` 会报 383 只，但 ``get_security_list(2, 0)`` 返回 **None**
+（已在 4 台服务器上复现，``get_security_list2`` / ``get_security_list3`` 同样为空）。
 
-后果：``stock_list`` 实收约 **5426** 条，对照 4.4 的 5591 条**少约 369 只北交所**
-（``82``/``92`` 前缀）。本轮接受该缺口并在此记录；若要补齐，需另找源
-（MiniQMT 的 ``get_stock_list_in_sector`` 或 akshare 的北交所清单）。
+**真正的危险在于它的副作用**：那一次 None 之后，**同一连接上的所有调用都失效** ——
+``get_finance_info`` 返回 None、``get_security_list`` 返回空，**且不抛任何异常**。
+pytdx 是请求/响应式 socket，一个畸形响应让字节流错位，此后每次都读错位置。
+
+症状极具误导性：``fetch_stock_info`` 静默拿到 0 行并报 ``skipped``，
+看起来像「没有财务数据」，实际是连接被这一句试调用打死了。
+**本模块曾为此真实受害** —— 为了「哪天上游修了能自动接上」而保留 market=2 的
+尝试，结果把 ``stock_info`` 整条链路变成静默空结果。
+
+故 ``market_enum`` **默认不含 market 2**。若日后确要重试，
+**必须用独立连接，用完即弃**。
+
+后果：``stock_list`` 实收 **5226** 条（深 2906 + 沪 2320），
+对照 4.4 的 5591 条**少约 369 只北交所**（``82``/``92`` 前缀）。
+若要补齐，需另找源 —— ``tdxaidata`` 的 ``get_stock_list(market='北交所')``
+实测可取 348 只，已在优先级表里作为 ``stock_list`` 的主源。
 
 ⚠️ 限频：pytdx 不是 HTTP
 ========================
@@ -231,14 +242,23 @@ class TdxSource(DataSource):
         api = self._connect()
         from pytdx.params import TDXParams
 
-        # 0=SZ, 1=SH, 2=BJ。
-        # 北交所（2）见模块文档的已知缺口：count 有值但 list 恒空，
-        # 多服务器多方法均已实测无效。留着尝试是为了「哪天上游修了能自动接上」——
-        # 它失败时只跳过，不会让整批取数失败。
+        # 0=SZ, 1=SH。
+        #
+        # ⚠️ **不要把北交所（market=2）加回来。** 它不只是「取不到」——
+        # 实测 `get_security_list(2, 0)` 返回 None 后，**整条连接被永久污染**：
+        # 之后同一连接上的 `get_finance_info` 与 `get_security_list` 全部返回
+        # None/空，而**不抛任何异常**。pytdx 走的是请求/响应式 socket，
+        # 一个畸形响应会让字节流错位，此后每次调用都读错位置。
+        #
+        # 症状极具误导性：`fetch_stock_info` 会静默拿到 0 行、报 skipped，
+        # 看起来像「没有财务数据」，实际是连接被这一句试调用打死了。
+        # 这个 bug 曾经真实存在 —— 本模块为了「哪天上游修了能自动接上」而保留
+        # 了 market=2 的尝试，结果把 `stock_info` 整条链路打成静默空结果。
+        #
+        # 若日后确要重试北交所，**必须用独立连接**，用完即弃，不能共用。
         market_enum = markets or (
             (TDXParams.MARKET_SZ, 'sz'),
             (TDXParams.MARKET_SH, 'sh'),
-            (2, 'bj'),
         )
 
         rows: list = []

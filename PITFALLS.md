@@ -87,6 +87,27 @@ class _StubMeta(type):
 
 ---
 
+### P3b. pytdx：**一次失败调用会毒死整条连接**
+
+**位置**：`markets/StockCN/datasource/pytdx_source.py`
+
+`get_security_list(2, 0)`（北交所）返回 `None` —— 而**那一次 None 之后，同一连接上
+所有调用都失效**：`get_finance_info` 返回 None、`get_security_list` 返回空，
+**且不抛任何异常**。
+
+pytdx 是请求/响应式 socket，一个畸形响应让**字节流错位**，此后每次调用都读错位置。
+
+**真实受害案例**：`fetch_stock_info` 曾静默返回 0 行并报 `skipped`，
+看起来像「没有财务数据」，**实际是 `fetch_stock_list()` 内部那句「试北交所」
+把连接打死了**。而那句试调用是为了「哪天上游修了能自动接上」才留的。
+
+**该怎么办**：
+
+- `market_enum` **默认不含 market 2**（已修）
+- 若日后确要重试北交所，**必须用独立连接，用完即弃**
+- **更一般的教训**：pytdx 的调用返回 `None`/空时，先怀疑连接已错位，
+  而不是「上游没这个数据」
+
 ### P4. 静默覆盖落盘产物
 
 **位置**：回测落盘（参照实现 `OneWaveQuant/GolemQ/benchmark/zen_bt.py`）

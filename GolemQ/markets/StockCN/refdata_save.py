@@ -136,6 +136,23 @@ def _supplement_stock_list(rows: list, primary_name: str, verbose: bool) -> list
     return rows
 
 
+def _authoritative_codes(verbose: bool = False) -> list:
+    """以 `stock_list` 为准的标的宇宙。
+
+    **为什么不能各源自己枚举**：`codelist=None` 时，若让每个适配器用自己的
+    `fetch_stock_list()`，各源会静默覆盖**不同的标的宇宙** —— 因为它们枚举能力不同。
+    实测过的后果：`stock_info` 只覆盖 5226 只，而 `stock_list` 有 5574 只，
+    **差的 348 只全是北交所**（pytdx 枚举不到北交所，但它其实**取得到**北交所的财务）。
+
+    `stock_list` 是集合里唯一的「全市场名单」，且它的主源 tdxaidata 覆盖北交所。
+    故逐只查询的集合（`stock_info` / `financial`）一律以它为准。
+    """
+    codes = sorted(DATABASE_STOCK_CN['stock_list'].distinct('code'))
+    if verbose:
+        print(f'[refdata] 以 stock_list 为准的标的宇宙: {len(codes)} 只')
+    return codes
+
+
 def save_refdata(collections=None, source: str = None, codelist=None,
                  verbose: bool = True) -> dict:
     """把参考集合取回并落库到 8.3 的 `golemq_stock_cn`。
@@ -170,8 +187,11 @@ def save_refdata(collections=None, source: str = None, codelist=None,
         entry['source'] = src.name
         try:
             kwargs = {}
-            if codelist is not None and coll_name in ('stock_info', 'financial'):
-                kwargs['codelist'] = codelist
+            if coll_name in ('stock_info', 'financial'):
+                # 逐只查询的集合：范围一律以 stock_list 为准，不让各源按自己的
+                # 枚举能力定宇宙 —— 否则会静默漏掉某些市场（实测漏过北交所 348 只）。
+                scope = codelist if codelist is not None else _authoritative_codes(verbose)
+                kwargs['codelist'] = scope
             rows = src.fetch(coll_name, **kwargs)
         except Exception as exc:      # noqa: BLE001 逐集合隔离，一个失败不拖垮其余
             entry['status'] = 'failed'
