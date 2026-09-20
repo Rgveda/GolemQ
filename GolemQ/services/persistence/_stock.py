@@ -51,7 +51,7 @@ from GolemQ.core.constants import (
 )
 from GolemQ.features.empirical import load_massive_reviews
 from GolemQ.features.reviews import attach_reality_features
-from GolemQ.fetch.kline import (
+from GolemQ.markets.StockCN.kline83 import (
     get_kline_price_min,
     get_kline_price_v3,
 )

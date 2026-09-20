@@ -53,7 +53,7 @@ from GolemQ.features.empirical import (
     save_stock_metadata,
     GQ_fetch_stock_metadata_major,
 )
-from GolemQ.fetch.kline import get_kline_price_v3
+from GolemQ.markets.StockCN.kline83 import get_kline_price_v3
 from GolemQ.core.base import GQ_util_get_last_day
 from GolemQ.services.align import symbol_checkpoint_log
 from GolemQ.services.persistence._schema import (

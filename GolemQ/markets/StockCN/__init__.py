@@ -58,6 +58,18 @@ from .quotes import StockCNQuotes
 mongo_uri = GQSETTING.get_config('MONGODB', 'uri')
 DATABASE = GQ_util_mongodb_client(mongo_uri)
 
+# A 股市场专属的 MongoDB 8.3 时序库。
+#
+# 库名在此硬编码，不写入配置：StockCN 即 A 股市场本身，存储库名是市场定义的
+# 一部分，不随部署环境变化。连接地址仍取自 ~/.GolemQ/settings/config.ini
+# 的 [MONGODB] uri（见上）。
+#
+# 内容：由旧 GolemQ 系统的 MongoDB 4.4 (stock_min / index_min) 迁移而来，
+# 为 timeField=ts、metaField=code 的时序集合，分 period 存于
+# stock_1min|5min|15min|30min|60min 与 index_*。读路径见 kline83.py。
+DATABASE_STOCK_CN_NAME = 'golemq_stock_cn'
+DATABASE_STOCK_CN = DATABASE[DATABASE_STOCK_CN_NAME]
+
 
 def close_mongo_client():
     global DATABASE
@@ -89,7 +101,10 @@ class StockCN(BaseMarket):
             self._name = "中国A股市场"
             self._exchange_codes = ['SH', 'SZ', 'BJ']
             
-            self.DATABASE = DATABASE.GolemQ_StockCN
+            self.DATABASE = DATABASE_STOCK_CN
+            # 待定：GolemQ_StockCN_REALTIME 在 8.3 服务器上并不存在（实测 0 集合），
+            # 与 self.DATABASE 先前的失效同源。尚未确定它应指向哪个库，暂留原样并
+            # 在此标注，以免掩盖真实状态。
             self.GQREALTIME = DATABASE.GolemQ_StockCN_REALTIME
             self.quotes = StockCNQuotes()
 
@@ -182,6 +197,8 @@ _stockcn_instance = StockCN()
 # 导出公共接口
 __all__ = [
     'StockCN',
+    'DATABASE_STOCK_CN',
+    'DATABASE_STOCK_CN_NAME',
     'normalize_code',
     'is_stock_cn',
     'is_future_cn',
