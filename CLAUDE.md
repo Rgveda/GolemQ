@@ -24,6 +24,53 @@ On Windows, activate the conda environment before running commands:
 C:\ProgramData\miniconda3\shell\condabin\conda-hook.ps1 ; conda activate C:\ProgramData\miniconda3 ; cd "y:/projects/GolemQ" ; conda activate GolemQ
 ```
 
+### Windows Encoding (UTF-8)
+
+This project contains Chinese identifiers, comments, and data. Windows consoles
+default to the legacy ANSI code page (cp936/GBK on a zh-CN system), which
+mangles Chinese output and breaks comparisons against UTF-8 source. Always
+work in UTF-8.
+
+**Already configured** — `.claude/settings.json` pins these for every session:
+
+| Variable | Value | Purpose |
+|:---|:---|:---|
+| `PYTHONUTF8` | `1` | Python 3.7+ UTF-8 mode: stdin/stdout/files default to UTF-8 |
+| `PYTHONIOENCODING` | `utf-8` | Belt-and-braces for stdout/stderr |
+| `LANG` / `LC_ALL` | `en_US.UTF-8` | Git Bash locale |
+
+**Bash (Git Bash)** — if you need it manually, or the vars above are absent:
+
+```bash
+export PYTHONUTF8=1 PYTHONIOENCODING=utf-8 LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+```
+
+**PowerShell** — env vars cannot fix the *console* encoding; set it explicitly:
+
+```powershell
+chcp 65001 > $null
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+$OutputEncoding          = [Text.Encoding]::UTF8
+$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
+```
+
+PowerShell 7+ already defaults to UTF-8; this matters mainly for Windows
+PowerShell 5.1.
+
+**Python source** — always pass `encoding` explicitly when touching files:
+
+```python
+open(path, encoding="utf-8")                      # read
+json.dump(data, fh, ensure_ascii=False)           # write, keep CJK readable
+```
+
+Do not rely on `open()`'s default encoding even with `PYTHONUTF8=1`; being
+explicit keeps the code correct on Linux too.
+
+**Symptoms of getting this wrong**: `事件数` renders as `��¼��`; a Chinese
+path or symbol compares unequal to its own literal; `UnicodeDecodeError` on a
+file that looks fine in an editor.
+
 ## Commands
 
 ```bash

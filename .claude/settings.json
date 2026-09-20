@@ -176,7 +176,11 @@
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "CLAUDE_FLOW_V3_ENABLED": "true",
-    "CLAUDE_FLOW_HOOKS_ENABLED": "true"
+    "CLAUDE_FLOW_HOOKS_ENABLED": "true",
+    "PYTHONIOENCODING": "utf-8",
+    "PYTHONUTF8": "1",
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": "en_US.UTF-8"
   },
   "claudeFlow": {
     "version": "3.0.0",
