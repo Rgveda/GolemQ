@@ -170,7 +170,30 @@ def main() -> None:
                         help="对齐间隔 (15min/60min)",
                         type=str,
                         default="15min")
-    
+
+    # ---- 参考数据（5 个集合）保存到 MongoDB 8.3 ----
+    # 同时接受连字符与下划线两种写法：前者是 argparse 惯例，后者是习惯输入。
+    parser.add_argument('--save-x', '--save_x',
+                        help="保存 A 股参考数据到 MongoDB 8.3（按集合优先级自动选源）",
+                        action="store_true",
+                        default=False)
+
+    parser.add_argument('--save-qmt', '--save_qmt',
+                        help="保存 A 股参考数据到 MongoDB 8.3（强制走 MiniQMT，需客户端在线）",
+                        action="store_true",
+                        default=False)
+
+    parser.add_argument('--save-collections',
+                        help="限定要保存的集合，逗号分隔；默认全部 5 个 "
+                             "(stock_list,stock_info,etf_list,stock_block,financial)",
+                        type=str,
+                        default=None)
+
+    parser.add_argument('--save-status',
+                        help="查看参考集合的库存量与各数据源可用性，不写库",
+                        action="store_true",
+                        default=False)
+
     # 解析参数
     args = parser.parse_args()
     
@@ -449,6 +472,36 @@ def main() -> None:
             print(f"股票分钟对齐功能执行失败: {e}")
             sys.exit(1)
             
+    elif args.save_status:
+        # 只读：报告库存量与各源可用性，不写库
+        from GolemQ.pipeline.refdata import format_status
+        print(format_status())
+
+    elif args.save_x or args.save_qmt:
+        # CLI 只做参数校验，业务逻辑在 pipeline/refdata.py
+        from GolemQ.pipeline.refdata import format_status, save_refdata
+
+        collections = None
+        if args.save_collections:
+            collections = [c.strip() for c in args.save_collections.split(',') if c.strip()]
+            from GolemQ.pipeline.refdata import ALL_REF_COLLECTIONS
+            unknown = [c for c in collections if c not in ALL_REF_COLLECTIONS]
+            if unknown:
+                print(f"未知集合: {unknown}；可用: {list(ALL_REF_COLLECTIONS)}")
+                sys.exit(1)
+
+        source = 'qmt' if args.save_qmt else None
+        report = save_refdata(collections=collections, source=source,
+                              verbose=args.verbose)
+        print()
+        print(format_status(report))
+
+        # 有集合失败则以非零码退出，便于脚本/计划任务感知
+        failed = [n for n, e in report.items() if e.get('status') == 'failed']
+        if failed:
+            print(f"\n失败的集合: {failed}")
+            sys.exit(1)
+
     else:
         # 如果没有指定任何参数，显示帮助信息
         parser.print_help()
