@@ -102,14 +102,36 @@ $ # 裸 QA.* 前缀引用（排除注释/docstring）：0
 | `fetch.py` 的 26 处未定义 `QA.` | 回归已清（`ce58c0d`）。INDEX 分支接 `GQ_fetch_stock_day_adv` / `GQ_fetch_index_min_adv`；**CRYPTOCURRENCY 分支改抛 `NotImplementedError`** —— 本树无数字货币数据源，返回空会让「未实现」与「没有数据」无从区分（两处都不在 try 内，抛得出去）|
 | `services/features.py` / `_hourly_fetch.py` | 也用 `QA.MARKET_TYPE` 却**从未 import QUANTAXIS**（未定义名）。逐文件普查漏了它们，靠**全树普查**才捞出来 —— 教训：普查要按「有没有用」而不是「有没有 import」|
 
-### ⚠️ 新发现（未修）：`services/features/` 整个目录不可达
+### ✅ `services/features` 已补齐成包（2026-09-21，提交 `58c616b`）
 
-`GolemQ/services/features/` 是**没有 `__init__.py` 的目录**，而同层有
-`features.py` —— Python 解析 `GolemQ.services.features` 时**模块优先于命名空间包**，
-所以目录里那 6 个文件（`_daily_crud` / `_daily_fetch` / `_daily_save` /
-`_hourly_fetch` / `_reality_save` / `_valuation`）**全部加载不到**，且全树零引用。
-看起来是一次「把 900 行的 `features.py` 拆成包」的重构没做完（旧模块没删、
-`__init__.py` 没建）。**待你定**：补齐成包，还是删掉目录。
+原先：拆分的 6 个分册早就写好了，但**从未建 `__init__.py`**，同层还留着 956 行的
+旧巨石 `features.py` —— 普通模块优先于命名空间包，所以解析永远落到巨石上，
+**6 个分册一个字节都没生效过**（全树零引用）。
+
+现在：新增 `_hourly_crud.py`（原巨石里最后 3 个函数，逐字抽取）、建 `__init__.py`
+（再导出全部 11 个函数）、**删除巨石**。
+
+**一个不删不行的理由**：留着巨石是个陷阱 —— 它是死的，但任何人编辑它都"改了没反应"。
+
+### ⚠️ 补齐时发现的两个缺陷（**均为老树继承，非重构回归**）
+
+**① `GQ_fix_daily_metadata` 永远修不了东西。** `_daily_crud.py` 里：
+```python
+int64_dates['date'].apply(lambda: (x/1000) != int64_dates['date_stamp'])
+```
+lambda **没有参数**却用了 `x`（上面两行都正确地写了 `lambda x:`）。只要
+`int64_dates` 非空就抛 `NameError` → 被 `except` 吞成一行打印 + `return None` →
+**下面的 MongoDB 写回循环从不执行**。空的 `int64_dates` 不会调用 lambda，所以
+"无事可修"时它看起来正常。
+老树 `GolemQ_old/scribe/features.py:580` **逐字相同** → 继承缺陷。
+
+**② `GQ_fetch_hourly_metadata_reality` 恒返回 None。** 它按 `time_stamp` 过滤，
+而默认集合 `stock_diagnosis` **含该字段的文档数为 0**（日线兄弟按 `date_stamp`
+过滤，那个字段有 → 能出 24 行）。它的写入目标 `stock_metadata_60min` / `_15min`
+在库里**也不存在**。老树 `markets/StockCN/scribe.py:364-392` 同样 →
+继承缺陷。需要先定「小时级 metadata 到底住哪个集合」。
+
+**两者我都没擅自改**：① 修好会启用一条从未跑过的 Mongo 写路径；② 需要先决定数据归属。
 
 ### 已完成部分（全部实测）
 
@@ -212,6 +234,8 @@ $ # 裸 QA.* 前缀引用（排除注释/docstring）：0
 | 1 | **`financial` 集合（当前 0 行）** | **(a)** 暂缓（上一轮倾向此项：无消费方 + akshare 全量 46.5h + tdxaidata 字段目录未知）；**(b)** 你给 tdxaidata 字段名，走批量通道几分钟灌完；**(c)** 限定代码范围跑 akshare |
 | 2 | **C2 撮合移植** | 需你先给策略实现（`XGB_ECHO_TIMING_LAG` + `QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY`）—— 信号公式属策略侧，不猜 |
 | 3 | 未被引用但值错的常量 | 只有**全量审计**能闭合（两个工具都只看被引用的）。只读检查，成本低 |
+| 4 | **`GQ_fix_daily_metadata` 的 lambda 缺陷** | 修 = 启用一条从未跑过的 Mongo 写路径，属行为变更 |
+| 5 | **小时级 metadata 的归属** | 读函数按 `time_stamp` 过滤、写目标集合不存在 —— 先定它住哪 |
 
 ---
 
