@@ -80,12 +80,12 @@ from GolemQ.models.alias import (
     LTT,
 )
 import pymongo
-from QUANTAXIS.QAUtil import (
-    # DATABASE,
-    QA_util_date_stamp,
-    QA_util_date_valid,
-    QA_util_log_info,
-    QA_util_code_tolist,
+from GolemQ.core.gq_logging import GQ_util_log_info
+from GolemQ.core.symbol import GQ_util_code_tolist
+from GolemQ.markets.StockCN.date_utils import (
+    GQ_util_date_valid,
+    GQ_util_date_stamp,
+    GQ_util_time_stamp,
 )
 from GolemQ.core.preprocessing import (
     GQ_util_to_json_from_pandas,
@@ -152,8 +152,8 @@ def save_symbol_checkpoint_log(
                 AKA.CATALOG: catalog,
                 "date_stamp":
                         {
-                            "$gte": int(QA_util_date_stamp(start)),
-                            "$lte": int(QA_util_date_stamp(end)),
+                            "$gte": int(GQ_util_date_stamp(start)),
+                            "$lte": int(GQ_util_date_stamp(end)),
                         },
                 }
         #print(query_id)
@@ -166,7 +166,7 @@ def save_symbol_checkpoint_log(
                 coll.delete_many(query_id)
 
                 # 作为差量更新，只更新最后一天的数据
-                #data = data.query("date_stamp>={}".format(QA_util_time_stamp(end))).copy()
+                #data = data.query("date_stamp>={}".format(GQ_util_time_stamp(end))).copy()
                 if (len(data) == 0):
                     print(u'{} Data len equals zero.'.format(codelist))
                 data_json = GQ_util_to_json_from_pandas(data)
@@ -284,11 +284,11 @@ def GQ_fetch_checkpoint_symbols(
 
     FrozenExpired = str(FrozenExpired)[0:19]
 
-    if QA_util_date_valid(str(FrozenExpired)[0:10]):
+    if GQ_util_date_valid(str(FrozenExpired)[0:10]):
         cursor = collections.find({
                 AKA.FROZEN:
                     {
-                    "$gte": QA_util_date_stamp(FrozenExpired)
+                    "$gte": GQ_util_date_stamp(FrozenExpired)
                     }
             },
             {"_id": 0},

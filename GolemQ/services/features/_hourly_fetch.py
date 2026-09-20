@@ -31,7 +31,13 @@ import traceback
 import pymongo
 from pymongo import UpdateOne
 from datetime import datetime as dt
-from QUANTAXIS.QAUtil import QA_util_log_info, QA_util_code_tolist, QA_util_date_valid, QA_util_date_stamp, QA_util_time_stamp
+from GolemQ.core.gq_logging import GQ_util_log_info
+from GolemQ.core.symbol import GQ_util_code_tolist
+from GolemQ.markets.StockCN.date_utils import (
+    GQ_util_date_valid,
+    GQ_util_date_stamp,
+    GQ_util_time_stamp,
+)
 from GolemQ.core.settings import DATABASE as DATABASE_GolemQ
 from GolemQ.core.constants import AKA
 from GolemQ.core.preprocessing import GQ_util_to_json_from_pandas
@@ -57,20 +63,20 @@ def GQ_fetch_hourly_metadata_reality(
     end = str(end)[0:19]
 
     # code checking
-    code = QA_util_code_tolist(code)
+    code = GQ_util_code_tolist(code)
     if (code is not None):
-        code = QA_util_code_tolist(code)
-        if QA_util_date_valid(str(end)[0:10]):
+        code = GQ_util_code_tolist(code)
+        if GQ_util_date_valid(str(end)[0:10]):
             cursor = collections.find({
                     'code': {
                         '$in': code
                     },
                     "time_stamp":
                         {
-                        "$gte": QA_util_time_stamp(start),
-                        "$lte": QA_util_time_stamp(end) if int(
+                        "$gte": GQ_util_time_stamp(start),
+                        "$lte": GQ_util_time_stamp(end) if int(
                             pd.to_datetime(
-                                end).to_pydatetime().timestamp()) <= QA_util_time_stamp(
+                                end).to_pydatetime().timestamp()) <= GQ_util_time_stamp(
                                     end) else int(pd.to_datetime(end).to_pydatetime().timestamp()),
                         }
                 },
@@ -78,21 +84,21 @@ def GQ_fetch_hourly_metadata_reality(
                 batch_size=10000)
         #res=[QA_util_dict_remove_key(data, '_id') for data in cursor]
     else:
-        if QA_util_date_valid(str(end)[0:10]):
+        if GQ_util_date_valid(str(end)[0:10]):
             cursor = collections.find({
                     "time_stamp":
                         {
-                        "$gte": QA_util_time_stamp(start),
-                        "$lte": QA_util_time_stamp(end) if int(
+                        "$gte": GQ_util_time_stamp(start),
+                        "$lte": GQ_util_time_stamp(end) if int(
                             pd.to_datetime(
-                                end).to_pydatetime().timestamp()) <= QA_util_time_stamp(
+                                end).to_pydatetime().timestamp()) <= GQ_util_time_stamp(
                                     end) else int(pd.to_datetime(end).to_pydatetime().timestamp()),
                         }
                 },
                 {"_id": 0},
                 batch_size=10000)
     
-    if QA_util_date_valid(str(end)[0:10]):
+    if GQ_util_date_valid(str(end)[0:10]):
         res = pd.DataFrame([item for item in cursor])
         try:
             res = res.assign(datetime=pd.to_datetime(res.datetime)).drop_duplicates((['datetime',
@@ -116,7 +122,7 @@ def GQ_fetch_hourly_metadata_reality(
             
         return res
     else:
-        QA_util_log_info(f'GolemQ Error GQ_fetch_hourly_metadata_reality data parameter start={start:%s} end={end:%s} is not right')
+        GQ_util_log_info(f'GolemQ Error GQ_fetch_hourly_metadata_reality data parameter start={start:%s} end={end:%s} is not right')
     return None
 
 

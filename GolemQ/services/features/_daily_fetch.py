@@ -31,7 +31,13 @@ import traceback
 import pymongo
 from pymongo import UpdateOne
 from datetime import datetime as dt
-from QUANTAXIS.QAUtil import QA_util_log_info, QA_util_code_tolist, QA_util_date_valid, QA_util_date_stamp, QA_util_time_stamp
+from GolemQ.core.gq_logging import GQ_util_log_info
+from GolemQ.core.symbol import GQ_util_code_tolist
+from GolemQ.markets.StockCN.date_utils import (
+    GQ_util_date_valid,
+    GQ_util_date_stamp,
+    GQ_util_time_stamp,
+)
 from GolemQ.core.settings import DATABASE as DATABASE_GolemQ
 from GolemQ.core.constants import AKA
 from GolemQ.core.preprocessing import GQ_util_to_json_from_pandas
@@ -58,15 +64,15 @@ def GQ_fetch_daily_metadata_reality(
     # code checking
     if (code is not None):
         code = GQ_util_code_tolist(code)
-        if QA_util_date_valid(end):
+        if GQ_util_date_valid(end):
             query_id = {
                     'code': {
                         '$in': code
                     },
                     "date_stamp": {
-                        "$gte": QA_util_date_stamp(start),
-                        "$lte": QA_util_date_stamp(end) if int(
-                            pd.to_datetime(end).to_pydatetime().timestamp()) <= QA_util_date_stamp(
+                        "$gte": GQ_util_date_stamp(start),
+                        "$lte": GQ_util_date_stamp(end) if int(
+                            pd.to_datetime(end).to_pydatetime().timestamp()) <= GQ_util_date_stamp(
                                 end) else int(pd.to_datetime(end).to_pydatetime().timestamp()),
                     }
                 }
@@ -74,12 +80,12 @@ def GQ_fetch_daily_metadata_reality(
                 {"_id": 0},
                 batch_size=10000)
     else:
-        if QA_util_date_valid(end):
+        if GQ_util_date_valid(end):
             query_id = {
                     "date_stamp": {
-                        "$gte": QA_util_date_stamp(start),
-                        "$lte": QA_util_date_stamp(end) if int(
-                            pd.to_datetime(end).to_pydatetime().timestamp()) <= QA_util_date_stamp(
+                        "$gte": GQ_util_date_stamp(start),
+                        "$lte": GQ_util_date_stamp(end) if int(
+                            pd.to_datetime(end).to_pydatetime().timestamp()) <= GQ_util_date_stamp(
                                 end) else int(pd.to_datetime(end).to_pydatetime().timestamp()),
                     }
                 }
@@ -88,7 +94,7 @@ def GQ_fetch_daily_metadata_reality(
                 batch_size=10000)        
         # res=[QA_util_dict_remove_key(data, '_id') for data in cursor]
 
-    if QA_util_date_valid(end):
+    if GQ_util_date_valid(end):
         res = pd.DataFrame([item for item in cursor])
         try:
             res = res.assign(
@@ -104,7 +110,7 @@ def GQ_fetch_daily_metadata_reality(
 
         return res
     else:
-        QA_util_log_info(f'GolemQ Error GQ_fetch_daily_metadata_reality data parameter start={start:%s} end={end:%s} is not right')
+        GQ_util_log_info(f'GolemQ Error GQ_fetch_daily_metadata_reality data parameter start={start:%s} end={end:%s} is not right')
     return None
 
 

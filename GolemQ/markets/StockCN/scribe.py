@@ -56,9 +56,7 @@ from .symbol import (
     GQ_fetch_etf_list,
 )
 from .constants import TRADE_DATE_SSE
-from QUANTAXIS.QAUtil import (
-    DATABASE,
-)
+from GolemQ.core.settings import DATABASE
 from GolemQ.supervisor import (
     checkin_function
 )

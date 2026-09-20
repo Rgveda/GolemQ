@@ -31,7 +31,13 @@ import traceback
 import pymongo
 from pymongo import UpdateOne
 from datetime import datetime as dt
-from QUANTAXIS.QAUtil import QA_util_log_info, QA_util_code_tolist, QA_util_date_valid, QA_util_date_stamp, QA_util_time_stamp
+from GolemQ.core.gq_logging import GQ_util_log_info
+from GolemQ.core.symbol import GQ_util_code_tolist
+from GolemQ.markets.StockCN.date_utils import (
+    GQ_util_date_valid,
+    GQ_util_date_stamp,
+    GQ_util_time_stamp,
+)
 from GolemQ.core.settings import DATABASE as DATABASE_GolemQ
 from GolemQ.core.constants import AKA
 from GolemQ.core.preprocessing import GQ_util_to_json_from_pandas

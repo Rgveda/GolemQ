@@ -46,9 +46,22 @@ from GolemQ.core.constants import (
     AKA,
 )
 from functools import lru_cache
-from QUANTAXIS.QAFetch.QAQuery import (
-    QA_fetch_stock_list
-)
+def _fetch_stock_list_mongo(collections=None):
+    """股票列表（**GolemQ 自己的实现，不再经 QUANTAXIS**）。
+
+    读的是 ``DATABASE.stock_list``（= ``DATABASE_QA`` = 4.4 ``quantaxis``），
+    与 QUANTAXIS 的 ``QA_fetch_stock_list()`` **同一个集合** ——
+    所以这是等价替换，不改变数据来源。
+
+    ⚠️ 本函数与 ``scribe.QA_fetch_stock_list`` 是同一个读法的两份实现，
+    原因是 **import 成环**：``scribe.py:54`` 反向 import 了本模块的
+    ``is_stock_cn``，本模块若再 import ``scribe`` 就成环。
+    等参考集合迁到 8.3 后，两者都应改指向 ``markets/StockCN/refdata.py``
+    （那是叶子模块，无环），届时可合并。
+    """
+    coll = collections if collections is not None else DATABASE.stock_list
+    return pd.DataFrame([item for item in coll.find()]).drop(
+        '_id', axis=1, inplace=False).set_index('code', drop=False)
 import pymongo
 from GolemQ.markets.StockCN.date_utils import (
     GQ_util_get_last_day
@@ -587,7 +600,7 @@ def GQ_fetch_stock_list():
     cachefile_base = 'codelist_firstDayTrading.pickle'
     cachefile_code_list_firstDayTrading = get_pickle_filename(cachefile_base)
 
-    stock_items = QA_fetch_stock_list()
+    stock_items = _fetch_stock_list_mongo()
     code_list = list(set([stock['code'] for index, stock in stock_items.iterrows()]))
 
     try:
@@ -657,7 +670,7 @@ def GQ_fetch_etf_list():
     """
     cachefile_base = 'etflist_firstDayTrading.pickle'
     cachefile_code_list_firstDayTrading = get_pickle_filename(cachefile_base)
-    stock_items = QA_fetch_stock_list()
+    stock_items = _fetch_stock_list_mongo()
     code_list = list(set([stock['code'] for index, stock in stock_items.iterrows()]))
     
     try:
