@@ -34,7 +34,7 @@
 """
 from __future__ import annotations
 
-from .base import DataSource, DataSourceNotAvailable, register
+from GolemQ.datasource.base import DataSource, DataSourceNotAvailable, register
 
 
 @register

@@ -38,7 +38,7 @@ MongoDB 对 UTF-8 键名无障碍。若日后确需英文键，再按实际用�
 """
 from __future__ import annotations
 
-from .base import (
+from GolemQ.datasource.base import (
     ETF_LIST,
     FINANCIAL,
     DataSource,

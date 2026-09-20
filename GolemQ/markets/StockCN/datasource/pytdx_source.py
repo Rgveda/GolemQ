@@ -80,7 +80,7 @@
 """
 from __future__ import annotations
 
-from .base import (
+from GolemQ.datasource.base import (
     STOCK_BLOCK,
     STOCK_INFO,
     STOCK_LIST,

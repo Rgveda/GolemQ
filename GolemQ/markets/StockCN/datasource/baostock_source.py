@@ -38,7 +38,7 @@ baostock 有访问频率控制，且其接口是**逐只查询**（无批量）�
 """
 from __future__ import annotations
 
-from .base import (
+from GolemQ.datasource.base import (
     FINANCIAL,
     STOCK_INFO,
     STOCK_LIST,

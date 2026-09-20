@@ -34,9 +34,11 @@ from __future__ import annotations
 import datetime as dt
 
 from . import DATABASE_STOCK_CN
+from GolemQ.datasource.base import DataSourceNotAvailable, UnsupportedCollection
+from GolemQ.datasource.writer import save_block_collection, save_collection
+
+# 实现层：导入即触发 A 股各适配器自注册，并给出该市场的源优先级
 from .datasource import COLLECTION_SOURCE_PRIORITY, get_source
-from .datasource.base import DataSourceNotAvailable, UnsupportedCollection
-from .datasource.writer import save_block_collection, save_collection
 
 __all__ = [
     'ALL_REF_COLLECTIONS',

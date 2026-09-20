@@ -47,7 +47,7 @@ import configparser
 import os
 import shutil
 
-from .base import (
+from GolemQ.datasource.base import (
     ALL_COLLECTIONS,
     DataSource,
     DataSourceNotAvailable,

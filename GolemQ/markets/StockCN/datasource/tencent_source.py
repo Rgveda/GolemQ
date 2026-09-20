@@ -41,7 +41,7 @@ decimal_point 非 2），本源的输出会与主源不一致。
 """
 from __future__ import annotations
 
-from .base import (
+from GolemQ.datasource.base import (
     STOCK_LIST,
     DataSource,
     DataSourceNotAvailable,

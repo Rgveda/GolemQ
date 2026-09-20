@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import math
 
-from .base import (
+from GolemQ.datasource.base import (
     STOCK_BLOCK,
     STOCK_INFO,
     STOCK_LIST,

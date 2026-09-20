@@ -36,7 +36,7 @@ tushare 按积分限制每分钟调用次数，默认间隔取 30s（可经
 """
 from __future__ import annotations
 
-from .base import (
+from GolemQ.datasource.base import (
     ETF_LIST,
     FINANCIAL,
     STOCK_BLOCK,
