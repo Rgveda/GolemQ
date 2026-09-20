@@ -38,6 +38,8 @@ DOCTEST_MODULES = (
     'GolemQ.datasource.throttle',
     # 门面的市场映射表
     'GolemQ.fetch.kline',
+    # 日期助手：纯函数，且是 QUANTAXIS 解耦时逐个对齐过行为的
+    'GolemQ.markets.StockCN.date_utils',
 )
 
 
