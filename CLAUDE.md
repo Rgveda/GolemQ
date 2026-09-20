@@ -13,6 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 3 | [`GLOSSARY.md`](GLOSSARY.md) | 行话。第四节的词**几乎全是老代码继承**，别当拼写错误改 |
 | 4 | [`RESTRUCTURE_PLAN.md`](RESTRUCTURE_PLAN.md) | 两层模型、Active Market、portfolio 方案 |
 | 5 | [`MIGRATION_STATUS.md`](MIGRATION_STATUS.md) | 重构遗留缺陷清单（含修复顺序建议）|
+| 6 | [`API_INDEX.md`](API_INDEX.md) | **导航索引**（110 模块 / 名称 + 一行摘要）。找东西先查它，比逐个 `Read` 源文件省一个数量级 |
 
 **改代码前先查 `PITFALLS.md` 与 `GLOSSARY.md`。**
 
