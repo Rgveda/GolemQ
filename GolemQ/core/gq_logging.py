@@ -3,12 +3,17 @@
 
 为什么需要这个模块
 ==================
-`services/features/*` 与 `services/features.py` 有 7 处
+`services/features/` 包里曾（连同当时的 `services/features.py`）有 7 处
 ``from QUANTAXIS.QAUtil import QA_util_log_info, ...``，而其中
 **只有 `QA_util_log_info` 在新树没有等价物** —— 其余四个（`QA_util_code_tolist`、
 `QA_util_date_valid`、`QA_util_date_stamp`、`QA_util_time_stamp`）在
 `core/symbol.py` 与 `markets/StockCN/date_utils.py` 里都有，
 且**已实测行为逐位一致**。
+
+那 7 处后来都改成了本模块与上述等价物（2026-09-21 前完成），现在全树的
+QUANTAXIS 依赖只剩 `core/settings.py` 一处（D9 定的暂留）。`services/features.py`
+那个巨石模块也已退休 —— 拆分后的 `services/features/` 包现在真正生效，
+见该包 `__init__.py` 的说明。
 
 ⚠️ 为什么用 `logging.warning` 而不是 `logging.info`
 ==================================================

@@ -28,6 +28,8 @@ import numpy as np
 import pandas as pd
 import json
 import traceback
+import sys
+from GolemQ.markets.StockCN import is_stock_cn
 import pymongo
 from pymongo import UpdateOne
 from datetime import datetime as dt
