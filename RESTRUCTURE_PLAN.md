@@ -146,25 +146,93 @@ def get_kline_price_min(symbol, start=None, end=None, verbose=False, realtime=Tr
 
 ---
 
-## 五、`pipeline/` 与 `portfolio`
+## 五、`pipeline/` 与 `portfolio/`
 
-你描述 `pipeline/` 的职责是「多股、多核计算的抽象封装，**最后计算结果提交给 `portfolio` 进行交易策略组合**」。
+### 已定（项目所有者，2026-09-20）
 
-⚠️ **`portfolio/` 在新树不存在** —— 重构时被删除。老树有：
+**`portfolio/` 恢复；它不是 A 股特有；先做单一市场，跨市场后续再议。**
+
+恢复位置：**顶层** —— 策略组合是跨市场的抽象，不属任何单一市场。
+
+### 恢复的真实体量（实测，勿低估）
+
+| 文件 | 行数 |
+|:--|--:|
+| `base.py` | **2399** |
+| `utils.py` | **2087** |
+| `fof_v3/v2/v1.py` | 778 / 655 / 523 |
+| `by_trend_indices.py` | 208 |
+| `__main__.py` | 138 |
+| **合计** | **6789** |
+
+**QUANTAXIS 引用 50 处**（集中在 `base.py` 的 `QA_util_timestamp_to_str` /
+`QA_util_str_to_datetime` 与 `DATABASE`）。体量与整个解耦工作相当。
+
+### ⚠️ 不能原样搬：`portfolio/base.py` 混了三种职责
 
 ```
-GolemQ_old/portfolio/   __init__.py  __main__.py  base.py  ...
+class PFL(_const)                     常量类（PFL.STOCK_PORTFOLIO_RANK 等）
+calc_massive_trend_vXI/XII/XIII       趋势特征计算   ← 属 features/
+calc_flash_in_out_tau_optimizer      优化器
+calc_portfolio_returns / _ratio       组合收益与比例 ← 这才是 portfolio
+save_stock_portfolio_stats(...)       直接写 Mongo   ← 属 services/（CLAUDE.md 约定）
 ```
 
-**故 `pipeline/` 当前的「提交给 portfolio」这一步在新树里是断的。**
-需要你定：
+原样恢复 = 把这三种职责的混乱一并搬进来。**恢复应同时拆分。**
 
-1. `portfolio/` 是否恢复？按什么形态？
-2. 若恢复，它属于抽象层（顶层）还是市场实现（`markets/StockCN/`）？
-   —— 从「交易策略组合」的语义看，策略是**跨市场**的，应在顶层。
-3. 若不恢复，`pipeline/` 的结果提交到哪里？
+### 依赖方向（既有事实）
 
-**在这一步定下来之前，`pipeline/` 不宜改动** —— 它是真实代码，且下游去向未定。
+`portfolio/` **反向依赖特征层**：
+
+```
+base.py:39   → analysis.timeseries
+base.py:1908 → models.rail
+base.py:1919 → features.base
+utils.py:31  → from GolemQ.analysis.timeseries import *   ← 通配符，搬迁时一并清理
+```
+
+故「features → portfolio」的方向不能靠目录移动实现，而是：
+
+```
+features/ ──▶ pipeline/ ──▶ portfolio/ ──▶ services/（落库）
+（特征）      （批处理）      （策略组合）     （DB 操作）
+```
+
+### 当前 `pipeline/` → `portfolio/` 的连接实为一个字符串参数
+
+老代码里两者**并无数据提交关系**：
+
+```
+benchmark/base.py:261,276,316-334   portfolio_batch: str = ''   传入并被透传
+```
+
+即「提交给 portfolio」是**目标形态**，不是现状。恢复时**要新建这个契约**，
+而不是把老代码的字符串参数当成契约。
+
+### 恢复方案（分阶段，不一次性搬 6789 行）
+
+**阶段 1 —— 骨架与契约（小，可独立验证）**
+* 建 `portfolio/__init__.py`，**给出真实导出**（老的是空文件，等于无契约）
+* 定义 `Portfolio` 上下文与 `pipeline → portfolio` 的**数据契约**
+* 此时不含策略逻辑，但接口固定
+
+**阶段 2 —— 按依赖序移植，边移边拆**
+
+| 老位置 | 去向 | 理由 |
+|:--|:--|:--|
+| `calc_massive_trend_vXI/XII/XIII` | `features/` | 是特征计算，非组合逻辑 |
+| `save_stock_portfolio_stats` | `services/` | DB 写入，CLAUDE.md 约定 |
+| `calc_portfolio_returns/_ratio`、优化器、`PFL` | `portfolio/` | 真正的组合逻辑 |
+| `fof_v1/v2/v3` | `portfolio/` | 组合构建 |
+
+**阶段 3 —— 剥 QUANTAXIS（50 处）**
+`QA_util_timestamp_to_str` / `QA_util_str_to_datetime` 在
+`markets/StockCN/date_utils.py` 已有等价物；`DATABASE` 改指
+`core.settings`。**与整体解耦合并做，不要单独一轮。**
+
+### 在此之前
+
+`pipeline/` **不要改动** —— 它是真实代码，且下游契约（阶段 1）尚未定义。
 
 ---
 
