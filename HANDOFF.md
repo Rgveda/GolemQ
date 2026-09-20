@@ -45,7 +45,7 @@ ts   用 datetime → 7 行 ✓
 | **A** | 5 个参考集合灌进 MongoDB 8.3 | **4/5** —— `financial` 待你决定 |
 | **C1** | `portfolio/` 骨架（strategy/sizing/costs/rules）| ✅ 提交 `f993d31` |
 | **C2** | `zen_bt.py` 撮合按契约移植进 `engine.py` | ⛔ **阻塞在你**：需先写策略实现 |
-| **D** | QUANTAXIS 完全解耦 | **进行中** —— 机械部分已完成，见下 |
+| **D** | QUANTAXIS 完全解耦 | **进行中** —— 替身已完成，import **11 → 7**，见第三节 |
 
 ### A —— 集合计数（本轮实测）
 
@@ -77,46 +77,58 @@ QUANTAXIS import 计数：**32 → 11**（另有 37 处注释/文档提及，非
 
 ---
 
-## 三、D 的剩余 11 处 —— 唯一在飞行中的工作
+## 三、D —— 替身已完成，剩 7 处 import
 
-```
-core/settings.py:34               ← 根（QA_Setting）。D9 已定：数据不搬，暂留
-markets/StockCN/fetch.py:66,73,77 ← QA_DataStruct_* / QAQuery_Advance / QAQuery
-markets/StockCN/quotes.py:28      ← QA_fetch_stock_day_adv
-markets/StockCN/realtime.py:68    ← resample 栈（QA_data_min_resample 等）
-markets/StockCN/align.py:65       ← 裸 import QUANTAXIS as QA
-markets/StockCN/crawler.py:51     ← 同上
-pipeline/base.py:49               ← 同上（QA_AVAILABLE 仍是活逻辑，勿拆）
-pipeline/compact_benchmark.py:35  ← 同上
-services/align.py:34              ← 同上
-```
+提交 `7fcb5ec`：`QA_DataStruct_*` 替身 + 日线读取器 + block/list 本地化已完成。
 
-**这不是改 import，是设计工作**（`RESTRUCTURE_PLAN.md` 列为步骤 4）：需要
-`QA_DataStruct_*` 的替身。
+### QUANTAXIS import：11 → 7
 
-### 替身的调用面（已量出，比预想小）
-
-`QA_DataStruct_*` **只有 `markets/StockCN/fetch.py` 在用**：
-
-- 4 个 import（`:66-70`：`Index_min` / `Index_day` / `Stock_day` / `Stock_min`）
-- `isinstance` 用来**区分股票与指数**（`:1116`、`:1449`）→ **替身必须有类层级，不能是单个类**
-- 构造 1 处（`:714`）
-- `.to_qfq()` 6 处（`:888`、`:1283` 为活代码，`:1035`、`:1422` 已注释）
-- `.select_code()` 4 处
-
-外加 `stock_block` 的 `.block_name` / `.get_block()` / `.get_blocklist()`。
-
-### `to_qfq()` 的替身有现成依据（本轮实测）
-
-| 事实 | 证据 |
+| 文件:行 | 内容 |
 |:--|:--|
-| `stock_adj` 是**预计算的前复权乘法因子表** | 字段 `{code, date, adj, ts}`；`600519` 最新日期 `adj=1.0`，越早越小（2001 年 `0.1312`）→ 乘上去最新价不变 |
-| `stock_day` 与 `stock_adj` **1:1 对齐** | `600519` 两边各 6006 行 |
-| 老树有 QUANTAXIS-free 的复权实现可照搬 | `GolemQ_old/markets/StockCN/etf_fq.py` 的 `GQ_apply_etf_qfq`，**行为契约完整**（只处理 ETF；只乘 OHLC；真指数与股票原样返回且一次 Mongo 都不查）|
+| `core/settings.py:34` | 根（QA_Setting）。**D9 已定：数据不搬，暂留** |
+| `markets/StockCN/align.py:65` | 裸 `import QUANTAXIS as QA` |
+| `markets/StockCN/crawler.py:51` | 同上 |
+| `markets/StockCN/realtime.py:68` | resample 栈（`QA_data_min_resample` 等）|
+| `pipeline/base.py:49` | 同上（`QA_AVAILABLE` 仍是活逻辑，**勿拆 try**）|
+| `pipeline/compact_benchmark.py:35` | 同上 |
+| `services/align.py:34` | 同上 |
 
-**未完成**：`raw_close × adj` 与 QUANTAXIS `to_qfq()` 的逐值比对**尚未跑通**
-（上一轮因上面那个日期类型问题拿到空集）。这是写 shim 前的**最后一道验证**，
-必须逐值一致才算数 —— 不能只看几个样例。
+另有 **26 处裸 `QA.` 前缀引用**分布在上述模块里。
+
+### ⚠️ 未修的已知缺陷：`fetch.py` 的 `QA` 是未定义名
+
+老树 `GolemQ_old/fetch/kline.py:31` 在 `try` 里写了 `import QUANTAXIS as QA`，
+**新树 port 把 import 丢了、26 处 `QA.` 用法全留着**。今天**不可达**
+（StockCN 绑定的是 `kline83` 的实现，`align.py` 只走 STOCK_CN 分支），
+但一执行就是 `NameError`。**这是重构回归，不是老树缺陷。**
+
+### 已完成部分（全部实测）
+
+| 件 | 落点 | 验证 |
+|:--|:--|:--|
+| 4 个 K 线容器 + `to_qfq`/`select_code` | **新增** `markets/StockCN/datastruct.py` | 8 只 × 全历史 **40,192 行逐值 0 差** |
+| 板块容器 | 同上 | `.block_name`/`.get_block`/`.get_blocklist` |
+| 日线读取器 | `kline83.GQ_fetch_stock_day_adv` | 端到端 `StockCNQuotes` **8,011 行 0 差** |
+| `quotes.py` / `fetch.py` 接线 | —— | 单测 12/12；全量测试与基线**逐项相同** |
+
+### 一条刻意分歧（勿当 bug「修」回去）
+
+QUANTAXIS 基类构造里的 `DataFrame.drop_duplicates()` **不带参数 → 只比列值、
+不看索引**，而那时 `date`/`code` 已进索引。于是**任何 OHLCV 与更早一根完全相同
+的 K 线会被静默删除**（`000001` 丢 1993-06-04 与 1998-06-20，都是真实交易日）。
+替身**不复制**这个缺陷。详见 `datastruct.py` 模块 docstring。
+
+### 仍未做
+
+- **ETF 复权**：老树 `GQ_apply_etf_qfq` 未移植，ETF 走 INDEX 分支拿不到
+  `to_qfq()` → **新树 ETF 当前不复权**（`etf_adj` 仅覆盖 294 只）。上一轮定：另开一轮。
+- **分钟线读取**：`fetch.py` 的 `GQ_fetch_stock_min` 读 `DATABASE.stock_min`
+  （`golemq` 库，该集合**不存在**）→ **实测恒返回 None**。老树同样这么写，
+  所以是**数据迁移**（`stock_min` 搬到 8.3 的 `stock_1min` 等分频集合）造成的，
+  **不是重构回归**。正确修法是改指 `kline83`，属迁移收尾。
+- 同类的「绑错库」还有 `fetch.py:110 collections=DATABASE.stock_day`、
+  `scribe.py` 的 `QA_fetch_stock_list/index_list/stock_terminated` 默认值
+  （`stock_list` 只在 8.3 有；`index_list`/`stock_terminated` **两个库都没有**）。
 
 ---
 
