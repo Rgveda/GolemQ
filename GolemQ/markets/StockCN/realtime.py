@@ -64,11 +64,12 @@ from GolemQ.core.settings import (
 )
 from tqdm import tqdm
 import urllib3
-try:
-    import QUANTAXIS as QA
-except ImportError:
-    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.cli modules')
-    pass
+from GolemQ.core.constants import MARKET_TYPE
+from GolemQ.analysis.timeseries import (
+    GQ_data_min_resample,
+    GQ_data_min_to_day,
+)
+from .refdata import GQ_fetch_stock_info
 from .date_utils import (
     GQ_util_if_tradetime as QA_util_if_tradetime,
     GQ_util_get_pre_trade_date as QA_util_get_pre_trade_date,
@@ -406,12 +407,12 @@ def GQ_data_tick_resample_1min(tick, type_='1min', if_drop=True, stack_vol=True)
     tick 采样为 分钟数据
     1. 仅使用将 tick 采样为 1 分钟数据
     2. 仅测试过，与通达信 1 分钟数据达成一致
-    3. 经测试，可以匹配 QA.QA_fetch_get_stock_transaction 得到的数据，其他类型数据未测试
+    3. 经测试，可以匹配 QUANTAXIS 的 ``QA_fetch_get_stock_transaction`` 得到的
+       数据，其他类型数据未测试。（那个函数读的是秒级成交明细；本树没有对应
+       数据源，所以下面这段 demo 现在只能作形状参考，**不能直接运行**。）
     demo:
-    df = QA.QA_fetch_get_stock_transaction(package='tdx', code='000001',
-                                           start='2018-08-01 09:25:00',
-                                           end='2018-08-03 15:00:00')
-    df_min = QA_data_tick_resample_1min(df)
+    df = <秒级成交明细帧，列含 price / vol / date>
+    df_min = GQ_data_tick_resample_1min(df)
     """
     tick = tick.assign(amount=tick.price * tick.vol)
     resx = pd.DataFrame()
@@ -570,7 +571,7 @@ def GQ_data_tick_resample_1min(tick, type_='1min', if_drop=True, stack_vol=True)
 def GQ_fetch_stock_day_realtime_adv(
     codelist,
     data_day,
-    market_type: str = QA.MARKET_TYPE.STOCK_CN,
+    market_type: str = MARKET_TYPE.STOCK_CN,
     verbose: bool = True
 ):
     """
@@ -659,9 +660,9 @@ def GQ_fetch_stock_day_realtime_adv(
                             type_='1min',
                             stack_vol=False)
                         # data_realtime_1min['vol']
-                        if (market_type == QA.MARKET_TYPE.STOCK_CN):
+                        if (market_type == MARKET_TYPE.STOCK_CN):
                             vol = data_realtime_1min.tail(1)["volume"].item()
-                            stock_info = QA.QA_fetch_stock_info([code[:6]])
+                            stock_info = GQ_fetch_stock_info([code[:6]])
                             total_volume = stock_info['liutongguben'].iloc[0]
                             if total_volume and total_volume > 0:
                                 turnover_rate = round((vol * 100 / total_volume) / 100, 6)
@@ -675,7 +676,7 @@ def GQ_fetch_stock_day_realtime_adv(
                             print(data_realtime_code)
                             traceback.print_exc()
                             # raise ('foooo1{}'.format(code))
-                    data_realtime_1day = QA.QA_data_min_to_day(data_realtime_1min)
+                    data_realtime_1day = GQ_data_min_to_day(data_realtime_1min)
                     data_realtime_1day = data_realtime_1day.rename_axis('date')
                     if (len(data_realtime_1day) > 0):
                         # 转成日线数据
@@ -685,7 +686,7 @@ def GQ_fetch_stock_day_realtime_adv(
 
                         # 假装复了权，我建议复权那几天直接量化处理，复权几天内对策略买卖点影响很大
                         data_realtime_1day['adj'] = 1.0
-                        if (market_type == QA.MARKET_TYPE.STOCK_CN):
+                        if (market_type == MARKET_TYPE.STOCK_CN):
                             try:
                                 data_realtime_1day[FLD.TURNOVER_RATE] = turnover_rate
                             except Exception:
@@ -797,10 +798,15 @@ def GQ_fetch_stock_min_realtime_adv(
                     verbose=verbose, suffix=False,
                     collections=collections)
             except Exception:
-                data_realtime = QA.QA_fetch_stock_realtime_adv(
-                    code,
-                    num=8000,
-                    verbose=verbose)
+                # 原先这里兜底调 QUANTAXIS 的 QA_fetch_stock_realtime_adv。
+                # 已移除 —— 且有实测依据：那个函数读 QUANTAXIS 包内 `DATABASE`
+                # 的 realtime_* 集合，而它解析到 `quantaxis` 库，**该库里
+                # realtime_* 集合数为 0**（2026-09-21 实测；`QAREALTIME` 有 10 个，
+                # 2026-09-07~09-18）。也就是说这个兜底**只能返回 None**，
+                # 移除它对任何原本能工作的情形都没有行为影响。
+                # 若将来实时路径要真正可用，该查的是 `QAREALTIME` 的绑定
+                # （`core/settings.py` 里已知问题，见 markets/StockCN/MONGODB83.md）。
+                data_realtime = None
 
             if (data_realtime is not None) and \
                 (len(data_realtime) > 0):
@@ -852,7 +858,7 @@ def GQ_fetch_stock_min_realtime_adv(
 
                     # 一分钟数据转出来了，重采样为指定小时/分钟线数据
                     data_realtime_1min = data_realtime_1min.reset_index([1], drop=False)
-                    data_realtime_mins = QA.QA_data_min_resample(data_realtime_1min, 
+                    data_realtime_mins = GQ_data_min_resample(data_realtime_1min, 
                                                                  type_=frequency)
 
                     if (len(data_realtime_mins) > 0):
@@ -937,18 +943,18 @@ def GQ_fetch_index_min_realtime_adv(codelist,
     #if ():
 
 
-    data_realtime_5min = QA.QA_data_min_resample(data_realtime_1min, 
+    data_realtime_5min = GQ_data_min_resample(data_realtime_1min, 
                                                  type_='5min')
     print(data_realtime_5min)
 
-    data_realtime_15min = QA.QA_data_min_resample(data_realtime_1min, 
+    data_realtime_15min = GQ_data_min_resample(data_realtime_1min, 
                                                   type_='15min')
     print(data_realtime_15min)
 
-    data_realtime_30min = QA.QA_data_min_resample(data_realtime_1min, 
+    data_realtime_30min = GQ_data_min_resample(data_realtime_1min, 
                                                   type_='30min')
     print(data_realtime_30min)
-    data_realtime_1hour = QA.QA_data_min_resample(data_realtime_1min,
+    data_realtime_1hour = GQ_data_min_resample(data_realtime_1min,
                                                  type_='60min')
     print(data_realtime_1hour)
     return data_min
@@ -1083,8 +1089,12 @@ if __name__ == '__main__':
     """
     用法示范
     """
+    # 函数级导入：`fetch.py` 模块级导入本模块，本模块若在顶层反向导入 `fetch`
+    # 就成环。这里只在 `__main__` 里用一次，放进来最省事。
+    from .fetch import GQ_fetch_stock_min_adv
+
     codelist = ['600157', '300263']
-    data_min = QA.QA_fetch_stock_min_adv(
+    data_min = GQ_fetch_stock_min_adv(
         codelist,
         '2008-01-01',
         '{}'.format(dt.today(),),

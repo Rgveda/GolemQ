@@ -39,7 +39,7 @@ from GolemQ.markets.StockCN.date_utils import (
     GQ_util_time_stamp,
 )
 from GolemQ.core.settings import DATABASE as DATABASE_GolemQ
-from GolemQ.core.constants import AKA
+from GolemQ.core.constants import AKA, MARKET_TYPE
 from GolemQ.core.preprocessing import GQ_util_to_json_from_pandas
 from GolemQ.core import GQ_util_code_tolist
 from func_timeout import func_set_timeout
@@ -113,7 +113,7 @@ def GQ_fetch_hourly_metadata_reality(
             if (len(res.columns)==0) and \
                 (len(res.index)==0):
                 pass
-            elif (is_stock_cn(code)[1] == QA.MARKET_TYPE.INDEX_CN):
+            elif (is_stock_cn(code)[1] == MARKET_TYPE.INDEX_CN):
                 traceback.print_exc()
             elif (code[0].startswith('159')):
                 traceback.print_exception(type(e), e, sys.exc_info()[2])  

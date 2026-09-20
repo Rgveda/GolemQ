@@ -46,8 +46,19 @@ try:
     )
     from GolemQ.core.constants import (
         AKA,
+        MARKET_TYPE,
     )
 except Exception:
+    class MARKET_TYPE():
+        """兜底：`GolemQ.core.constants` 导入失败时用。
+
+        只补 `:497` 实际用到的那一个（值取自 `core/constants.py`，2026-09-21 核对）。
+        原代码在这里没有 `MARKET_TYPE`，而 `:497` 用了 `QA.MARKET_TYPE.INDEX_CN`
+        —— 那是个**未定义名**（该文件从未 import QUANTAXIS），走 except 路径时
+        必然 `NameError`。
+        """
+        INDEX_CN = 'index_cn'
+
     class AKA():
         """
         常量，专有名称指标，定义成常量可以避免直接打字符串造成的拼写错误。
@@ -494,7 +505,7 @@ def GQ_fetch_hourly_metadata_reality(
             if (len(res.columns)==0) and \
                 (len(res.index)==0):
                 pass
-            elif (is_stock_cn(code)[1] == QA.MARKET_TYPE.INDEX_CN):
+            elif (is_stock_cn(code)[1] == MARKET_TYPE.INDEX_CN):
                 traceback.print_exc()
             elif (code[0].startswith('159')):
                 traceback.print_exception(type(e), e, sys.exc_info()[2])  

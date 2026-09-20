@@ -57,6 +57,7 @@ from .symbol import (
     is_cryptocurrency,
     GQ_fetch_stock_name,
     GQ_fetch_etf_name,
+    GQ_fetch_index_name,
 )
 # 时间戳格式化已本地化（GQ_util_timestamp_to_str 实测与 QA 版同值）。
 # 原先包 try/except 是因为「没装 QUANTAXIS 就不 import」—— 现已无必要，
@@ -87,6 +88,26 @@ from .realtime import (
 from .scribe import (
     GQ_fetch_stock_moneyflow,
 )
+
+
+def _unsupported_crypto_kline(*args, **kwargs):
+    """数字货币 K 线 —— **本树未实现**。显式抛错，不返回空。
+
+    原实现调 QUANTAXIS 的 ``QA_fetch_cryptocurrency_min_adv``（读它的
+    ``coin_min`` 集合）。GolemQ 的库里没有数字货币数据，且它不属于
+    ``StockCN``（A 股市场）的职责，所以解耦时**没有**对应实现可接。
+
+    这里抛 ``NotImplementedError`` 而不是返回空/None：返回空会让「未实现」与
+    「真的没有数据」无从区分 —— 同 `StockCN.get_stock_concept_kline` 的处理，
+    也是本树反复踩过的坑（见 `PITFALLS.md` P1）。
+
+    两个调用点（``get_kline_price_min`` / ``get_kline_price_v3`` 的
+    ``CRYPTOCURRENCY`` 分支）都不在任何 ``try`` 内，所以这个异常会如实上抛、
+    不会被吞掉。
+    """
+    raise NotImplementedError(
+        '数字货币 K 线未实现：GolemQ 无对应数据源。老实现走 QUANTAXIS 的 '
+        'QA_fetch_cryptocurrency_min_adv（coin_min 集合），该依赖已解耦。')
 
 
 def GQ_fetch_stock_block_adv():
@@ -711,11 +732,42 @@ def GQ_fetch_stock_min_adv(
         # 共用 index_* 集合，拿它们的数据装进 Stock 容器会让
         # `isinstance(data_min, GQ_DataStruct_Index_min)` 恒为假 —— `fetch.py`
         # 靠那两个 isinstance 决定去取股票名还是 ETF 名。
-        probe = code[0] if isinstance(code, (list, tuple, set)) else code
-        if market_prefix(probe) == 'index':
-            return GQ_DataStruct_Index_min(res_set_index)
-        return GQ_DataStruct_Stock_min(res_set_index)
-    
+        return _min_container(res_set_index, code)
+
+
+def _min_container(res_set_index, code):
+    """帧 → 容器：股票走 ``Stock_min``，ETF/指数走 ``Index_min``。
+
+    容器类型跟随**数据所属的市场**，而不是函数名里的 "stock"：ETF 与指数共用
+    ``index_*`` 集合，拿它们的数据装进 Stock 容器会让
+    ``isinstance(data_min, GQ_DataStruct_Index_min)`` 恒为假 ——
+    ``fetch.py`` 靠那两个 isinstance 决定去取股票名还是 ETF 名。
+    """
+    probe = code[0] if isinstance(code, (list, tuple, set)) else code
+    if market_prefix(probe) == 'index':
+        return GQ_DataStruct_Index_min(res_set_index)
+    return GQ_DataStruct_Stock_min(res_set_index)
+
+
+def GQ_fetch_index_min_adv(
+        code,
+        start,
+        end=None,
+        frequence='1min',
+        if_drop_index=True,
+        verbose=False,):
+    """指数 / ETF 分钟线。**与 ``GQ_fetch_stock_min_adv`` 是同一条路径。**
+
+    两者本就只差容器的选法，而容器现在由 :func:`kline83.market_prefix` 按代码
+    判定（ETF 与指数共用 ``index_*`` 集合）。保留这个名字是因为调用点
+    （``pipeline/base.py``）按市场分支书写，直接用「股票函数」读数据会让读者
+    以为写错了。
+
+    原实现走 QUANTAXIS 的 ``QA_fetch_index_min_adv``（4.4 库）。
+    """
+    return GQ_fetch_stock_min_adv(code, start, end=end, frequence=frequence,
+                                  if_drop_index=if_drop_index, verbose=verbose)
+
 
 @func_set_timeout(12)
 def get_kline_price_min(
@@ -967,7 +1019,7 @@ def get_kline_price_min(
     elif (market_type == MARKET_TYPE.CRYPTOCURRENCY):
         start = '{}'.format(dt.now() - timedelta(hours=5400)) if (start is None) else start
         end = '{}'.format(dt.now(timezone(timedelta(hours=8))) + timedelta(minutes=1)) if (end is None) else end
-        data_min = QA.QA_fetch_cryptocurrency_min_adv(
+        data_min = _unsupported_crypto_kline(
             code=codelist,
             start=start,
             end=end,
@@ -979,13 +1031,13 @@ def get_kline_price_min(
         start = '{}'.format(datetime.datetime.now() - timedelta(hours=19200)) if (start is None) else start
         end = '{}'.format(datetime.datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=1)) if (end is None) else end
         if (isinstance(codelist, str)):
-            data_min = QA.QA_fetch_index_min_adv(
+            data_min = GQ_fetch_index_min_adv(
                 codelist[:6],
                 start=start,
                 end=end,
                 frequence=frequency)
         else:
-            data_min = QA.QA_fetch_index_min_adv(
+            data_min = GQ_fetch_index_min_adv(
                 [code[:6] for code in codelist],
                 start=start,
                 end=end,
@@ -1128,9 +1180,9 @@ def get_kline_price_min(
                     codename = GQ_fetch_etf_name([code[:6] for code in codelist])
             else:
                 if (isinstance(codelist, str)):
-                    codename = QA.QA_fetch_index_name(codelist[:6])
+                    codename = GQ_fetch_index_name(codelist[:6])
                 else:
-                    codename = QA.QA_fetch_index_name([code[:6] for code in codelist])
+                    codename = GQ_fetch_index_name([code[:6] for code in codelist])
         elif isinstance(codelist, list):
             if (len(codelist) == 1):
                 codename = codelist[0]
@@ -1381,7 +1433,7 @@ def get_kline_price_v3(
 
     elif (market_type == MARKET_TYPE.CRYPTOCURRENCY):
         start = '{}'.format(dt.now() - timedelta(hours=3600)) if (start is None) else start
-        data_day = QA.QA_fetch_cryptocurrency_min_adv(
+        data_day = _unsupported_crypto_kline(
             code=codelist,
             start=start,
             end='{}'.format(dt.now(timezone(timedelta(hours=8))) + timedelta(minutes=1)),
@@ -1391,12 +1443,12 @@ def get_kline_price_v3(
         start = '{}'.format(dt.today() - timedelta(days=2500)) if (start is None) else start
         end = '{}'.format(dt.today() + timedelta(days=1)) if (end is None) else end
         if (isinstance(codelist, str)):
-            data_day = QA.QA_fetch_index_day_adv(
+            data_day = GQ_fetch_stock_day_adv(
                 codelist[:6],
                 start=start,
                 end=end,)
         else:
-            data_day = QA.QA_fetch_index_day_adv(
+            data_day = GQ_fetch_stock_day_adv(
                 [code[:6] for code in codelist],
                 start=start,
                 end=end,)
@@ -1501,10 +1553,10 @@ def get_kline_price_v3(
                             codename = all_etf_list.query(f'code=={codelist[0]}')['name'].item()
                 elif (isinstance(codelist, str)):
                     print(codelist, market_type_desc)
-                    codename = QA.QA_fetch_index_name(codelist[:6])       
+                    codename = GQ_fetch_index_name(codelist[:6])       
                 else:
                     print(codelist, market_type_desc)
-                    codename = QA.QA_fetch_index_name([code[:6] for code in codelist])
+                    codename = GQ_fetch_index_name([code[:6] for code in codelist])
             except Exception:
                 traceback.print_exc()
                 if (isinstance(codelist, str)):

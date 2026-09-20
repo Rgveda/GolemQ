@@ -43,23 +43,17 @@ except Exception:
     print('joblib not installed.')
     JOBLIB_AVAILABLE = False
 
-try:
-    from GolemQ.core.presentation import suppress_stdout_stderr
-    with suppress_stdout_stderr():
-        import QUANTAXIS as QA
-    # 注意：QA_AVAILABLE 仍然有意义 —— 下面 :165 附近的 QA.MARKET_TYPE /
-    # QA.QA_fetch_stock_min_adv 仍走 QUANTAXIS。这里只把**日期助手**换成
-    # GQ 实现（它已本地化），不去掉整层保护。
-    QA_AVAILABLE = True
-except Exception:
-    print('QUANTAXIS not installed.')
-    QA_AVAILABLE = False
+from GolemQ.core.constants import MARKET_TYPE
 
 from GolemQ.markets.StockCN.date_utils import GQ_util_if_tradetime
 
 from GolemQ.core.base import set_cpu_affinity_even
 from GolemQ.core.presentation import tqdm_joblib
 from GolemQ.markets.StockCN.realtime import GQ_fetch_stock_min_realtime_adv
+from GolemQ.markets.StockCN.fetch import (
+    GQ_fetch_stock_min_adv,
+    GQ_fetch_index_min_adv,
+)
 from multiprocessing import shared_memory
 from GolemQ.markets.StockCN.date_utils import (
     GQ_util_get_last_day
@@ -88,14 +82,14 @@ class BaseBenchmark(ABC):
         Args:
             benchmark_name: benchmark 名称
             verbose: 是否显示详细输出
-            market_type: 市场类型，默认为 QA.MARKET_TYPE.STOCK_CN
+            market_type: 市场类型，默认为 `MARKET_TYPE.STOCK_CN`
         """
         self.benchmark_name = benchmark_name
         self.verbose = verbose
         self.market_type = market_type
         
-        if QA_AVAILABLE and self.market_type is None:
-            self.market_type = QA.MARKET_TYPE.STOCK_CN
+        if self.market_type is None:
+            self.market_type = MARKET_TYPE.STOCK_CN
             
         self.error_count = 0
         self.success_count = 0
@@ -141,20 +135,18 @@ class BaseBenchmark(ABC):
         Returns:
             K线数据DataFrame或None
         """
-        if not QA_AVAILABLE:
-            print(f"QUANTAXIS not available, cannot fetch kline data for {code}")
-            return None
-            
         try:
-            if self.market_type == QA.MARKET_TYPE.STOCK_CN:
-                kline_data = QA.QA_fetch_stock_min_adv(
+            if self.market_type == MARKET_TYPE.STOCK_CN:
+                kline_data = GQ_fetch_stock_min_adv(
                     code,
                     start_date.strftime("%Y-%m-%d %H:%M:%S"),
                     (end_date + timedelta(hours=17)).strftime("%Y-%m-%d %H:%M:%S"),
                     frequence=frequency
                 )
-            elif self.market_type == QA.MARKET_TYPE.INDEX_CN:
-                kline_data = QA.QA_fetch_index_min_adv(
+            elif self.market_type == MARKET_TYPE.INDEX_CN:
+                # 指数与 ETF 共用 index_* 集合，本函数按代码自动选容器；
+                # 保留独立名字只为让调用点读起来与市场分支对应。
+                kline_data = GQ_fetch_index_min_adv(
                     code,
                     start_date.strftime("%Y-%m-%d %H:%M:%S"),
                     (end_date + timedelta(hours=17)).strftime("%Y-%m-%d %H:%M:%S"),

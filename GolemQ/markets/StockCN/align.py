@@ -61,11 +61,6 @@ from .symbol import (
     GQ_fetch_stock_list,
 )
 from tqdm import tqdm  # 进度条工具，可选安装
-try:
-    import QUANTAXIS as QA
-except ImportError:
-    print('PLEASE run "pip install QUANTAXIS" before call GolemQ.cli modules')
-    pass
 import sys
 try:
     import akshare as ak
@@ -411,7 +406,9 @@ def stock_min_aligned(
         
     if (stock_cn_snapshot is None) or \
         (len(codelist_candidate_all) < 5000):
-        codelist_candidate_all = QA.QA_fetch_stock_list()[AKA.CODE].to_list()
+        # 原为 `QA.QA_fetch_stock_list()` —— 而本文件 `:60` 早就 import 了本地
+        # 实现 `GQ_fetch_stock_list`，只是这处没换过来。两者读同一个集合。
+        codelist_candidate_all = GQ_fetch_stock_list()[AKA.CODE].to_list()
     else:
         codelist_candidate_all = codelist_candidate_all[AKA.CODE].to_list()
 

@@ -43,15 +43,10 @@ from GolemQ.core.constants import (
 from GolemQ.markets.StockCN import (
     is_stock_cn,
 )
-from GolemQ.core.presentation import (
-    suppress_stdout_stderr,
-)
-try:
-    with suppress_stdout_stderr():
-        import QUANTAXIS as QA
-except Exception:
-    print('QUANTAXIS not installed.')
-    pass
+# 原先这里在 suppress_stdout_stderr 里 import QUANTAXIS —— 只为调用一个
+# QA_fetch_stock_day_adv（现改走 kline83 的 8.3 读取器）。QUANTAXIS 的导入
+# 会把一堆 banner 打到 stdout，那才是那层包装的唯一用途，两者一起移除。
+from .kline83 import GQ_fetch_stock_day_adv
 
 import pymongo
 import traceback
@@ -80,7 +75,7 @@ def GQ_SU_crawl_stock_valuation(
         code=code,
         start=start, end=end,
         collections=collections)
-    data_day = QA.QA_fetch_stock_day_adv(
+    data_day = GQ_fetch_stock_day_adv(
         code,
         start=start,
         end=end,)

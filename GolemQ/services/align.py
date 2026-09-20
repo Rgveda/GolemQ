@@ -31,7 +31,7 @@ import os
 import time
 import numpy as np
 import pandas as pd
-import QUANTAXIS as QA
+from GolemQ.core.constants import MARKET_TYPE
 try:
     from GolemQ.core.constants import (
         AKA,
@@ -313,10 +313,12 @@ def GQ_fetch_checkpoint_symbols(
     return None
 
 
+# `MARKET_TYPE` 取 `GolemQ.core.constants`（原为 `QA.MARKET_TYPE`）。两者实测
+# **12 个常量值全同**（2026-09-21 逐项比对，0 差异），故是等价替换。
 def calc_stock_hourly_kline_align(
     code:str,
     freq: str = '60min',
-    market_type = QA.MARKET_TYPE.STOCK_CN,
+    market_type = MARKET_TYPE.STOCK_CN,
     collections=DATABASE_GolemQ.stock_reality_feat_60min,
 ):
     start_date=pd.to_datetime(GQ_util_get_last_day()).tz_localize('Asia/Shanghai')-timedelta(days=1680)

@@ -31,11 +31,8 @@ import pandas as pd
 from typing import Optional
 import warnings
 
-try:
-    import QUANTAXIS as QA
-    QA_AVAILABLE = True
-except Exception:
-    QA_AVAILABLE = False
+# 原先这里 import QUANTAXIS 并设置 `QA_AVAILABLE` —— 但全文件（以及全代码库）
+# **没有任何地方读它**，`QA` 也一次没用。整段是死代码，2026-09-21 移除。
 
 # 导入compact.py中的必要函数
 try:

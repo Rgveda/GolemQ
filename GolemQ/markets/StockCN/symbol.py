@@ -390,9 +390,17 @@ def GQ_fetch_stock_name(code, collections=DATABASE.stock_list, ):
         return data.set_index('code', drop=False)
 
 
-def GQ_fetch_index_name(code, collections=DATABASE.etf_list, ):
-    """
-    获取股票名称
+def GQ_fetch_index_name(code, collections=DATABASE.index_list, ):
+    """指数名称。QA 版 `QA_fetch_index_name` 的忠实替身（同一读法、同一集合）。
+
+    ⚠️ 默认集合原为 `DATABASE.etf_list` —— 那是从下面 `GQ_fetch_etf_name`
+    复制粘贴来的错误。**`etf_list` 里没有真指数**：实测 `000300` 在
+    `golemq_stock_cn.etf_list` 命中 0 行（该集合 `sec` 恒为 `etf_cn`），而在
+    `DATABASE.index_list` 里是 `'沪深300'`（1291 行，`sec='index_cn'`）。
+    用错集合的症状是**静默退化**：查不到就 `return code`，指数名变成一串数字。
+
+    该默认值此前从未生效（本函数零调用者），所以这是一处潜在缺陷修复，
+    不改变任何既有行为。
     """
     if isinstance(code, str):
         try:
