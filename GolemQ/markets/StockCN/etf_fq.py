@@ -154,7 +154,11 @@ def GQ_fetch_etf_adj(codelist, start=None, end=None,
 
 
 def GQ_apply_etf_qfq(data_day, codelist=None, verbose: bool = False):
-    """就地把 ETF 的 OHLC 换成前复权价，并原样返回同一个对象。
+    """把 ETF 的 OHLC 换成前复权价，并**原样返回同一个对象**。
+
+    （实现上由「就地改 `data` 的列」改为「换一个新帧并挂回 `data_day.data`」
+    —— 对外可观测行为不变：同一个 `data_day` 出去，`.data` 是复权后的帧。
+    复权那几步已收敛到 `fq.py` 的共用纯函数，见其模块说明。）
 
     行为契约：
 
