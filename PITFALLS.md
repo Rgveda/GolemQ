@@ -268,7 +268,33 @@ suspended = (vol is None) or (float(vol) < 1)     # < 1 而不是 == 0，见上
 
 **本项目选物理清理**，理由是所有者给的两条约束：**读取速度优先**，且**不希望
 每个消费方都要记得过滤**。工具在 `markets/StockCN/maintenance.py`：
-`GQ_purge_suspended_minutes(dry_run=True)`（**默认只统计不删**）。
+`GQ_purge_suspended(dry_run=True)`（**默认只统计不移动**）。
+
+**清理是「移动」而不是「删除」** —— 落到 `<集合名>_removed`（`stock_1min_removed`
+… `stock_day_removed`），与所有者当年在 4.4 的做法一致。三条约定：
+
+1. **归档是普通集合**（不是时间序列）+ `(code, ts)` 唯一索引 —— 普通集合**支持
+   唯一索引与 upsert**（时间序列两者都不支持），所以**重跑幂等**，
+   同一批 bar 移两次不会出两份。
+2. **归档是 append-only 的永久记录**：回迁（`GQ_restore_suspended`）把行写回热数据，
+   **但不从归档删除** —— 这才叫可逆。
+3. **行带来源标记 `removed_by`**，**两种来源不能混**：
+   - `'purge'` = 本条规则移走的（停牌伪 0）→ 回迁 = 撤销清理，语义干净
+   - `'import44'` = 从 4.4 搬来的人工归档（**它们所在交易日有正常日线**，
+     本条规则**认不出**）→ **一旦回迁进热数据就再也清不掉**
+   故 `GQ_restore_suspended` **默认只回迁 `purge`**；全量回迁须显式传 `None`。
+
+⚠️ **重新迁移/重灌数据之后必须重跑清理** —— 这是选物理清理要付的代价。
+判据（`GQ_suspension_dates`）可随时重算重跑。
+
+⚠️ **回迁不能 upsert**：主集合是时间序列，不支持 upsert。回迁走
+**先按 `(code, ts)` 删、再 `insert_many`** —— 等价且幂等。（我第一版按 upsert 写，
+演练时直接抛 `BulkWriteError`；**归档侧是普通集合才可用 upsert，两侧规则不同**。）
+
+⚠️ **4.4 归档搬迁时勿把 int32 拓宽**：源与目标的 `vol`/`volume`/`date_stamp`/
+`time_stamp` 本来就是 BSON **int32**（`$type` 实测），价格与 `amount` 是 double。
+所以**没有东西要「转换」**，要防的是**拓宽** —— pymongo 按位宽选 int32/int64，
+但**整数一旦过 numpy/pandas 就可能变 int64**。逐字段透传，别过 DataFrame。
 
 ⚠️ **判据只适用于股票侧**：`index_day` 里 `vol<1` 有 **151 万**行，那是指数的
 **结构性**形态（指数没有个股意义上的成交量），**不是停牌** —— 对指数/ETF 套这条
