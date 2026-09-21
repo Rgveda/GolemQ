@@ -216,6 +216,59 @@ lambda **没有参数**却用了 `x`（上面两行都正确地写了 `lambda x:
 `1685.01`）；门面日线 6 只 **9,640 行 0 差**；门面分钟 36 行 0 差；真指数保持原始；
 `quotes.py` 路径未被二次复权。
 
+### ✅ 实时行情 L1/L2（2026-09-21，提交 `f0f37be`）
+
+| 项 | 状态 |
+|:--|:--|
+| `--sub l1_tencent` | **原本是坏的**（CLI 无参调用，而它的 `database_realtime` 是必填 → `TypeError` 被 CLI 的 except 吞成一行"发生错误"）。已补默认值 |
+| `--sub l2_tencent` | **新增**。股票走腾讯（0.6s 一轮 / 4,936 只），ETF 走 MiniQMT；`sleep_time=3.0` |
+| 落库 | 8.3 的 `golemq_stock_cn_realtime`，集合 `realtime_l1` / `realtime_l2`，**时间序列** `{timeField:'ts', metafield:'code', granularity:'seconds'}` |
+
+**两条实测约束决定了写入方式（勿改回）**：MongoDB 8.3.2 的时间序列集合
+**不支持唯一索引**、因而**不能 upsert**。旧写法（按日集合 + 唯一索引 + upsert）走不通，
+现为 `insert_many` 追加 + 调用方按 `ts` 判新（`_write_ts_rows`）。
+
+**实测（开盘时段）**：首轮 4,936 行，之后每轮约 6,200（腾讯 + 1,674 只 ETF）；
+`600519` 样本 `ts=2026-09-21 01:35:07Z` ↔ `datetime=09:35:07` 北京，盘口
+`bid1 1254.5×100 / ask1 1255.0×100` 为真值。
+
+#### ⚠️ 本机 QMT **不提供盘口深度**（实测，非猜测）
+
+| 调用 | 结果 |
+|:--|:--|
+| `get_full_tick` 的 `bidPrice/askPrice` | ETF 与股票**恒为 0**（价格是活的）|
+| `get_fullspeed_orderbook` | `当前客户端未支持此功能，请更新客户端或升级投研版` |
+| `get_l2_quote` / `get_l2_order` / `get_l2_transaction` | 全部返回 `[]` |
+| `subscribe_quote(period='tick')` | 无改善 |
+
+所以 QMT 那条**只记价格**，并把深度标成 `depth: 'unavailable'` —— **不写 0**，
+因为「盘口是空的」与「这个源给不了」必须能区分。
+另外：订阅 1,674 只 ETF 实测要 **58 秒**，已改为**后台线程**订阅，不阻塞 3 秒主循环
+（价格本就不需要订阅）。
+
+#### ⚠️ 未做：读写指向了不同存储
+
+三个读取器（`GQ_fetch_stock_realtime_adv` 与 `*_realtime_adv` 两个 kline 取数）
+**仍读 `QAREALTIME.realtime_YYYY-MM-DD`**，而 L1 现在写 8.3 的新库 ——
+**写进去的读不出来**。要么把读取器一起迁到新库（按 `ts` 区间查），要么改回旧存储。
+
+#### ⚠️ 心跳互斥的健壮性问题
+
+被 kill 的订阅器会留下 `status='running'` 而 `last_checkin=None` 的记录，
+**该记录永不超时、永久占锁**，于是重启时报「只能运行一个实例」。
+`--sub l1_tencent` 现在就被这样一条记录挡着（我没擅自清，怕你另有 L1 在跑）。
+
+### ✅ `--save-x` / `--save-qmt`（2026-09-21）
+
+**4/5 通**：`stock_list`(5573) / `stock_info`(5574) / `etf_list`(1674) /
+`stock_block`(72856) 全部 `ok`；`--save-qmt` 也正常（MiniQMT 在线）。
+`financial` 按项目所有者决定**从 4.4 搬运**（不联网取数），新增
+`--migrate-financial`：182,751 行，与源一致，按 `(code, report_date)` upsert 可反复跑。
+
+⚠️ 搬来的 580 个指标列**名字就是位置编号** `'001'…'580'` —— 那是通达信 gpcw 财务
+文件的**原生形态**（QUANTAXIS 自己的解析器就这么生成的），不是搬运造成的。
+要用这些指标得先拿到通达信的指标目录。
+
 ### 仍未做
 
 - 「绑错库」残留：`fetch.py` 的 `GQ_fetch_stock_list_day`
