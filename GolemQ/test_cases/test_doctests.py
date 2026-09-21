@@ -40,6 +40,10 @@ DOCTEST_MODULES = (
     'GolemQ.fetch.kline',
     # 日期助手：纯函数，且是 QUANTAXIS 解耦时逐个对齐过行为的
     'GolemQ.markets.StockCN.date_utils',
+    # 复权的**纯函数核心**：股票与 ETF 共用。刻意不碰数据库（因子取数留在两个
+    # 来源模块里），所以能进这个列表。两处调用方都靠它，且各自的数值基准
+    # （股票 40,192 行 vs QUANTAXIS、ETF 独立重算）都依赖这些函数。
+    'GolemQ.markets.StockCN.fq',
 )
 
 

@@ -63,15 +63,20 @@ ETF 与真指数**共用** `index_day`/`index_min` 集合，而 QUANTAXIS 不提
 ``GQ_apply_etf_qfq`` 也不会为它们查库，因此指数行为与改动前逐行一致。
 """
 
-from typing import Dict, Optional
+from typing import Dict
 
 import pandas as pd
 
-from GolemQ.core.constants import AKA
+from .fq import (
+    align_factors,
+    flatten_factor_map,
+    multiply_ohlc,
+    row_codes as _row_codes,
+    row_dates as _row_dates,
+)
 from .symbol import is_stock_cn
 
-# 参与复权的价格列（成交量/成交额不复权）
-PRICE_COLUMNS = (AKA.OPEN, AKA.HIGH, AKA.LOW, AKA.CLOSE)
+# 参与复权的价格列已随乘法收敛到 `fq.PRICE_COLUMNS`（本模块不再自己乘）。
 
 
 def _adj_collection():
@@ -148,47 +153,6 @@ def GQ_fetch_etf_adj(codelist, start=None, end=None,
     return out
 
 
-def _index_field(data: pd.DataFrame, name: str) -> Optional[pd.Series]:
-    """从 (Multi)Index 里取某个 level 作为 Series；没有则返回 ``None``。"""
-    idx = data.index
-    if not isinstance(idx, pd.MultiIndex):
-        return None
-    try:
-        names = list(idx.names or [])
-    except Exception:  # noqa: BLE001
-        return None
-    if name not in names:
-        return None
-    return pd.Series(idx.get_level_values(name), index=data.index)
-
-
-def _row_dates(data: pd.DataFrame) -> Optional[pd.Series]:
-    """每行的所属日期（``'YYYY-MM-DD'`` 字符串）。
-
-    日线的 index level 0 就是日期；分钟线是 ``datetime``，取 ``'%Y-%m-%d'`` —— 复权
-    系数逐日恒定，日内所有 bar 同系数。找不到日期时返回 ``None``。
-    """
-    idx = data.index
-    nlevels = idx.nlevels if isinstance(idx, pd.MultiIndex) else 1
-    for lv in range(nlevels):
-        vals = idx.get_level_values(lv)
-        if pd.api.types.is_datetime64_any_dtype(vals):
-            return pd.Series(pd.DatetimeIndex(vals).strftime('%Y-%m-%d'), index=data.index)
-    if AKA.DATE in data.columns:
-        return data[AKA.DATE].astype(str).str[:10]
-    return None
-
-
-def _row_codes(data: pd.DataFrame) -> Optional[pd.Series]:
-    """每行的 6 位代码；单标的（index 无 code level）时返回 ``None``，由调用方回退。"""
-    codes = _index_field(data, AKA.CODE)
-    if codes is not None:
-        return codes.astype(str).str[:6]
-    if AKA.CODE in data.columns:
-        return data[AKA.CODE].astype(str).str[:6]
-    return None
-
-
 def GQ_apply_etf_qfq(data_day, codelist=None, verbose: bool = False):
     """就地把 ETF 的 OHLC 换成前复权价，并原样返回同一个对象。
 
@@ -259,24 +223,27 @@ def GQ_apply_etf_qfq(data_day, codelist=None, verbose: bool = False):
         if not adj_map:
             return data_day
 
-        # 复合键用字符串拼接（而不是元组），Series.map 走字典 C 查找，避免逐行 python 循环
-        flat = {f'{c}|{d}': v for c, dd in adj_map.items() for d, v in dd.items()}
+        # 对齐与乘法走 `fq.py` 的共用核心（与股票侧同一实现）。
+        # 这里的两处差异**都是承重契约，不是实现细节**：
+        #   * `ffill_by_code=False` —— 稀疏约定：查不到 = 1.0（no-op），
+        #     **绝不 ffill**（ffill 会把最后一次事件前的系数拖到最新日期而静默算错价）
+        #   * `keep_factor_column=False` —— 老树的 `GQ_apply_etf_qfq` 不产生 `adj` 列
         if codes_row is None:
             if len(codes) != 1:
                 return data_day
-            key = codes[0] + '|' + dates
-        else:
-            key = codes_row.astype(str) + '|' + dates.astype(str)
-        # 稀疏约定：查不到 = 1.0（no-op）。绝不要改成 ffill —— 见模块 docstring。
-        factor = key.map(flat).fillna(1.0)
+            # 单标的帧推不出代码，用 `codelist` 兜底
+            codes_row = pd.Series([codes[0]] * len(data), index=data.index)
+        factor = align_factors(data, flatten_factor_map(adj_map),
+                               ffill_by_code=False,
+                               dates=dates, codes=codes_row)
 
         if factor.eq(1.0).all():
             return data_day                       # 该区间没有除权事件
 
         n_bars = int((~factor.eq(1.0)).sum())
-        for col in PRICE_COLUMNS:
-            if col in data.columns:
-                data[col] = data[col].astype('float64') * factor.to_numpy()
+        # 注意：由「就地改 `data` 的列」改为「换一个新帧并挂回 `data_day.data`」，
+        # 对外行为一致（函数返回的是同一个 `data_day`）。
+        data_day.data = multiply_ohlc(data, factor, keep_factor_column=False)
 
         try:
             data_day.etf_qfq_bars = n_bars

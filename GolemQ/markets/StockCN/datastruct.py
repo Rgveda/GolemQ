@@ -21,9 +21,13 @@
 
 **② `to_qfq()` 只挂在 Stock 类上。** 实测 `QA_DataStruct_Index_day` /
 `QA_DataStruct_Index_min` **没有** `to_qfq`。ETF 在迁移里与指数共用 `index_*`
-集合，因此走的是指数分支，拿不到 `to_qfq` —— 老树的 ETF 复权由
-`GQ_apply_etf_qfq`（`GolemQ_old/markets/StockCN/etf_fq.py`）单独负责，**该模块
-在本树尚未移植**。不要把 `to_qfq` 提到基类来「补全」，那会改变 ETF 的行为。
+集合，因此走的是指数分支，拿不到 `to_qfq` —— ETF 的复权由 `etf_fq.py` 的
+`GQ_apply_etf_qfq` 单独负责（**已回迁**，见 `MIGRATION_STATUS.md` HIGH #9）。
+不要把 `to_qfq` 提到基类来「补全」，那会改变 ETF 的行为。
+
+两者的**机制**现已收敛到 `fq.py` 的共用纯函数核心，只在**缺失策略**上分道：
+股票按标的 ffill 后填 1.0，ETF **只填 1.0、绝不 ffill**（稀疏约定，承重）。
+见 `fq.py` 的模块说明。
 
 ## 为什么放在 `markets/StockCN` 而不是根目录
 
@@ -57,8 +61,17 @@ QUANTAXIS 自身的缺陷、**不是重构回归**。替身不复制它：本模
 8252 行。这条差异会让新旧路径的行数对不上，**是预期的**，不是 bug。
 """
 
-import numpy as np
 import pandas as pd
+
+# 复权的纯函数核心 —— 与 ETF 侧（`etf_fq.py`）共用。两边原本各有一份逐字重复的
+# `_row_dates` / `_row_codes`，差异只在**缺失策略**，故收敛到 `fq.py`。
+from .fq import (
+    align_factors,
+    factor_dict_from_frame,
+    multiply_ohlc,
+    row_codes,
+    row_dates,
+)
 
 __all__ = [
     'GQ_DataStruct',
@@ -77,10 +90,6 @@ __all__ = [
 # 误以为可以依赖。
 _OHLCV_COLUMNS = ('open', 'high', 'low', 'close', 'volume', 'amount')
 
-# 复权的日期级字段名。日线是 `date`，分钟线是 `datetime`。
-_DATE_LEVELS = ('date', 'datetime')
-
-
 def _adj_collection():
     """`stock_adj` 集合。**函数级导入**是刻意的。
 
@@ -93,33 +102,17 @@ def _adj_collection():
 
 
 def _row_dates(data):
-    """每行的所属日期（`'YYYY-MM-DD'` 字符串），找不到返回 `None`。
+    """行级日期。**已收敛到 `fq.py`** —— 与 ETF 侧曾各有一份逐字重复的实现。
 
-    日线的 index level 0 就是日期；分钟线是 `datetime`，取 `'%Y-%m-%d'`
-    —— 复权系数逐日恒定，日内所有 bar 同系数。
+    保留本模块内的私有名，是因为 `date` / `code` 两个 property 也用它；实现只有
+    `fq.row_dates` 一处。
     """
-    idx = data.index
-    nlevels = idx.nlevels if isinstance(idx, pd.MultiIndex) else 1
-    for lv in range(nlevels):
-        vals = idx.get_level_values(lv)
-        if pd.api.types.is_datetime64_any_dtype(vals):
-            return pd.Series(
-                pd.DatetimeIndex(vals).strftime('%Y-%m-%d'), index=data.index)
-    for name in _DATE_LEVELS:
-        if name in data.columns:
-            return data[name].astype(str).str[:10]
-    return None
+    return row_dates(data)
 
 
 def _row_codes(data):
-    """每行的 6 位代码；从 index 的 `code` level 或 `code` 列取，都没有则 `None`。"""
-    idx = data.index
-    if isinstance(idx, pd.MultiIndex) and 'code' in (idx.names or []):
-        return pd.Series(
-            idx.get_level_values('code').astype(str).str[:6], index=data.index)
-    if 'code' in data.columns:
-        return data['code'].astype(str).str[:6]
-    return None
+    """行级代码。**已收敛到 `fq.py`**，理由同 `_row_dates`。"""
+    return row_codes(data)
 
 
 def _adj_frame(codes, dmin, dmax):
@@ -177,20 +170,14 @@ def apply_qfq(data, verbose=False):
         out['adj'] = 1.0
         return out
 
-    key = pd.DataFrame({'date': dates.values, 'code': codes.values})
-    merged = key.merge(adj, on=['date', 'code'], how='left')
-    if len(merged) != len(data):
-        # (date, code) 在 stock_adj 里应当唯一；重复会让下面直接错位。
-        raise ValueError(
-            f'stock_adj 出现重复的 (date, code)：期望 {len(data)} 行，得到 {len(merged)} 行')
-
-    factor = merged.groupby('code', sort=False)['adj'].ffill()
-    out = data.copy()
-    out['adj'] = factor.fillna(1.0).values
-    for col in ('open', 'high', 'low', 'close'):
-        if col in out.columns:
-            out[col] = out[col] * out['adj']
-    return out
+    # 对齐与乘法都走 `fq.py` 的共用核心。股票侧的**缺失策略是
+    # `ffill_by_code=True`**（因子表按标的密集但个别日期可能缺行，需前向填充；
+    # 「按标的」而非整帧，见 `fq.align_factors` 的说明），
+    # 并**保留 `adj` 列**（QUANTAXIS 的 `to_qfq()` 会留下它）。
+    # 这两点都与 ETF 侧不同，且都承重 —— 见 `fq.py` 的模块 docstring。
+    flat = factor_dict_from_frame(adj)
+    factor = align_factors(data, flat, ffill_by_code=True)
+    return multiply_ohlc(data, factor, keep_factor_column=True)
 
 
 class GQ_DataStruct:
