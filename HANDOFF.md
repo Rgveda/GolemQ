@@ -225,9 +225,23 @@ lambda **没有参数**却用了 `x`（上面两行都正确地写了 `lambda x:
 | 操作 | 函数 | 状态 |
 |:--|:--|:--|
 | 找出停牌日 | `GQ_suspension_dates` | ✅ 17,701 组 / 2,252 只 / 2.0 秒 |
-| 移出（→ `stock_*_removed`）| `GQ_purge_suspended` | ✅ 全量运行中 |
+| 移出（→ `stock_*_removed`）| `GQ_purge_suspended` | ✅ **已执行**：**3,908,747 行** |
 | 回迁（可逆）| `GQ_restore_suspended` | ✅ 已验证幂等 + 来源护栏 |
 | 搬 4.4 人工归档 | `GQ_migrate_removed_from_44` | ✅ **已执行**：326,522 行 |
+
+**全量清理结果**（每集合 `found == moved == deleted` → **无一行丢失**）：
+
+```
+stock_1min  3,662,598    stock_15min    46,848    stock_60min  7,516
+stock_5min    151,918    stock_30min    22,166    stock_day   17,701
+```
+
+`stock_day` 移走 **17,701** 行 = 停牌日总数（一天一根，一一对应）。
+`GQ_suspension_dates` 现在返回 **0** —— 标记随日线移走，**重灌后须重跑**（当前已干净，重跑是 no-op）。
+
+⚠️ **归档里 235 个 `(code,ts)` 被重标**：同一根 bar 同时出现在两批归档时，
+`ReplaceOne(upsert)` 以后运行者为准，清理在搬迁之后跑 → 这些行标成 `purge`。
+**没有丢数据，只是标记被覆盖**，且语义正确（它们所在日确实判为停牌）。
 
 **三条约定（见 P8b）**：归档是**普通集合**（才能建唯一索引/upsert → 重跑幂等）；
 归档 **append-only**（回迁写回热数据但不删归档，这才叫可逆）；行带
