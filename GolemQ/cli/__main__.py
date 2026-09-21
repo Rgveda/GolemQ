@@ -189,6 +189,12 @@ def main() -> None:
                         type=str,
                         default=None)
 
+    parser.add_argument('--migrate-financial', '--migrate_financial',
+                        help="把 4.4 quantaxis.financial 搬到 8.3 golemq_stock_cn.financial"
+                             "（不联网取数；可反复跑，按 (code,report_date) upsert）",
+                        action="store_true",
+                        default=False)
+
     parser.add_argument('--save-status',
                         help="查看参考集合的库存量与各数据源可用性，不写库",
                         action="store_true",
@@ -476,6 +482,20 @@ def main() -> None:
         # 只读：报告库存量与各源可用性，不写库
         from GolemQ.markets.StockCN.refdata_save import format_status
         print(format_status())
+
+    elif args.migrate_financial:
+        # 搬运而非取数：4.4 库里已有这份数据，而 akshare 逐只取全量要 46.5 小时。
+        # 详见 GQ_migrate_financial 的 docstring。
+        from GolemQ.markets.StockCN.refdata_save import (
+            GQ_migrate_financial,
+            format_status,
+        )
+        stats = GQ_migrate_financial(verbose=args.verbose)
+        print()
+        print(format_status())
+        if stats.get('rows', 0) == 0:
+            print('警告: 源集合没有搬到任何行，请确认 4.4 的 quantaxis.financial 是否存在。')
+            sys.exit(1)
 
     elif args.save_x or args.save_qmt:
         # CLI 只做参数校验，业务逻辑在 markets/StockCN/refdata_save.py

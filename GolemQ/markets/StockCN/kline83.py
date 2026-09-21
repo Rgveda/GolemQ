@@ -78,6 +78,7 @@ __all__ = [
     'KlineResult',
     'FREQUENCY_ALIASES',
     'normalize_frequency',
+    'bj_date',
     'market_prefix',
     'read_min_frame',
     'GQ_fetch_stock_day_adv',
@@ -102,11 +103,13 @@ class KlineResult:
         self.data = data if data is not None else pd.DataFrame()
 
 
-def _bj_date(x):
+def bj_date(x):
     """北京时间的裸值 → **UTC-aware datetime**（给 ``ts`` 字段用）。
 
-    本模块时区处理的唯一入口。裸时间一律先 ``tz_localize('Asia/Shanghai')``
-    再转 UTC，避免 pymongo 把 naive 当 UTC 造成的静默 8 小时偏移。
+    时区处理的唯一入口（**公开**，因为实时落库那条路也要用同一个换算 ——
+    `realtime.py` 的 `_l2_row` / L1 订阅器都调它）。裸时间一律先
+    ``tz_localize('Asia/Shanghai')`` 再转 UTC，避免 pymongo 把 naive 当 UTC
+    造成的静默 8 小时偏移。
     """
     if x is None:
         return None
@@ -114,6 +117,10 @@ def _bj_date(x):
     if t.tzinfo is None:
         t = t.tz_localize('Asia/Shanghai')
     return t.tz_convert('UTC').to_pydatetime()
+
+
+# 旧名保留为别名（本模块历史上叫 _bj_date）。
+_bj_date = bj_date
 
 
 #: 频率别名 → 8.3 集合名里的规范频率。集合名是 ``f'{market}_{frequency}'``，
@@ -197,8 +204,8 @@ def _read_timeseries(codelist, start, end, frequency, market,
     if isinstance(end, str) and len(end.strip()) == 10:
         # 只给到日则补到当天 23:59:59，否则 start=end='2017-03-14' 会塌成零长区间
         end = end.strip() + ' 23:59:59'
-    hi = _bj_date(end) if end is not None else dt.datetime.now(dt.timezone.utc)
-    lo = _bj_date(start) if start is not None else hi - dt.timedelta(days=default_days)
+    hi = bj_date(end) if end is not None else dt.datetime.now(dt.timezone.utc)
+    lo = bj_date(start) if start is not None else hi - dt.timedelta(days=default_days)
 
     codes = codelist if isinstance(codelist, (list, tuple, set)) else [codelist]
     # 一律截到 6 位。集合里存的是 6 位代码，而调用方常传带后缀的形式

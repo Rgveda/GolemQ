@@ -35,6 +35,7 @@ from GolemQ.core.market_registry import (
 )
 from .realtime import (
     sub_l1_from_tencent,
+    sub_l2_from_tencent,
     formater_l1_ticks,
     collections_of_today,
 )
@@ -70,6 +71,16 @@ DATABASE = GQ_util_mongodb_client(mongo_uri)
 DATABASE_STOCK_CN_NAME = 'golemq_stock_cn'
 DATABASE_STOCK_CN = DATABASE[DATABASE_STOCK_CN_NAME]
 
+# 实时行情（L1/L2）的库。与 `golemq_stock_cn`（历史行情）分开：
+# 实时是**追加写、不复权、按 ts 时间序列**，与历史库的读多写少性质不同。
+# 库名同理由市场硬编码（同上面那条）。
+#
+# 这解决了原先 `self.GQREALTIME` 的「待定」：它当时指向
+# `DATABASE.GolemQ_StockCN_REALTIME`，而那个库在 8.3 服务器上**并不存在**
+# （实测 0 集合）。项目所有者 2026-09-21 定为 `golemq_stock_cn_realtime`。
+DATABASE_STOCK_CN_REALTIME_NAME = 'golemq_stock_cn_realtime'
+DATABASE_STOCK_CN_REALTIME = DATABASE[DATABASE_STOCK_CN_REALTIME_NAME]
+
 
 def close_mongo_client():
     global DATABASE
@@ -102,10 +113,8 @@ class StockCN(BaseMarket):
             self._exchange_codes = ['SH', 'SZ', 'BJ']
             
             self.DATABASE = DATABASE_STOCK_CN
-            # 待定：GolemQ_StockCN_REALTIME 在 8.3 服务器上并不存在（实测 0 集合），
-            # 与 self.DATABASE 先前的失效同源。尚未确定它应指向哪个库，暂留原样并
-            # 在此标注，以免掩盖真实状态。
-            self.GQREALTIME = DATABASE.GolemQ_StockCN_REALTIME
+            # 实时库（原「待定」已定，见 `DATABASE_STOCK_CN_REALTIME` 的说明）。
+            self.GQREALTIME = DATABASE_STOCK_CN_REALTIME
             self.quotes = StockCNQuotes()
 
             # 注册到全局市场注册表。register_market/register_subscriber 默认
@@ -113,6 +122,9 @@ class StockCN(BaseMarket):
             # 但把「重复注册怎么办」收敛到一处，不在每个市场里各写一遍。
             register_market('StockCN', self)
             register_subscriber('l1_tencent', sub_l1_from_tencent)
+            # L2 五档盘口：股票走腾讯（3 秒一轮），ETF 走 MiniQMT。
+            # 新浪那条 L2 已加 30s 请求限制，无法连续取，故不在此列。
+            register_subscriber('l2_tencent', sub_l2_from_tencent)
 
     @property
     def name(self) -> str:
@@ -237,6 +249,7 @@ __all__ = [
     'GQ_fetch_etf_name',
     'GQ_fetch_stock_name',
     'sub_l1_from_tencent',
+    'sub_l2_from_tencent',
     'formater_l1_ticks',
     'collections_of_today',
     'GQ_get_etf_list',
