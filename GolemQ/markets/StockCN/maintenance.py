@@ -47,10 +47,15 @@ from __future__ import annotations
 
 from pymongo import ReplaceOne
 
+# 时区换算的唯一入口（`ts` 字段口径）。`kline83` 只用函数级包导入，不成环。
+from .kline83 import bj_date
+
 __all__ = [
     'SUSPENDED_TARGETS',
+    'REMOVED_FROM_44',
     'GQ_suspension_dates',
     'GQ_purge_suspended',
+    'GQ_migrate_removed_from_44',
     'GQ_restore_suspended',
 ]
 
@@ -62,6 +67,19 @@ SUSPENDED_TARGETS = (
 
 #: 归档集合的唯一键。**普通集合才能建唯一索引**，这是选普通集合而非时间序列的原因。
 _ARCHIVE_KEYS = ('code', 'ts')
+
+#: 归档行的来源标记。**两个来源必须能区分，否则全量回迁会出错。**
+#:
+#: - ``'purge'`` —— :func:`GQ_purge_suspended` 按「当日日线 vol<1」移走的，
+#:   即**停牌伪 0**。回迁它们 = 撤销一次清理，语义干净。
+#: - ``'import44'`` —— 从 4.4 的人工归档搬来的。**所有者当年特意挑走的伪 0，
+#:   但它们所在的交易日有正常日线**（实测 300 组无一缺日线）→ 清理规则**认不出
+#:   它们**。若被回迁进热数据，就再也清不掉了。
+#:
+#: 所以 :func:`GQ_restore_suspended` 默认**只回迁 ``purge``**。
+REMOVED_BY_FIELD = 'removed_by'
+REMOVED_BY_PURGE = 'purge'
+REMOVED_BY_IMPORT44 = 'import44'
 
 
 def _stock_cn_db():
@@ -116,6 +134,9 @@ def _move(db, name: str, payload: dict, dry_run: bool, verbose: bool) -> dict:
     stats['found'] = len(docs)
     if not docs:
         return stats
+    # 打来源标记：回迁时据此区分「可以搬回去的」与「搬回去就再也清不掉的」
+    for d in docs:
+        d[REMOVED_BY_FIELD] = REMOVED_BY_PURGE
 
     # 归档集合：普通集合 + (code, ts) 唯一索引 → 重跑幂等
     try:
@@ -197,10 +218,106 @@ def GQ_purge_suspended(dry_run: bool = True, limit: int = None,
     return report
 
 
-def GQ_restore_suspended(targets=None, verbose: bool = True) -> dict:
-    """**回迁**：把 ``<集合名>_removed`` 的内容搬回主集合。
+#: 4.4 侧的人工归档（所有者当年逐个挑出来移走的）。
+#: 名字里的 `_min_` 是 4.4 的命名习惯：那边**一个集合装全部频率**，靠 `type` 区分。
+REMOVED_FROM_44 = (
+    ('stock_min_removed', 'stock'),
+    ('index_min_removed', 'index'),
+)
 
-    这是「移除可逆」的兑现。同样按 ``(code, ts)`` upsert，所以可反复跑。
+
+def GQ_migrate_removed_from_44(dry_run: bool = False, verbose: bool = True) -> dict:
+    """把 4.4 的 ``stock_min_removed`` / ``index_min_removed`` 搬到 8.3 的分频归档。
+
+    三件事，都由实测决定
+    ====================
+
+    **① 补 `ts`（源没有这个字段）** —— 由 ``datetime``（naive 北京时间）经
+    :func:`kline83.bj_date` 换算成 UTC-aware。口径已**对照源的 `time_stamp`
+    验证**：抽 8 条**逐条吻合（8/8）**，即
+    ``bj_date(datetime).timestamp() == time_stamp``。本函数在迁移时会**全量核对**
+    这个等式，把不符的条数报出来 —— 不静默放过。
+
+    **② 保住 int32（勿拓宽）** —— 实测源的 ``vol`` / ``volume`` / ``date_stamp`` /
+    ``time_stamp`` **本来就是 BSON int32**（``$type`` = ``int``），价格与 ``amount``
+    是 double。所以**没有东西要「转换」**，要做的是**别把它们拓宽**：
+    pymongo 按位宽把 Python ``int`` 编成 int32/int64，而**只要让这些整数过一遍
+    numpy/pandas，就可能变成 int64**。故本函数**逐字段透传、不经 DataFrame**。
+
+    **③ 按 `type` 拆到分频归档** —— 4.4 是一个集合装全部频率（``type`` ∈
+    ``1min/5min/15min/60min``）；8.3 的归档是分频的（``stock_1min_removed`` …），
+    与 :func:`GQ_purge_suspended` 产出的形状一致，两者落到**同一批集合**。
+
+    幂等：归档是普通集合，``(code, ts)`` 唯一索引 + ``ReplaceOne`` upsert，
+    反复跑不会出两份。
+    """
+    from GolemQ.core.settings import DATABASE_QA
+    db = _stock_cn_db()
+    report: dict = {}
+    src_names = set(DATABASE_QA.list_collection_names())
+
+    for src_name, prefix in REMOVED_FROM_44:
+        if src_name not in src_names:
+            if verbose:
+                print(f'[migrate:removed] {src_name} 不存在，跳过')
+            continue
+        src = DATABASE_QA[src_name]
+        for freq in sorted(src.distinct('type')):
+            tgt_name = f'{prefix}_{freq}_removed'
+            docs, bad_ts = [], 0
+            for d in src.find({'type': freq}, {'_id': 0}):
+                ts = bj_date(d.get('datetime'))
+                # 来源标记：这批**不是**停牌伪 0（所在交易日有正常日线），
+                # 回迁时必须能与之区分 —— 见 REMOVED_BY_FIELD 的说明。
+                d[REMOVED_BY_FIELD] = REMOVED_BY_IMPORT44
+                # 全量核对：推导出的 ts 必须与源自己的 time_stamp 一致
+                if ts is None or int(ts.timestamp()) != int(d.get('time_stamp', -1)):
+                    bad_ts += 1
+                d['ts'] = ts
+                docs.append(d)
+            if dry_run:
+                report[tgt_name] = {'rows': len(docs), 'ts_mismatch': bad_ts,
+                                    'moved': 0}
+                if verbose:
+                    print(f'[migrate:removed] 试跑 {src_name}[{freq}] → {tgt_name}: '
+                          f'{len(docs)} 行，ts 不符 {bad_ts}')
+                continue
+
+            dst = db[tgt_name]
+            try:
+                dst.create_index(list(_ARCHIVE_KEYS), unique=True)
+            except Exception:         # 索引已存在不应中断
+                pass
+            ops = [ReplaceOne({k: d[k] for k in _ARCHIVE_KEYS}, d, upsert=True)
+                   for d in docs if all(k in d for k in _ARCHIVE_KEYS)]
+            if ops:
+                dst.bulk_write(ops, ordered=False)
+            report[tgt_name] = {'rows': len(docs), 'ts_mismatch': bad_ts,
+                                'moved': len(ops)}
+            if verbose:
+                print(f'[migrate:removed] {src_name}[{freq}] → {tgt_name}: '
+                      f'搬 {len(ops)} 行'
+                      + (f'，⚠️ ts 不符 {bad_ts} 行' if bad_ts else '，ts 全部吻合'))
+    return report
+
+
+def GQ_restore_suspended(targets=None, removed_by: str = REMOVED_BY_PURGE,
+                         verbose: bool = True) -> dict:
+    """**回迁**：把 ``<集合名>_removed`` 里**由清理移走的**内容搬回主集合，**幂等**。
+
+    ⚠️ **默认只回迁 ``removed_by='purge'`` 的行**。归档里还躺着从 4.4 搬来的
+    人工归档（``removed_by='import44'``），那些**不能**回迁进热数据 ——
+    它们所在交易日**有正常日线**，清理规则认不出，一旦搬回去就再也清不掉。
+    要全量回迁须**显式**传 ``removed_by=None``，并清楚自己在做什么。
+
+    这是「移除可逆」的兑现。
+
+    ⚠️ **回迁不能 upsert**：主集合是**时间序列**，而时间序列不支持 upsert
+    （实测 `Cannot perform a non-multi update on a time-series collection`）。
+    所以这里走 **先按 `(code, ts)` 删、再 `insert_many`** ——
+    结果与 upsert 等价，且**重跑不会出两份**。
+    （演练时我按 upsert 写过一版，回迁直接抛 `BulkWriteError`；
+    归档侧是普通集合才可以用 upsert，两侧规则不同。）
 
     ⚠️ 回迁会把停牌日的日线标记**一并搬回**，于是
     :func:`GQ_suspension_dates` 又能重新识别出这批停牌日 —— 这正是
@@ -215,16 +332,25 @@ def GQ_restore_suspended(targets=None, verbose: bool = True) -> dict:
         if arch not in existing:
             report[name] = 0
             continue
-        docs = list(db[arch].find({}, {'_id': 0}))
+        query = {} if removed_by is None else {REMOVED_BY_FIELD: removed_by}
+        docs = list(db[arch].find(query, {'_id': 0}))
         if not docs:
             report[name] = 0
             continue
+
+        # 按标的归组：一次删掉该标的在本批里的那些 ts，再整批插回
+        by_code: dict = {}
+        for d in docs:
+            if all(k in d for k in _ARCHIVE_KEYS):
+                by_code.setdefault(d['code'], []).append(d)
         dst = db[name]
-        ops = [ReplaceOne({k: d[k] for k in _ARCHIVE_KEYS}, d, upsert=True)
-               for d in docs if all(k in d for k in _ARCHIVE_KEYS)]
-        if ops:
-            dst.bulk_write(ops, ordered=False)
-        report[name] = len(ops)
+        restored = 0
+        for code, group in by_code.items():
+            ts_list = [d['ts'] for d in group]
+            dst.delete_many({'code': code, 'ts': {'$in': ts_list}})
+            dst.insert_many(group, ordered=False)
+            restored += len(group)
+        report[name] = restored
         if verbose:
-            print(f'[maintenance] {arch} → {name}: 回迁 {len(ops)} 行')
+            print(f'[maintenance] {arch} → {name}: 回迁 {restored} 行')
     return report
