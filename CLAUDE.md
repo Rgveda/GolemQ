@@ -17,6 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 6 | [`API_INDEX.md`](API_INDEX.md) | **导航索引**（110 模块 / 名称 + 一行摘要）。找东西先查它，比逐个 `Read` 源文件省一个数量级 |
 
 **改代码前先查 `PITFALLS.md` 与 `GLOSSARY.md`。**
+**加函数前先走「[新增函数前的思维链](#新增函数前的思维链任何情况下都要走一遍)」。**
 **每告一段落就更新 `HANDOFF.md`** —— 进度写进文件才算存下来，留在对话里会随上下文一起丢。
 
 另：`git log --oneline -30` 的 commit message 记录了当时的决定、弃案与验证方式 ——
@@ -41,6 +42,53 @@ python -m unittest GolemQ.test_cases.test_doctests -v
 
 **需要 DB / 网络 / QMT 客户端的函数不要加 doctest** —— 加了也跑不了，
 只会让测试套件变慢变红。它们的正确性验证在 `PITFALLS.md` 的边界条件里。
+
+---
+
+## 新增函数前的思维链（**任何情况下**都要走一遍）
+
+> **起因**：复权曾经是**两套平行实现** —— 股票一套、ETF 一套，机制相同、只差策略，
+> 各自维护一份 `_row_dates` / `_row_codes` / 对齐逻辑，直到 `85bba0f` 才收敛进
+> `fq.py`（现由 `datastruct.py` 与 `etf_fq.py` 各自 import）。
+> **平行实现不会报错，只会分叉** —— 分叉之后同一个 Bug 修一次只修一半。
+
+### 四问，按顺序答，**不允许跳步**
+
+| # | 问 | 「是」→ 怎么办 |
+|:--|:--|:--|
+| 1 | **已有函数不够用吗？** | **先搜，别先写**：查 `API_INDEX.md`（110 模块 / 名称 + 一行摘要），再 grep 动词与名词，再看**同层相邻模块**。够用就调，**不新增**，也不"顺手包一层" |
+| 2 | **是旧函数有 Bug 吗？** | 「差一点」先判**是 Bug 还是设计**（查 `PITFALLS.md`：看起来像 bug 的刻意设计，勿"修正"）。是 Bug 就**就地修**，不要复制一份改好的 |
+| 3 | **修好 Bug 后能满足吗？** | 能 → **就地修**，并在 commit message 写明修了什么、怎么验的。**到此结束，没有新函数** |
+| 4 | **旧函数真的实现不了吗？** | 才允许新增 —— 但**必须先答完下面三个定位问题**再动手 |
+
+### 第 4 步放行后的三个定位问题
+
+**① 放哪层？** 根层（`pipeline/` `portfolio/` `analysis/` `services/` `datasource/`
+`core/`）= **各交易系统共用**；`markets/<Market>/` = **该市场专有**。
+**数据库操作只能进 `services/`**（本文件「Coding Conventions」的硬规定，无例外）。
+将超 `services/` 的 300 行上限时，按 `services/features/` 的先例**拆子模块**，
+不是放宽行数。
+
+**② 命名怎么跟同级对齐？** 决定放进哪个模块后，**先看那个模块里已有的函数名** ——
+前缀、动词习惯、返回约定，照着写。全树实测现状（2026-09-25）：
+
+| 形态 | 含义 | 出现在 |
+|:--|:--|:--|
+| `GQ_xxx_yyy` | **老树继承**的公开 API 风格，**无机制含义** —— 不是分发前缀，CLI 是按**类继承**发现市场的（`cli/tools.py` 找 `purge_historical_collections`），不按名字前缀 | `etf_fq` / `refdata` / `scribe` / `symbol` / `maintenance` / `kline83` |
+| `xxx_yyy` | 新写的**纯内部**模块 | `fq.py` / `datastruct.py` |
+| `_xxx` | 模块私有 | 各处 |
+
+⚠️ **这条我自己就没对齐**：同为新建，`maintenance.py` 用了 `GQ_`、`fq.py` 没用。
+所以第 ② 问**必须现场看同级**，**别照抄另一个模块的结论**。
+（`GLOSSARY.md` 第四节的词几乎全是老代码继承，别当拼写错误改。）
+
+**③ 接口能被分发吗？** 若该函数将成为 CLI / 订阅器入口，**必须能无参调用** ——
+调用方不带参数（见 `PITFALLS.md` P10）。
+
+### 判成「新增」时要留痕
+
+commit message 或 `HANDOFF.md` 里写明**为什么不复用**。写了才算做过这个判断 ——
+否则下一个接手的人只看到两个近似函数，**无从分辨是取舍还是疏忽**。
 
 ## Project Overview
 
