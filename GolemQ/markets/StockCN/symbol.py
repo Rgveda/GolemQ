@@ -177,11 +177,243 @@ def normalize_code(symbol, pre_close=None, market_type=None):
     return ret_normalize_code
 
 
-def is_stock_cn(code):
+# ---------------------------------------------------------------------------
+# A 股号段表 —— `is_stock_cn` 的**唯一分类依据**
+# ---------------------------------------------------------------------------
+# 每条 ``(前缀, market_type, 交易所别名, 中文描述)``。匹配时按**前缀长度降序**，
+# 长的先命中 —— 这解决了 ``200`` 被 ``20`` 抢先、``399`` 被 ``39`` 抢先这类
+# **包含关系**。原实现靠 ``elif`` 的书写顺序来保证，极脆：深市 B 股分支
+# （``200``）就是因此被 ``20`` 压死了多年（见 ``PITFALLS.md`` P12）。
+#
+# ⚠️ **ETF 的号段口径以交易所规则为准，不是以"看起来像"为准。** 原实现把
+# 深市 ``150``(分级子份额) / ``16x``(LOF) / ``180``(REITs) / ``20``(B股) 一股脑
+# 判成「深交所ETF基金」，5 段里错了 4 段。核实来源与结论见
+# ``MIGRATION_STATUS.md`` 的「ETF 独立成 ETF_CN」记录。
+#
+# 沪市：50x 基金(封基/LOF/分级) · 51x–58x ETF · 60x/688/689 股票 · 900 B股
+_SH_SEGMENTS = (
+    ('688', MARKET_TYPE.STOCK_CN, 'SH', '上交所科创板'),
+    ('689', MARKET_TYPE.STOCK_CN, 'SH', '上交所科创板存托凭证'),
+    ('900', MARKET_TYPE.STOCK_CN, 'SH', '上交所B股'),
+    ('60', MARKET_TYPE.STOCK_CN, 'SH', '上交所主板'),
+    ('50', MARKET_TYPE.FUND_CN, 'SH', '上交所基金(封基/LOF/分级)'),
+    ('51', MARKET_TYPE.ETF_CN, 'SH', '上交所ETF'),
+    ('52', MARKET_TYPE.ETF_CN, 'SH', '上交所ETF'),
+    ('53', MARKET_TYPE.ETF_CN, 'SH', '上交所单市场股票ETF'),
+    ('55', MARKET_TYPE.ETF_CN, 'SH', '上交所单市场债券ETF'),
+    ('56', MARKET_TYPE.ETF_CN, 'SH', '上交所跨市场股票ETF'),
+    ('58', MARKET_TYPE.ETF_CN, 'SH', '上交所ETF(含科创板ETF)'),
+)
+
+# 深市：159/158 ETF · 150 分级子份额 · 16x LOF · 180 REITs · 184 封基
+#       000/001/002/003/300–303 股票 · 200 B股 · 28 B股配股权证 · 399 指数
+_SZ_SEGMENTS = (
+    ('159', MARKET_TYPE.ETF_CN, 'SZ', '深交所ETF'),
+    ('158', MARKET_TYPE.ETF_CN, 'SZ', '深交所ETF'),
+    ('150', MARKET_TYPE.FUND_CN, 'SZ', '深交所分级基金子份额'),
+    ('184', MARKET_TYPE.FUND_CN, 'SZ', '深交所封闭式基金'),
+    ('180', MARKET_TYPE.FUND_CN, 'SZ', '深交所基础设施基金(REITs)'),
+    # B股是**整个 ``20`` 段**（200–209），不只 ``200``——深交所规则「B股首二位为 20」
+    ('20', MARKET_TYPE.STOCK_CN, 'SZ', '深交所B股'),
+    ('399', MARKET_TYPE.INDEX_CN, 'SZ', '中证指数'),
+    ('300', MARKET_TYPE.STOCK_CN, 'SZ', '深交所创业板'),
+    ('301', MARKET_TYPE.STOCK_CN, 'SZ', '深交所创业板'),
+    ('302', MARKET_TYPE.STOCK_CN, 'SZ', '深交所创业板'),
+    ('303', MARKET_TYPE.STOCK_CN, 'SZ', '深交所创业板'),
+    ('002', MARKET_TYPE.STOCK_CN, 'SZ', '深交所中小板'),
+    ('003', MARKET_TYPE.STOCK_CN, 'SZ', '深交所主板'),
+    ('000', MARKET_TYPE.STOCK_CN, 'SZ', '深交所主板'),
+    ('001', MARKET_TYPE.STOCK_CN, 'SZ', '深交所主板'),
+    ('16', MARKET_TYPE.FUND_CN, 'SZ', '深交所LOF'),
+    ('28', MARKET_TYPE.STOCK_CN, 'SZ', '深交所B股配股权证'),
+)
+
+# 北交所/新三板：920 北交所（2025-10-09 起存量已全部切换为该段）·
+#                43/83/87/88 股转系统股票 · 82 优先股
+# ⚠️ 原实现把 ``82`` 也写成「北证A股」—— 官方口径 ``82``/``820`` 是**优先股**。
+_BJ_SEGMENTS = (
+    ('92', MARKET_TYPE.STOCK_CN, 'BJ', '北交所'),
+    ('88', MARKET_TYPE.STOCK_CN, 'BJ', '全国股转系统股票'),
+    ('87', MARKET_TYPE.STOCK_CN, 'BJ', '全国股转系统股票'),
+    ('83', MARKET_TYPE.STOCK_CN, 'BJ', '全国股转系统股票'),
+    ('43', MARKET_TYPE.STOCK_CN, 'BJ', '全国股转系统股票'),
+    ('82', MARKET_TYPE.STOCK_CN, 'BJ', '全国股转系统优先股'),
+)
+
+#: 深市 ``000`` 段里**其实是指数**的少数代码（沪深300 等）。硬编码沿用原样 ——
+#: 注意它们返回 ``'SH'`` 交易所别名，这是原行为，**勿"修正"**成 ``'SZ'``。
+_SZ_INDEX_CODES = frozenset(
+    {'000003', '000112', '000300', '000132', '000133'})
+
+
+def _by_length(segments):
+    """按前缀**长度降序**排好，供 :func:`_match_segment` 顺序匹配。
+
+    在模块加载时做一次（而不是每次调用排序）—— ``is_stock_cn`` 在热路径上。
     """
-    判断 股票代码，市场来源，板块
-    1- sh
-    0 -sz
+    return tuple(sorted(segments, key=lambda seg: -len(seg[0])))
+
+
+_SH_SEGMENTS = _by_length(_SH_SEGMENTS)
+_SZ_SEGMENTS = _by_length(_SZ_SEGMENTS)
+_BJ_SEGMENTS = _by_length(_BJ_SEGMENTS)
+
+
+def _match_segment(segments, bare):
+    """在号段表里按最长前缀匹配，命中返回 ``(market_type, 交易所, 描述)``。
+
+    >>> _match_segment(_SH_SEGMENTS, '510300')
+    ('etf_cn', 'SH', '上交所ETF')
+    >>> _match_segment(_SZ_SEGMENTS, '200037')     # B股，不再被 '20' 抢走
+    ('stock_cn', 'SZ', '深交所B股')
+    >>> _match_segment(_SZ_SEGMENTS, '159915')
+    ('etf_cn', 'SZ', '深交所ETF')
+    >>> _match_segment(_SZ_SEGMENTS, '160105')     # LOF，不是 ETF
+    ('fund_cn', 'SZ', '深交所LOF')
+    """
+    for prefix, market_type, exchange, desc in segments:
+        if bare.startswith(prefix):
+            return market_type, exchange, desc
+    return None
+
+
+#: 交易所 token（**大小写不敏感**）→ `is_stock_cn` 返回的交易所别名。
+#:
+#: - ``SH`` / ``XSHG`` —— 上交所。``XSHG`` 取「上**海**」拼音里的 g
+#:   （``XSHG`` = **Shan(g)hai**），好与深圳区分。
+#: - ``SZ`` / ``XSHE`` —— 深交所。``XSHE`` 取「深**圳**」的 e
+#:   （**Sh(e)nzhen**）。
+#: - ``BJ`` —— 北交所。
+#:
+#: ⚠️ **只收真实存在的写法。** 曾考虑再加一个 ``CZ`` 当深交所别名（源自一次
+#: 口头笔误），查证后确认**两棵树里都零出现**，故不加 —— 多容忍一个不存在的
+#: token，只会让**打错的代码被静默当成深交所**；正确行为是判成不认识。
+_EXCHANGE_TOKENS = {
+    'SH': 'SH', 'XSHG': 'SH',
+    'SZ': 'SZ', 'XSHE': 'SZ',
+    'BJ': 'BJ',
+}
+
+#: 没有显式交易所时，靠号段就能断定属于沪市的 3 位前缀（债券/回购等）。
+_SH_FORCED_3 = ('009', '126', '110', '201', '202', '203', '204')
+#: 没有显式交易所时，靠号段就能断定属于深市的 3 位前缀。
+_SZ_FORCED_3 = ('000', '001', '002', '200', '300', '159')
+
+
+def _split_cn_code(raw):
+    """把各种带交易所标记的写法拆成 ``(裸6位代码, 交易所别名或 None)``。
+
+    **长度 >6 的判断只在这里做一次** —— 原实现把长度判断散在沪/深两个分支里
+    各写一遍（``len==8`` / ``len==11 & startswith`` / ``len==11 & endswith``），
+    而且两处**只认自己的交易所**：于是 ``bj430489`` 谁都进不去，直接返回
+    ``False``（"不是 A 股"）。
+
+    支持的形态（长度 >6 的全部保留，见 ``MISSING``/原契约）：
+
+    >>> _split_cn_code('600519')          # 裸 6 位
+    ('600519', None)
+    >>> _split_cn_code('sh600519')        # 紧贴前缀
+    ('600519', 'SH')
+    >>> _split_cn_code('sh.600000')       # 点号前缀（树里 qmt_source 用这种）
+    ('600000', 'SH')
+    >>> _split_cn_code('600519.XSHG')     # 点号后缀
+    ('600519', 'SH')
+    >>> _split_cn_code('bj430489')        # 北交所 —— 原实现认不出来
+    ('430489', 'BJ')
+    >>> _split_cn_code('XSHG600519')      # QUANTAXIS 的前缀式
+    ('600519', 'SH')
+    >>> _split_cn_code('cz000001')        # 不存在的 token 不猜
+    ('cz000001', None)
+    """
+    s = str(raw).strip()
+    if not s or len(s) <= 6:
+        return s, None
+
+    if '.' in s:
+        left, right = s.rsplit('.', 1)
+        alias = _EXCHANGE_TOKENS.get(right.upper())
+        if alias and len(left) >= 6:
+            return left[-6:], alias
+        alias = _EXCHANGE_TOKENS.get(left.upper())
+        if alias and len(right) >= 6:
+            return right[-6:], alias
+        return s, None
+
+    alias = _EXCHANGE_TOKENS.get(s[:2].upper())
+    if alias and len(s) - 2 >= 6:
+        return s[-6:], alias
+
+    alias = _EXCHANGE_TOKENS.get(s[:4].upper())
+    if alias and len(s) >= 10:
+        return s[4:10], alias
+
+    for suffix in ('XSHG', 'XSHE'):
+        if s.upper().endswith(suffix) and len(s) >= 6:
+            return s[:-4][-6:], _EXCHANGE_TOKENS[suffix]
+
+    return s, None
+
+
+def _classify_sh(bare):
+    """沪市号段 → 四元组。``000`` 段**只在有显式沪市标记时**才算指数。"""
+    if bare.startswith('000'):
+        return True, MARKET_TYPE.INDEX_CN, 'SH', '上交所指数'
+    hit = _match_segment(_SH_SEGMENTS, bare)
+    if hit is not None:
+        return True, hit[0], hit[1], hit[2]
+    print(bare, True, None, 'SH', '上交所未知代码')
+    return True, None, 'SH', '上交所未知代码'
+
+
+def _classify_sz(bare):
+    """深市号段 → 四元组。"""
+    if bare in _SZ_INDEX_CODES:
+        return True, MARKET_TYPE.INDEX_CN, 'SH', '中证指数'
+    hit = _match_segment(_SZ_SEGMENTS, bare)
+    if hit is not None:
+        return True, hit[0], hit[1], hit[2]
+    print(bare, True, None, 'SZ', '深交所未知代码')
+    return True, None, 'SZ', '深交所未知代码'
+
+
+def _classify_bj(bare):
+    """北交所 / 新三板号段 → 四元组。"""
+    hit = _match_segment(_BJ_SEGMENTS, bare)
+    if hit is not None:
+        return True, hit[0], hit[1], hit[2]
+    print(bare, True, None, 'BJ', '北交所未知代码')
+    return True, None, 'BJ', '北交所未知代码'
+
+
+def is_stock_cn(code):
+    """判断 股票代码，市场来源，板块。
+
+    返回 ``(是否A股, market_type, 交易所别名, 中文描述)`` —— **四元组形状与
+    位置语义是全树契约**（十余处按位置解包），不得改动。
+
+    ``market_type`` 见 :class:`GolemQ.core.constants.MARKET_TYPE`；
+    **ETF 现为独立的 ``ETF_CN``**（不再混进 ``INDEX_CN``）。
+
+    长度 >6 的写法（``sh600519`` / ``sh.600000`` / ``600519.XSHG`` /
+    ``bj430489`` / ``cz000001``）由 :func:`_split_cn_code` 统一拆解，
+    **显式交易所标记优先于号段推断**。
+
+    >>> is_stock_cn('600519')[1]
+    'stock_cn'
+    >>> is_stock_cn('510300')[1]                   # ETF 是与指数并列的一等类型
+    'etf_cn'
+    >>> is_stock_cn('000300')[1]                   # 真指数仍是索引
+    'index_cn'
+    >>> is_stock_cn('200037')[3]                   # 深市B股，曾被 '20' 误判成 ETF
+    '深交所B股'
+    >>> is_stock_cn('160105')[1]                   # LOF —— 基金，不是 ETF
+    'fund_cn'
+    >>> is_stock_cn('820001')[3]                   # 优先股，原写成「北证A股」
+    '全国股转系统优先股'
+    >>> is_stock_cn('bj430489')[2]                 # 带交易所标记的写法不该丢
+    'BJ'
+    >>> is_stock_cn('sh.600000')[1]
+    'stock_cn'
     """
     symbol = code
     if (isinstance(code, list)):
@@ -192,102 +424,30 @@ def is_stock_cn(code):
     if (len(code) == 0):
         print(symbol, u'长度为零')
         return False, None, None, None
-    if code[:2] in ["83", "87", "82", "88", "43", '92', ]:
-        return True, MARKET_TYPE.STOCK_CN, 'BJ', '北证A股'
-    elif code[0] in ['5', '6', '9'] or \
-        code[:3] in ["009", "126", "110", "201", "202", "203", "204",
-                     '688', '689'] or \
-        (code.startswith('XSHG')) or \
-        (code.startswith('sh')) or \
-        (code.startswith('SH')) or \
-            (code.endswith('XSHG')):
-        if (code.startswith('XSHG')) or \
-                (code.endswith('XSHG')):
-            if (len(code.split('.')) > 1):
-                try_split_codelist = code.split('.')
-                if (try_split_codelist[0] == 'XSHG') and \
-                        (len(try_split_codelist[1]) == 6):
-                    code = try_split_codelist[1]
-                elif (try_split_codelist[1] == 'XSHG') and \
-                        (len(try_split_codelist[0]) == 6):
-                    code = try_split_codelist[0]
-                if (code.startswith("00000")) or \
-                        (code.startswith("000")):
-                    return True, MARKET_TYPE.INDEX_CN, 'SH', '上交所指数'
-        if (len(code) == 8):
-            code = code[-6:]
-        elif (len(code) == 11) and code.startswith('XSHG'):
-            code = code[-6:]
-        elif (len(code) == 11) and code.endswith('XSHG'):
-            code = code[:6]
-        if code.startswith('60'):
-            return True, MARKET_TYPE.STOCK_CN, 'SH', '上交所A股'
-        elif (code.startswith('688')) or \
-                (code.startswith('689')):
-            return True, MARKET_TYPE.STOCK_CN, 'SH', '上交所科创板'
-        elif code.startswith('900'):
-            return True, MARKET_TYPE.STOCK_CN, 'SH', '上交所B股'
-        elif code.startswith('50'):
-            return True, MARKET_TYPE.FUND_CN, 'SH', '上交所传统封闭式基金'
-        elif (code.startswith('51')) or \
-            (code.startswith('52')) or \
-            (code.startswith('53')) or \
-            (code.startswith('55')) or \
-            (code.startswith('56')) or \
-            (code.startswith('58')) or \
-                (code.startswith('5880')):
-            return True, MARKET_TYPE.INDEX_CN, 'SH', '上交所ETF基金'  # QA 把ETF归类为INDX_CN
-        else:
-            print(code, True, None, 'SH', '上交所未知代码')
-            return True, None, 'SH', '上交所未知代码'
-    elif code[0] in ['0', '2', '3'] or \
-        code[:2] in ['15', '16', '18'] or \
-        code[:3] in ['000', '001', '002', '200', '300', '159'] or \
-        (code.startswith('XSHE')) or \
-        (code.startswith('sz')) or \
-        (code.startswith('SZ')) or \
-            (code.endswith('XSHE')):
-        if (len(code) == 8):
-            code = code[-6:]
-        elif (len(code) == 11) and code.startswith('XSHE'):
-            code = code[-6:]
-        elif (len(code) == 11) and code.endswith('XSHE'):
-            code = code[:6]
-        if (code.startswith('000')) or \
-                (code.startswith('001')):
-            if (code in ['000003', '000112', '000300', '000132', '000133']):
-                return True, MARKET_TYPE.INDEX_CN, 'SH', '中证指数'
-            else:
-                return True, MARKET_TYPE.STOCK_CN, 'SZ', '深交所主板'
-        if code.startswith('002'):
-            return True, MARKET_TYPE.STOCK_CN, 'SZ', '深交所中小板'
-        elif code.startswith('003'):
-            return True, MARKET_TYPE.STOCK_CN, 'SZ', '中广核？？'
-        elif (code.startswith('159')) or \
-            (code.startswith('150')) or \
-            (code.startswith('160')) or \
-            (code.startswith('180')) or \
-                (code.startswith('20')):
-            return True, MARKET_TYPE.INDEX_CN, 'SZ', '深交所ETF基金'  # QA 把ETF归类为INDX_CN
-        elif code.startswith('200'):
-            return True, MARKET_TYPE.STOCK_CN, 'SZ', '深交所B股'
-        elif code.startswith('399'):
-            return True, MARKET_TYPE.INDEX_CN, 'SZ', '中证指数'
-        elif (code.startswith('300')) or \
-            (code.startswith('301')) or \
-                (code.startswith('302')):
-            return True, MARKET_TYPE.STOCK_CN, 'SZ', '深交所创业板'
-        elif (code.startswith('XSHE')) or \
-                (code.endswith('XSHE')):
-            pass
-        else:
-            print(code, True, None, 'SZ', '深交所未知代码')
-            return True, None, 'SZ', '深交所未知代码'
-    elif code[:2] in ["83", "87", "43"]:
-        return True, MARKET_TYPE.STOCK_CN, 'BJ', '北交所主板'
-    else:
-        print(code, isinstance(code, list), '不知道')
-        return False, None, None, None
+
+    bare, hint = _split_cn_code(code)
+
+    # 显式交易所标记优先 —— 它专门用来消解 000xxx 这类固有歧义
+    if hint == 'SH':
+        return _classify_sh(bare)
+    if hint == 'SZ':
+        return _classify_sz(bare)
+    if hint == 'BJ':
+        return _classify_bj(bare)
+
+    # —— 北交所 / 新三板：原实现放在最前，保持同样的优先级 ——
+    if bare[:2] in ('92', '88', '87', '83', '82', '43'):
+        return _classify_bj(bare)
+
+    if bare[0] in ('5', '6', '9') or bare[:3] in _SH_FORCED_3 + ('688', '689'):
+        return _classify_sh(bare)
+
+    if bare[0] in ('0', '2', '3') or bare[:2] in ('15', '16', '18') \
+            or bare[:3] in _SZ_FORCED_3:
+        return _classify_sz(bare)
+
+    print(code, isinstance(code, list), '不知道')
+    return False, None, None, None
 
 
 def is_future_cn(code):

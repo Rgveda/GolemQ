@@ -143,9 +143,12 @@ class BaseBenchmark(ABC):
                     (end_date + timedelta(hours=17)).strftime("%Y-%m-%d %H:%M:%S"),
                     frequence=frequency
                 )
-            elif self.market_type == MARKET_TYPE.INDEX_CN:
-                # 指数与 ETF 共用 index_* 集合，本函数按代码自动选容器；
-                # 保留独立名字只为让调用点读起来与市场分支对应。
+            elif self.market_type == MARKET_TYPE.INDEX_CN or \
+                    self.market_type == MARKET_TYPE.ETF_CN:
+                # ⚠️ ETF 2026-09 起是**独立类型与独立集合**（`etf_*`），不再与
+                # 指数共用 `index_*`。这一支仍然对 —— `GQ_fetch_index_min_adv`
+                # 内部按代码走 `kline83.market_prefix`，会分别落到 `etf_*` /
+                # `index_*`；保留独立名字只为让调用点读起来与市场分支对应。
                 kline_data = GQ_fetch_index_min_adv(
                     code,
                     start_date.strftime("%Y-%m-%d %H:%M:%S"),

@@ -139,7 +139,11 @@ def dataloader_persistence_check(symbol=None,
             persistence_features = attach_reality_features(features_dummy=kline_hour_baseline,
                                                            annual=1008,
                                                            collections=DATABASE_GolemQ.stock_reality_features, )
-        elif (market_type == MARKET_TYPE.INDEX_CN):
+        elif (market_type == MARKET_TYPE.INDEX_CN) or \
+                (market_type == MARKET_TYPE.ETF_CN):
+            # ETF 2026-09 起是独立类型（原为 INDEX_CN）。这里**与指数同走一张表**
+            # —— 不是偷懒，而是保住 ETF 改动前的行为：那时它按 INDEX_CN 匹配的
+            # 就是这张。若将来给 ETF 单独建表，在这一支里改。
             persistence_features = attach_reality_features(features_dummy=kline_hour_baseline,
                                                            annual=1008,
                                                            collections=DATABASE_GolemQ.index_reality_features, )

@@ -64,6 +64,8 @@ from .symbol import (
 # 而且那层保护会把真正的导入错误吞掉。
 from GolemQ.markets.StockCN.date_utils import GQ_util_timestamp_to_str
 from .datastruct import (
+    GQ_DataStruct_ETF_day,
+    GQ_DataStruct_ETF_min,
     GQ_DataStruct_Index_min,
     GQ_DataStruct_Index_day,
     GQ_DataStruct_Stock_day,
@@ -746,15 +748,23 @@ def GQ_fetch_stock_min_adv(
 
 
 def _min_container(res_set_index, code):
-    """帧 → 容器：股票走 ``Stock_min``，ETF/指数走 ``Index_min``。
+    """帧 → 容器：股票走 ``Stock_min``，ETF 走 ``ETF_min``，真指数走 ``Index_min``。
 
-    容器类型跟随**数据所属的市场**，而不是函数名里的 "stock"：ETF 与指数共用
-    ``index_*`` 集合，拿它们的数据装进 Stock 容器会让
-    ``isinstance(data_min, GQ_DataStruct_Index_min)`` 恒为假 ——
-    ``fetch.py`` 靠那两个 isinstance 决定去取股票名还是 ETF 名。
+    容器类型跟随**数据所属的市场**，而不是函数名里的 "stock"：拿 ETF 的数据装进
+    Stock 容器会让 ``isinstance`` 判定失真 —— ``fetch.py`` 靠它决定去取股票名
+    还是 ETF 名。
+
+    ⚠️ **三分支缺一不可。** 2026-09 ETF 独立成 ``etf_*`` 之前，这里只有
+    「index / 否则 stock」两分支，ETF 与真指数共用 ``index_*``。若只改
+    ``market_prefix`` 而不改这里，ETF 会**落到 ``Stock_min``** ——
+    那会拿到 ``to_qfq()``（按 ``stock_adj`` 错乘 ETF 价格）且被当股票取名，
+    **全程不报错**。这是本次改动里最容易漏的一处。
     """
     probe = code[0] if isinstance(code, (list, tuple, set)) else code
-    if market_prefix(probe) == 'index':
+    prefix = market_prefix(probe)
+    if prefix == 'etf':
+        return GQ_DataStruct_ETF_min(res_set_index)
+    if prefix == 'index':
         return GQ_DataStruct_Index_min(res_set_index)
     return GQ_DataStruct_Stock_min(res_set_index)
 
@@ -798,18 +808,21 @@ def get_kline_price_min(
             # 判断是单一标的
             if (market_type == MARKET_TYPE.STOCK_CN):
                 market_type_desc = 'A股'
-                market_type = MARKET_TYPE.STOCK_CN
+            elif (market_type == MARKET_TYPE.ETF_CN):
+                # ETF 现在是**与指数并列的类型**（`MARKET_TYPE.ETF_CN`），
+                # 不再靠描述串与真指数区分。下面的容器/集合/复权全由它决定。
+                market_type_desc = 'A股ETF基金'
             elif (market_type == MARKET_TYPE.INDEX_CN):
-                if (market_type_desc.endswith('ETF基金')):
-                    market_type_desc = 'A股ETF基金'
-                    market_type = MARKET_TYPE.INDEX_CN
-                else:
-                    market_type_desc = 'A股指数'
-                    market_type = MARKET_TYPE.INDEX_CN
+                # 真指数。原实现在这里又用描述串分了一次 ETF
+                # （`market_type_desc.endswith('ETF基金')`）—— 类型已能区分，
+                # 那个分支现在**恒为假**，故删去。
+                market_type_desc = 'A股指数'
             elif (is_cryptocurrency(codelist)[1] == MARKET_TYPE.CRYPTOCURRENCY):
                 market_type_desc = '数字货币'
                 market_type = MARKET_TYPE.CRYPTOCURRENCY
             elif (market_type == MARKET_TYPE.FUND_CN):
+                # 50x 封基/LOF/分级：**有意**继续与指数共用 `index_*`（见
+                # `kline83.market_prefix` 的 ⚠️），描述沿用旧文案。
                 market_type_desc = 'A股ETF基金'
                 market_type = MARKET_TYPE.INDEX_CN
             else:
@@ -819,14 +832,10 @@ def get_kline_price_min(
             # 判断是多标的
             if (market_type == MARKET_TYPE.STOCK_CN):
                 market_type_desc = 'A股'
-                market_type = MARKET_TYPE.STOCK_CN
+            elif (market_type == MARKET_TYPE.ETF_CN):
+                market_type_desc = 'A股ETF基金'
             elif (market_type == MARKET_TYPE.INDEX_CN):
-                if (market_type_desc.endswith('ETF基金')):
-                    market_type_desc = 'A股ETF基金'
-                    market_type = MARKET_TYPE.INDEX_CN
-                else:
-                    market_type_desc = 'A股指数'
-                    market_type = MARKET_TYPE.INDEX_CN
+                market_type_desc = 'A股指数'
             elif (is_cryptocurrency(codelist[0])[1] == MARKET_TYPE.CRYPTOCURRENCY):
                 market_type_desc = '数字货币'
                 market_type = MARKET_TYPE.CRYPTOCURRENCY
@@ -842,6 +851,10 @@ def get_kline_price_min(
             market_type_desc = 'A股'
         elif (market_type == MARKET_TYPE.CRYPTOCURRENCY):
             market_type_desc = '数字货币'
+        elif (market_type == MARKET_TYPE.ETF_CN):
+            # 显式传入 `market_type=ETF_CN` 时也必须给描述 —— 否则下面的
+            # verbose 打印处会因 `market_type_desc` 未定义直接 NameError。
+            market_type_desc = 'A股ETF基金'
         elif (market_type == MARKET_TYPE.FUND_CN):
             market_type_desc = 'A股ETF基金'
         elif (market_type == MARKET_TYPE.INDEX_CN):
@@ -1036,7 +1049,8 @@ def get_kline_price_min(
             frequence=frequency)
         # if verbose:
         #     data_min.data[ST.VERBOSE] = True
-    elif (market_type == MARKET_TYPE.INDEX_CN) or \
+    elif (market_type == MARKET_TYPE.ETF_CN) or \
+        (market_type == MARKET_TYPE.INDEX_CN) or \
         (market_type == MARKET_TYPE.FUND_CN):
         start = '{}'.format(datetime.datetime.now() - timedelta(hours=19200)) if (start is None) else start
         end = '{}'.format(datetime.datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=1)) if (end is None) else end
@@ -1181,9 +1195,14 @@ def get_kline_price_min(
         if (isinstance(data_min, GQ_DataStruct_Stock_min) or \
             isinstance(data_min, GQ_DataStruct_Stock_day)):
             codename = GQ_fetch_stock_name(codelist)
-        elif (isinstance(data_min, GQ_DataStruct_Index_min) or \
+        elif (isinstance(data_min, GQ_DataStruct_ETF_min) or \
+            isinstance(data_min, GQ_DataStruct_ETF_day) or \
+            isinstance(data_min, GQ_DataStruct_Index_min) or \
             isinstance(data_min, GQ_DataStruct_Index_day)):
-            if (market_type_desc == 'A股ETF基金'):
+            # ETF 容器是**新增的**，不并进这个 isinstance 的话，ETF 会掉到下面
+            # 的 `elif isinstance(codelist, list)` 分支，拿到的是「代码串当名字」。
+            # 判据也从描述串改成**类型** —— 描述串是展示文本，不该承载路由。
+            if (market_type == MARKET_TYPE.ETF_CN):
                 if (isinstance(codelist, str)):
                     codename = GQ_fetch_etf_name(codelist[:6])
                 else:
@@ -1256,16 +1275,17 @@ def get_kline_price_v3(
             _, market_type, market_words, market_type_desc = is_stock_cn(codelist)
             if (market_type == MARKET_TYPE.STOCK_CN):
                 market_type_desc = 'A股'
-                market_type = MARKET_TYPE.STOCK_CN
-            elif (market_type_desc.endswith('ETF基金')):
+            elif (market_type == MARKET_TYPE.ETF_CN):
+                # ⚠️ 原实现此处是 `elif market_type_desc.endswith('ETF基金')` ——
+                # 靠描述串判定，且**不看 market_type**。ETF 类型化之后 ETF 的
+                # 描述串不再以 'ETF基金' 结尾，那个分支恒为假，ETF 会一路落到
+                # 最后的 else，`market_type` 停在 ETF_CN 而拿不到数据。
                 market_type_desc = 'A股ETF基金'
-                market_type = MARKET_TYPE.INDEX_CN
+            elif (market_type == MARKET_TYPE.INDEX_CN):
+                market_type_desc = 'A股指数'
             elif (is_cryptocurrency(codelist)[1] == MARKET_TYPE.CRYPTOCURRENCY):
                 market_type_desc = '数字货币'
                 market_type = MARKET_TYPE.CRYPTOCURRENCY
-            elif (market_type == MARKET_TYPE.INDEX_CN):
-                market_type_desc = 'A股指数'
-                market_type = MARKET_TYPE.INDEX_CN
             elif (market_type == MARKET_TYPE.FUND_CN):
                 market_type_desc = 'A股ETF基金'
                 market_type = MARKET_TYPE.INDEX_CN
@@ -1277,16 +1297,13 @@ def get_kline_price_v3(
             _, market_type, market_words, market_type_desc = is_stock_cn(codelist[0])
             if (market_type == MARKET_TYPE.STOCK_CN):
                 market_type_desc = 'A股'
-                market_type = MARKET_TYPE.STOCK_CN
-            elif (market_type_desc.endswith('ETF基金')):
+            elif (market_type == MARKET_TYPE.ETF_CN):
                 market_type_desc = 'A股ETF基金'
-                market_type = MARKET_TYPE.INDEX_CN
+            elif (market_type == MARKET_TYPE.INDEX_CN):
+                market_type_desc = 'A股指数'
             elif (is_cryptocurrency(codelist[0])[1] == MARKET_TYPE.CRYPTOCURRENCY):
                 market_type_desc = '数字货币'
                 market_type = MARKET_TYPE.CRYPTOCURRENCY
-            elif (market_type == MARKET_TYPE.INDEX_CN):
-                market_type_desc = 'A股指数'
-                market_type = MARKET_TYPE.INDEX_CN
             elif (market_type == MARKET_TYPE.FUND_CN):
                 market_type_desc = 'A股ETF基金'
                 market_type = MARKET_TYPE.INDEX_CN
@@ -1299,6 +1316,10 @@ def get_kline_price_v3(
             market_type_desc = 'A股'
         elif (market_type == MARKET_TYPE.CRYPTOCURRENCY):
             market_type_desc = '数字货币'
+        elif (market_type == MARKET_TYPE.ETF_CN):
+            # 显式传入 `market_type=ETF_CN` 时也必须给描述 —— 否则下面的
+            # verbose 打印处会因 `market_type_desc` 未定义直接 NameError。
+            market_type_desc = 'A股ETF基金'
         elif (market_type == MARKET_TYPE.FUND_CN):
             market_type_desc = 'A股ETF基金'
         elif (market_type == MARKET_TYPE.INDEX_CN):
@@ -1448,7 +1469,8 @@ def get_kline_price_v3(
             start=start,
             end='{}'.format(dt.now(timezone(timedelta(hours=8))) + timedelta(minutes=1)),
             frequence='60min')
-    elif (market_type == MARKET_TYPE.INDEX_CN) or \
+    elif (market_type == MARKET_TYPE.ETF_CN) or \
+        (market_type == MARKET_TYPE.INDEX_CN) or \
         (market_type == MARKET_TYPE.FUND_CN):
         start = '{}'.format(dt.today() - timedelta(days=2500)) if (start is None) else start
         end = '{}'.format(dt.today() + timedelta(days=1)) if (end is None) else end
@@ -1530,9 +1552,13 @@ def get_kline_price_v3(
                 codename = codename.reindex([*codename.index,
                                              *miss_codelist])
             # print(len(codename), codename)
-    elif (isinstance(data_day, GQ_DataStruct_Index_min) or \
+    elif (isinstance(data_day, GQ_DataStruct_ETF_min) or \
+        isinstance(data_day, GQ_DataStruct_ETF_day) or \
+        isinstance(data_day, GQ_DataStruct_Index_min) or \
         isinstance(data_day, GQ_DataStruct_Index_day)):
-        if (market_type_desc == 'A股ETF基金'):
+        # ETF 容器是**新增的**，不并进来 ETF 会掉到下面的指数取名分支。
+        # 判据同样从描述串改成**类型**。
+        if (market_type == MARKET_TYPE.ETF_CN):
             try:
                 if (isinstance(codelist, str)):
                     codename = GQ_fetch_etf_name(codelist[:6])

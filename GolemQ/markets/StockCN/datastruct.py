@@ -9,9 +9,9 @@
 
 ============ ==================================================================
 `.data`      读写（`quotes.py` 往里加 `FULL_SYMBOL` / `MARKET_TYPE` 列）
-`.to_qfq()`  **仅股票**。见下
+`.to_qfq()`  **股票与 ETF 有，真指数没有**。见下
 `.select_code()`  `realtime.py:630/632/633/877`
-`isinstance` 区分「股票」与「指数/ETF」（`fetch.py:1116/1449`）
+`isinstance` 区分「股票」/「ETF」/「真指数」（`fetch.py:1116/1449`）
 ============ ==================================================================
 
 ## 两条照搬 QUANTAXIS 的形状，不要「改进」
@@ -19,11 +19,20 @@
 **① 必须有类层级，不能塌缩成一个类。** 上面那两个 `isinstance` 就是靠类型
 区分股票与指数，来决定去 `GQ_fetch_stock_name` 还是 `GQ_fetch_etf_name` 取名字。
 
-**② `to_qfq()` 只挂在 Stock 类上。** 实测 `QA_DataStruct_Index_day` /
-`QA_DataStruct_Index_min` **没有** `to_qfq`。ETF 在迁移里与指数共用 `index_*`
-集合，因此走的是指数分支，拿不到 `to_qfq` —— ETF 的复权由 `etf_fq.py` 的
-`GQ_apply_etf_qfq` 单独负责（**已回迁**，见 `MIGRATION_STATUS.md` HIGH #9）。
-不要把 `to_qfq` 提到基类来「补全」，那会改变 ETF 的行为。
+**② `to_qfq()` 挂在 Stock 与 ETF 两类上，真指数不挂。**
+
+股票走 `_QfqMixin`（因子表 `stock_adj`），ETF 走 `_EtfQfqMixin`
+（因子表 `etf_adj`）—— **两条路不能合并**：拿 ETF 去读 `stock_adj` 查不到
+该 code，因子按 1.0 处理，会**静默返回不复权价**。
+
+真指数**没有** `to_qfq` —— 与 QUANTAXIS 的 `QA_DataStruct_Index_day` /
+`QA_DataStruct_Index_min` 一致。指数没有除权概念，`etf_adj` 里也没有它们的行。
+不要把 `to_qfq` 提到基类来「补全」。
+
+> 2026-09 之前 ETF 与真指数**共用** `index_*` 集合、同走指数分支，因此 ETF
+> 拿不到 `to_qfq`，复权得由消费方单独调 `etf_fq.GQ_apply_etf_qfq`。现在 ETF
+> 有自己的类型（`MARKET_TYPE.ETF_CN`）、集合（`etf_*`）与容器，
+> **接口与股票一致** —— 这是本次拆分的直接目的之一。
 
 两者的**机制**现已收敛到 `fq.py` 的共用纯函数核心，只在**缺失策略**上分道：
 股票按标的 ffill 后填 1.0，ETF **只填 1.0、绝不 ffill**（稀疏约定，承重）。
@@ -77,6 +86,8 @@ __all__ = [
     'GQ_DataStruct',
     'GQ_DataStruct_Stock_day',
     'GQ_DataStruct_Stock_min',
+    'GQ_DataStruct_ETF_day',
+    'GQ_DataStruct_ETF_min',
     'GQ_DataStruct_Index_day',
     'GQ_DataStruct_Index_min',
     'GQ_DataStruct_Stock_block',
@@ -278,13 +289,58 @@ class GQ_DataStruct_Stock_min(_QfqMixin, GQ_DataStruct):
     type = 'stock_min'
 
 
+class _EtfQfqMixin:
+    """`to_qfq()` for ETF —— 与股票**同签名同语义**，但因子取自 ``etf_adj``。
+
+    ⚠️ **不能复用 :class:`_QfqMixin`。** 那条路读 ``stock_adj``；拿 ETF 去读
+    查不到该 code → 因子按 1.0 → **静默返回不复权价**，看上去一切正常。
+    这正是「ETF 曾被归进 ``INDEX_CN``、拿不到 ``to_qfq``」那段历史的解法：
+    与其让消费方绕开类型系统去调 `etf_fq.GQ_apply_etf_qfq`，不如让 ETF
+    有自己的类型与容器，接口与股票一致。
+
+    稀疏约定（承重）：``etf_adj`` 只落**有除权事件**的 code，查不到 = ``1.0``
+    （no-op），**绝不 ffill** —— 见 `fq.py` 与 `etf_fq.py` 的模块说明。
+    """
+
+    def to_qfq(self, verbose=False):
+        """前复权。**幂等**：已经复权过的对象原样返回。
+
+        与 :meth:`_QfqMixin.to_qfq` 一致：**不改调用方持有的对象**，返回新容器。
+        （`GQ_apply_etf_qfq` 是原地替换 `.data` 的老契约，故在副本上跑。）
+        """
+        from .etf_fq import GQ_apply_etf_qfq
+        if self.if_fq != 'bfq':
+            if verbose:
+                print(f'GQ Warning: if_fq={self.if_fq}，不重复复权')
+            return self
+        if len(self.data) == 0:
+            return self
+        stage = self.new(self.data, self.type, 'bfq')
+        GQ_apply_etf_qfq(stage, verbose=verbose)
+        return self.new(stage.data, self.type, 'qfq')
+
+
+class GQ_DataStruct_ETF_day(_EtfQfqMixin, GQ_DataStruct):
+    """ETF 日线。**有 `to_qfq`**（走 ``etf_adj``），与个股同接口。"""
+    type = 'etf_day'
+
+
+class GQ_DataStruct_ETF_min(_EtfQfqMixin, GQ_DataStruct):
+    """ETF 分钟线。**有 `to_qfq`**（走 ``etf_adj``）。"""
+    type = 'etf_min'
+
+
 class GQ_DataStruct_Index_day(GQ_DataStruct):
-    """指数 / ETF 日线。**没有 `to_qfq`** —— 与 QUANTAXIS 一致。"""
+    """**真指数**日线。**没有 `to_qfq`** —— 与 QUANTAXIS 一致。
+
+    ⚠️ 2026-09 起 ETF **不再**走这个类（见 `GQ_DataStruct_ETF_day`）。
+    指数无复权概念（没有除权事件），`etf_adj` 里也没有它们的行。
+    """
     type = 'index_day'
 
 
 class GQ_DataStruct_Index_min(GQ_DataStruct):
-    """指数 / ETF 分钟线。**没有 `to_qfq`** —— 与 QUANTAXIS 一致。"""
+    """**真指数**分钟线。**没有 `to_qfq`** —— 与 QUANTAXIS 一致。"""
     type = 'index_min'
 
 
@@ -370,6 +426,8 @@ def frame_to_datastruct(df, market='stock', frequency='day'):
     cls = {
         ('stock', 'day'): GQ_DataStruct_Stock_day,
         ('stock', 'min'): GQ_DataStruct_Stock_min,
+        ('etf', 'day'): GQ_DataStruct_ETF_day,
+        ('etf', 'min'): GQ_DataStruct_ETF_min,
         ('index', 'day'): GQ_DataStruct_Index_day,
         ('index', 'min'): GQ_DataStruct_Index_min,
     }[(market, frequency)]

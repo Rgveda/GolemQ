@@ -13,8 +13,12 @@ doctest。没有这个收集器，写在 docstring 里的例子等于写着好�
 ⚠️ 什么样的函数**不该**加 doctest
 ==================================
 需要 MongoDB / 网络 / QMT 客户端才能跑的 —— 加了也是永远失败或永远跳过。
-本项目的 `kline83` / `refdata*` / `datasource` 下的各适配器都属于这一类，
+本项目的 `refdata*` 与 `datasource` 下的各适配器都属于这一类，
 它们的正确性验证在 `PITFALLS.md` 记录的边界条件里，不在这里。
+
+⚠️ 判断依据是**函数**而非**模块**：`kline83` 里既有碰库的读取器，也有纯函数
+（如 `market_prefix` / `normalize_frequency`）。给纯函数加 doctest 是合规的，
+只要别把碰库的那些也加进来。`markets/StockCN/symbol.py` 同理。
 """
 from __future__ import annotations
 
@@ -40,6 +44,14 @@ DOCTEST_MODULES = (
     'GolemQ.fetch.kline',
     # 日期助手：纯函数，且是 QUANTAXIS 解耦时逐个对齐过行为的
     'GolemQ.markets.StockCN.date_utils',
+    # 号段分类器：纯字符串判断（`symbol` 模块本身会 import pymongo，但
+    # `is_stock_cn` / `_match_segment` 不碰库 —— 已验证关着 MongoDB 也能导入）。
+    # 它驱动集合路由，判错只静默读错集合，所以值得把口径写进 doctest 钉住。
+    'GolemQ.markets.StockCN.symbol',
+    # 集合路由：纯判断，但**驱动读哪张表**（stock_* / index_* / etf_*）。
+    # 判错只会静默读错集合，故把三值口径写进 doctest。本模块的读取器碰库，
+    # 但它们没有 doctest，不受影响。
+    'GolemQ.markets.StockCN.kline83',
     # 复权的**纯函数核心**：股票与 ETF 共用。刻意不碰数据库（因子取数留在两个
     # 来源模块里），所以能进这个列表。两处调用方都靠它，且各自的数值基准
     # （股票 40,192 行 vs QUANTAXIS、ETF 独立重算）都依赖这些函数。

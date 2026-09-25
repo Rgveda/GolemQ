@@ -31,7 +31,8 @@
 
 **`INDEX_CN`（A股指数）仍然属于 `StockCN` 市场**，不是另一个市场。故本模块的
 `market` 参数按**市场归属**分发；品种类型由市场内部判定
-（`markets/StockCN/kline83.py` 用 `is_stock_cn()` 决定读 `stock_*` 还是 `index_*`）。
+（`markets/StockCN/kline83.py` 用 `is_stock_cn()` 决定读 `stock_*` / `index_*` /
+`etf_*` —— 三值由 `market_prefix()` 给出；ETF 2026-09 起从 `index_*` 独立）。
 
 这张映射表就是「层级」这一事实的落点 —— 新增市场时在这里加一行。
 

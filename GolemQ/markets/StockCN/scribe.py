@@ -810,8 +810,11 @@ def GQ_stock_a_spot_em(
 def GQ_etf_a_spot_em(
         collections=DATABASE_GolemQ.stock_a_snapshot,
 ):
+    # `GQ_stock_a_spot_em` 内部按 `market_type == STOCK_CN ? stock_* : etf_*`
+    # 选快照列，所以这里传的其实是「**不是股票**」的标记。原先借用
+    # `INDEX_CN`；ETF 2026-09 起已是独立类型，直接用 `ETF_CN` 更直白。
     stock_cn_snapshot_daily = GQ_stock_a_spot_em(
-        market_type=MARKET_TYPE.INDEX_CN,
+        market_type=MARKET_TYPE.ETF_CN,
         verbose=False,
     )
 

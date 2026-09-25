@@ -67,6 +67,8 @@ from typing import Dict
 
 import pandas as pd
 
+from GolemQ.core.constants import MARKET_TYPE
+
 from .fq import (
     align_factors,
     flatten_factor_map,
@@ -99,14 +101,20 @@ def _adj_collection():
 def GQ_is_etf(code) -> bool:
     """判断 6 位代码是否为场内 ETF。
 
-    ``is_stock_cn`` 把 ETF 归入 ``MARKET_TYPE.INDEX_CN``（与真指数同类型），靠描述串
-    （``'上交所ETF基金'``/``'深交所ETF基金'``）与真指数（``'中证指数'``）区分。
+    判据是 :func:`is_stock_cn` 返回的 **``MARKET_TYPE.ETF_CN``** —— 单一真值来源。
 
-    :param code: 6 位代码，如 ``'510300'``；带后缀也容忍（按前 6 位判定）。
+    ⚠️ **原实现嗅探描述串**（``is_stock_cn(code)[3].endswith('ETF基金')``）。
+    那是在 ETF 被归进 ``INDEX_CN``、与真指数同类型时期的**唯一**区分手段，
+    但极脆：描述串是展示文本，任何人改一下措辞（或改成更规范的说法），
+    `GQ_is_etf` 就静默返回 ``False`` → **ETF 复权全线停摆，且不报任何错**。
+    现在类型是权威的，描述串回归纯展示。
+
+    :param code: 6 位代码，如 ``'510300'``；带交易所标记也容忍
+        （``'510300.XSHG'`` / ``'sh.510300'``，由 ``is_stock_cn`` 归一）。
     :return: ``True`` 为 ETF；任何异常或未知代码返回 ``False``（保守：不当作 ETF）。
     """
     try:
-        return str(is_stock_cn(str(code))[3]).endswith('ETF基金')
+        return is_stock_cn(str(code))[1] == MARKET_TYPE.ETF_CN
     except Exception:  # noqa: BLE001
         return False
 

@@ -152,12 +152,16 @@ def dataloader_persistence_daily_check(
                (market_type == MARKET_TYPE.STOCK_CN):
                 persistence_features = data_baseline.data.join(stock_metadata_pd[stock_metadata_pd.columns.difference(data_baseline.data.columns)])
             elif (stock_metadata_pd is not None) and \
-                 (market_type == MARKET_TYPE.INDEX_CN):
+                    (market_type == MARKET_TYPE.INDEX_CN or
+                     market_type == MARKET_TYPE.ETF_CN):
+                # ETF 2026-09 起是独立类型（原为 INDEX_CN），这里与指数同支
+                # 以保住它改动前的行为 —— 那时它走的就是这一支。
                 persistence_features = data_baseline.data.join(stock_metadata_pd[stock_metadata_pd.columns.difference(data_baseline.data.columns)])
             else:
                 if (market_type == MARKET_TYPE.STOCK_CN):
                     print(u'\nCode:{} missing stock_metadata: stock_reality_feat_day'.format(symbol, ))
-                elif (market_type == MARKET_TYPE.INDEX_CN):
+                elif (market_type == MARKET_TYPE.INDEX_CN) or \
+                        (market_type == MARKET_TYPE.ETF_CN):
                     print(u'\nCode:{} missing index_metadata: index_reality_feat_day'.format(symbol, ))
         except Exception as e:
             print('code:{}'.format(symbol), e, '\n')

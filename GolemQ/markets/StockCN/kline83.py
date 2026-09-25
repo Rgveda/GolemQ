@@ -14,9 +14,15 @@
 
     golemq_stock_cn
       ├─ stock_1min | stock_5min | stock_15min | stock_30min | stock_60min
-      └─ index_1min | index_5min | index_15min | index_30min | index_60min
+      ├─ index_1min | index_5min | index_15min | index_30min | index_60min
+      └─ etf_1min   | etf_5min   | etf_15min   | etf_30min   | etf_60min
 
-集合名由 ``f'{market}_{frequency}'`` 推导，``market ∈ {'stock','index'}``。
+集合名由 ``f'{market}_{frequency}'`` 推导，``market ∈ {'stock','index','etf'}``
+（由 :func:`market_prefix` 判定，见其 docstring 与 doctest）。
+
+⚠️ ``etf_*`` 是 2026-09 从 ``index_*`` **拆出来**的 —— 此前 ETF 与真指数共用
+``index_*``（老树 `save_qa.py` 刻意「与 QUANTAXIS 一致」）。``etf_*`` 与
+``index_*`` 字段同形。
 时序规格 ``{timeField:'ts', metaField:'code', granularity:'minutes'|'hours'}``。
 
 字段：``ts``(UTC Date) ``code`` ``datetime`` ``date`` ``date_stamp``(int32)
@@ -154,15 +160,34 @@ def normalize_frequency(frequence):
 
 
 def market_prefix(codelist, market_type=None):
-    """决定读 ``stock_*`` 还是 ``index_*``。
+    """决定读哪一族集合 —— ``'stock'`` / ``'index'`` / ``'etf'``。
 
     代码本身有歧义（``000001`` 既可能是上证指数也可能是平安银行），故复用
     既有的 :func:`is_stock_cn` 分类器，而不是自己猜。``market_type`` 显式传入
     时以传入值为准。
 
-    公开这个函数是因为**装 K 线数据的容器类型也由它决定**：ETF 与指数共用
-    ``index_*`` 集合，因此拿到的是指数类容器（没有 ``to_qfq``，复权归
-    ``etf_fq.py``）。`fetch.py` 的 ``GQ_fetch_stock_min_adv`` 据此选容器类。
+    公开这个函数是因为**装 K 线数据的容器类型也由它决定**：`fetch.py` 的
+    ``GQ_fetch_stock_min_adv`` 据此选容器类。
+
+    ⚠️ **ETF 2026-09 起独立成 ``etf_*``**。此前 ETF 被归为 ``INDEX_CN``，
+    与真指数**共用** ``index_*``（老树 `save_qa.py` 刻意「与 QUANTAXIS 一致」），
+    因此拿到的是指数类容器（没有 ``to_qfq``）。现在 ETF 有自己的集合与容器。
+
+    ⚠️ **``FUND_CN`` 仍走 ``index_*``** —— 那是 ``50x`` 封基/LOF/分级，
+    本次**有意不动**（它们的行情本就不在 ``etf_*``）。别顺手"统一"进来。
+
+    >>> market_prefix('600519')                    # 股票
+    'stock'
+    >>> market_prefix('200037')                    # 深市B股，曾被判成 ETF
+    'stock'
+    >>> market_prefix('510300')                    # ETF
+    'etf'
+    >>> market_prefix('399001')                    # 真指数
+    'index'
+    >>> market_prefix('150001')                    # 分级基金 —— 基金，不是 ETF
+    'index'
+    >>> market_prefix('000001', market_type=MARKET_TYPE.ETF_CN)   # 显式传入优先
+    'etf'
     """
     if market_type is None:
         probe = codelist[0] if isinstance(codelist, (list, tuple, set)) else codelist
@@ -170,8 +195,12 @@ def market_prefix(codelist, market_type=None):
             _, market_type, _, _ = is_stock_cn(probe)
         except Exception:
             market_type = MARKET_TYPE.STOCK_CN
-    # ETF 基金在迁移时与指数共用 index_* 集合
-    return 'index' if market_type in (MARKET_TYPE.INDEX_CN, MARKET_TYPE.FUND_CN) else 'stock'
+    if market_type == MARKET_TYPE.ETF_CN:
+        return 'etf'
+    # 真指数与基金（50x 封基/LOF/分级）仍共用 index_* —— 见上方的 ⚠️
+    if market_type in (MARKET_TYPE.INDEX_CN, MARKET_TYPE.FUND_CN):
+        return 'index'
+    return 'stock'
 
 
 # 旧名，模块内部仍在用；新代码用 `market_prefix`。

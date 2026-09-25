@@ -134,7 +134,15 @@ each_day = sorted(kline.index.get_level_values(level=0).unique())
 
 ### 4.6 市场路由与已知局限
 
-沿用既有 `is_stock_cn()` 分类器（`00xxxx` 这类代码光看数字有歧义），映射 `INDEX_CN`/`FUND_CN` → `index_*`，其余 → `stock_*`。
+沿用既有 `is_stock_cn()` 分类器（`00xxxx` 这类代码光看数字有歧义），由 `kline83.market_prefix()` 映射：
+
+| `market_type` | 集合族 |
+|:--|:--|
+| `ETF_CN` | **`etf_*`**（2026-09 起独立） |
+| `INDEX_CN`、`FUND_CN` | `index_*` （`FUND_CN` = 50x 封基/LOF/分级，**有意**与指数同族） |
+| 其余 | `stock_*` |
+
+**⚠️ 2026-09 变更**：ETF 此前与真指数**共用** `index_*`（老树 `save_qa.py` 刻意「与 QUANTAXIS 一致」），现已拆成独立的 `etf_*` 与 `MARKET_TYPE.ETF_CN`。同批修正的还有**深市号段误判** —— `150`(分级子份额) / `16x`(LOF) / `180`(REITs) / `20`(B股) 曾被一并判成「深交所ETF基金」。核实来源与完整对照见 `MIGRATION_STATUS.md`。
 
 **⚠️ 已知局限**：指数集合里的 `code` 是 `'000001'`（上证指数），而 `is_stock_cn('000001')` 判为 **stock**（平安银行）。按代码路由会**返回平安银行的行情冒充上证指数** —— 比返回空更危险。调用方若已知市场类型，**应显式传 `market_type=`**。
 

@@ -33,3 +33,8 @@ env/
 .DS_Store
 Thumbs.db
 *.swp
+
+# `is_stock_cn` 全量行为基线的转储产物（12MB）。可再生：
+#   python tools/dump_is_stock_cn_baseline.py           # 写基线
+#   python tools/dump_is_stock_cn_baseline.py --diff    # 与基线比对
+tools/_is_stock_cn_baseline.tsv

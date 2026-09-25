@@ -38,16 +38,23 @@ from .fetch import GQ_fetch_stock_min_adv
 def _apply_fq(data, code, fq):
     """按标的种类选复权方式。三种情形，**互斥且都有明确归属**：
 
-    - **ETF** → `GQ_apply_etf_qfq`（因子表 `etf_adj`）。ETF 与真指数共用
-      `index_*` 集合，拿到的容器**没有** `to_qfq` —— QUANTAXIS 的 Index
-      datastruct 本就没有（见 `datastruct.py`），ETF 复权一直是
-      `etf_fq.py` 单独负责的。
+    - **ETF** → `GQ_apply_etf_qfq`（因子表 `etf_adj`）。
     - **股票** → 容器的 `.to_qfq()`（因子表 `stock_adj`）。
     - **真指数** → 不复权，原样返回。真指数在 `etf_adj` 里没有行，
       `GQ_apply_etf_qfq` 也不会为它查库。
 
     判据用 `hasattr(..., 'to_qfq')` 而不是 `isinstance`：问的是「这个容器提不提供
-    股票式复权」，而 `to_qfq` 只挂在 Stock 类上正是 `datastruct.py` 刻意的层级设计。
+    复权」，而 `to_qfq` 挂在**哪些类**上是 `datastruct.py` 刻意的层级设计。
+
+    ⚠️ **ETF 分支现在是「双保险」，不是唯一路径。** 2026-09 ETF 独立成
+    `etf_*` 与 `GQ_DataStruct_ETF_day/_min` 之后，**ETF 容器自己也带
+    `to_qfq()`**（走 `etf_adj`），所以即使 `GQ_is_etf` 判错，下面的
+    `hasattr` 分支也会把 ETF 送进正确的因子表。
+
+    这在改动前**不成立**，那种情况曾经是个静默失败：ETF 与真指数共用
+    `index_*`、容器没有 `to_qfq`，一旦 `GQ_is_etf` 返回 `False`（当时它嗅探
+    描述串，措辞一改就失效），这里会**直接返回不复权数据，全程不报错**。
+    保留显式的 ETF 分支是因为它**显式传 `codelist`**，在帧里取不到 code 时更稳。
     """
     if not fq:
         return data
