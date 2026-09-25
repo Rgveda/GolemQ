@@ -95,6 +95,43 @@ core/constants.py:34-37  _StubMeta.__getattr__ 伪造字段名（静默，不抛
 2. 该模块的 `DATABASE_QA.etf_adj` 与 8.3 的 `golemq_stock_cn.etf_adj`
    **逐行相同**（397,499 行 / 294 只），故取 8.3。
 
+### ETF 独立成 `ETF_CN` / `etf_*`（2026-09-25，提交 `1cc47e2`）
+
+**性质**：**既有设计缺陷的修正**，不是重构回归 —— 但它把一条**老约定**推翻了，
+所以记为独立条目。
+
+**老约定**：ETF 归 `MARKET_TYPE.INDEX_CN`，行情与真指数**共用** `index_*`。
+依据是老树 `GolemQ_old/gateway/xtquant/save_qa.py:12,279,319` 的「与 QUANTAXIS 一致，
+ETF 也进 `index_day`/`index_min`」；`symbol.py` 两处 ETF 分支至今留着
+`# QA 把ETF归类为INDX_CN` 的注释。`MARKET_TYPE.ETF_CN` 常量**早已存在
+（`core/constants.py:79`）却全树无人使用**。
+
+**代价**：ETF 拿不到 `to_qfq()`（消费方得绕开类型系统单独调 `etf_fq`）；
+`GQ_is_etf` 只能**嗅探描述串** `'ETF基金'` —— 措辞一改，ETF 复权全线静默停摆。
+
+**新约定**：ETF 是一等类型 —— `is_stock_cn()` 返回 `ETF_CN`，行情走 `etf_*`，
+容器 `GQ_DataStruct_ETF_day/_min` 带 `to_qfq()`（走 `etf_adj`），接口与股票一致。
+`FUND_CN`（50x 封基/LOF/分级）**有意不动**，仍走 `index_*`。
+
+**同批修正的号段误判**（联网核实交易所规则，见 `PITFALLS.md` P12）：
+深市 `150`/`16x`/`180`/`20` 曾被一并判成「深交所ETF基金」（5 段里错 4 段）；
+`82`/`820` 是**优先股**却被写成「北证A股」；`158` ETF 段缺失；
+`200`（B股）分支被 `20` 抢先命中而**从未生效**。
+
+**验证**：`is_stock_cn` 是纯函数，故扫**全部 100 万六位代码**与旧实现逐条比对
+（`tools/dump_is_stock_cn_baseline.py`，9 秒）→ 92,000 条差异 / 7 类，逐类有意，
+**零意外改动**。测试 65 → 93，失败项与基线逐项相同。
+
+**⛔ 数据侧未做**（MongoDB 未起）：`index_*` → `etf_*` 的实际拆分。
+**已定方案**：可逆拆分，复用 `maintenance._move`（它已封装「先写目标后删源 +
+`(code,ts)` 唯一索引），只记「搬了哪些 code」而不做全量归档。
+**⚠️ 拆分前必须先跑一致性核对**：`is_stock_cn()==ETF_CN` 的代码集 ⟷ `etf_list`
+（1,674 只）双向比对，差异逐条定性后才动数据。
+
+**两处连带的**路由**变更**（分类修正的必然后果，需查库确认有无数据）：
+- `200`–`209`：`index_*` → `stock_*`（所有者定为「先查库再定」）
+- `161`–`169` LOF、`184` 封基：`stock_*` → `index_*`（原本 `market_type=None`）
+
 ### 3.8 字段名漂移明细
 
 | 常量 | 老值（数据实际存储名）| 新解析结果 | 位置 |
