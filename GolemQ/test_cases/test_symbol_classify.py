@@ -143,6 +143,43 @@ class TestExchangeTaggedForms(unittest.TestCase):
                 self.assertEqual(ex, exchange, f'{code} 的交易所')
                 self.assertEqual(mt, market_type, f'{code} 的 market_type')
 
+    def test_owner_named_forms(self):
+        """所有者点名的四种写法 —— **点号/紧贴 × 前缀/后缀**，四种都要认。
+
+        这些写法在树里都有出处：`qmt_source.py:99` 解析 `'sh.600000'`，
+        QUANTAXIS 口径用 `'600519.XSHG'`，QMT 用 `'600000.SH'`。
+        """
+        cases = [
+            ('XSHE.004000', 'SZ'), ('004000.XSHE', 'SZ'),   # 点号：前缀式 / 后缀式
+            ('sh600157', 'SH'), ('600157.sh', 'SH'),        # 紧贴 + 小写后缀
+        ]
+        for code, exchange in cases:
+            with self.subTest(code=code):
+                ok, mt, ex, desc = is_stock_cn(code)
+                self.assertTrue(ok, f'{code} 应判为 A 股')
+                self.assertEqual(ex, exchange, f'{code} 的交易所')
+
+        # 有明确号段的两个还要能定出品种（不只是交易所）
+        self.assertEqual(is_stock_cn('sh600157')[1], MARKET_TYPE.STOCK_CN)
+        self.assertEqual(is_stock_cn('600157.sh')[1], MARKET_TYPE.STOCK_CN)
+        # `004xxx` 是深市**未分配段** —— 交易所认得、品种没有。这不是缺陷：
+        # 断言它**不返回 None**（老实现在这里返回 None，调用方解包即 TypeError）。
+        self.assertIsNotNone(is_stock_cn('XSHE.004000'))
+        self.assertIsNone(is_stock_cn('XSHE.004000')[1])
+
+    def test_dotted_matrix(self):
+        """点号写法的完整矩阵 —— 前后缀 × 三个交易所，大小写都收。"""
+        for code, exchange in [
+            ('XSHG.600157', 'SH'), ('600157.XSHG', 'SH'),
+            ('sh.600157', 'SH'), ('600157.SH', 'SH'), ('600157.sh', 'SH'),
+            ('SZ.000001', 'SZ'), ('000001.SZ', 'SZ'), ('sz.000001', 'SZ'),
+            ('bj.430489', 'BJ'), ('430489.BJ', 'BJ'), ('430489.bj', 'BJ'),
+        ]:
+            with self.subTest(code=code):
+                ok, _mt, ex, _desc = is_stock_cn(code)
+                self.assertTrue(ok, code)
+                self.assertEqual(ex, exchange, code)
+
     def test_bj_prefix_no_longer_false(self):
         """`bj430489` 曾被判成"不是 A 股"（返回 False），并连带丢掉交易所。"""
         ok, mt, ex, _ = is_stock_cn('bj430489')
