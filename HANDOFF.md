@@ -293,11 +293,25 @@ stock_5min    151,918    stock_30min    22,166    stock_day   17,701
 **仍读 `QAREALTIME.realtime_YYYY-MM-DD`**，而 L1 现在写 8.3 的新库 ——
 **写进去的读不出来**。要么把读取器一起迁到新库（按 `ts` 区间查），要么改回旧存储。
 
-#### ⚠️ 心跳互斥的健壮性问题
+#### ⚠️ 心跳互斥的健壮性问题 —— **2026-09-25 更正：先前记的成因不成立**
 
-被 kill 的订阅器会留下 `status='running'` 而 `last_checkin=None` 的记录，
-**该记录永不超时、永久占锁**，于是重启时报「只能运行一个实例」。
-`--sub l1_tencent` 现在就被这样一条记录挡着（我没擅自清，怕你另有 L1 在跑）。
+> **先前记的是**：「被 kill 的订阅器会留下 `status='running'` 而 `last_checkin=None`
+> 的记录，该记录永不超时、永久占锁」。**复核后该机制不成立**，勿据此排查。
+
+复核证据（`supervisor/heartbeat.py`）：
+
+- 字段名是 **`last_checkin_timestamp`**（不是 `last_checkin`；见 `:52,101,148,237,467`）
+- 写入侧（`start_module` `:101`、`checkin` `:148`）**永远写 int，从不写 `None`** → 前提不成立
+- `mutex()` 用 `.get('last_checkin_timestamp', 0)`（`:467`）→ **键缺失 = 0 = 视为已超时**；
+  `_check_timeouts()` 的 `$lt` 查询（`:237`）同样会命中 null
+
+**真正的锁缺陷是非原子 check-then-act**（记在 `MIGRATION_STATUS.md` §六）：
+唯一索引建在 `(module_name, instance_id)`，而 `instance_id` 是 **per-process sha256**
+（`:442,447`）→ 两个进程各写各的 id，**索引永不冲突，永远拦不住第二个进程**。
+
+⚠️ **若真观察到「一条记录挡住重启」，成因不在这条机制上** —— 更可能是那个竞态，
+或 `last_checkin_timestamp` 为 null 时 `mutex()` 抛 `TypeError`（`:471` 的 `None + int`）。
+**要确认必须连库看那条记录的实际字段**；本次无 DB，标为**待复现**。
 
 ### ✅ `--save-x` / `--save-qmt`（2026-09-21）
 
@@ -421,6 +435,20 @@ QUANTAXIS 的 `.query('volume>1')` 把三者混为一谈，等于**每天都在�
 | 5 | **小时级 metadata 的归属** | 读函数按 `time_stamp` 过滤、写目标集合不存在 —— 先定它住哪 |
 | 6 | **MongoDB 起一下**（当前 27017 超时、无服务、默认路径无 `mongod.exe`）| **阻塞 E 的数据拆分**与三项验证（数值基准、拆分后对照、端到端复权一次）。代码半边已完成 |
 | 7 | **E 的两处路由变更要不要随之搬数据** | `200–209`（`index_*`→`stock_*`）、`161–169`/`184`（`stock_*`→`index_*`）。查库定；若无数据则纯属分类修正 |
+
+### 📌 两处「低垂果实」（不依赖 DB，真实现已在同树，只是没接上）
+
+2026-09-25 全量复核 `MIGRATION_STATUS.md` 时挖出来的，**成本极低、收益明确**：
+
+1. **`core/base.py::GQ_util_get_last_day` 接到真实现** —— 真实现早在
+   `markets/StockCN/date_utils.py:52`（用 `TRADE_DATE_SSE` 交易日历 + 09:30 切点），
+   而 `core/base.py` 那份是 20 行 stub、**只判周末**。抽 8 个日期实测 **8/8 行为不同**。
+   改 5 处 import 即可：`services/align.py:50,93`、`services/iwencai.py:31`、
+   `persistence/_daily.py:55`、`_stock.py:56`。影响 checkpoint `FrozenExpired`。
+2. **`services/align.py` 拆到 300 行以下** —— 492 行，**全树唯一**破 `services/` 300 行规则的文件
+   （其余最大 295）。纯机械。
+
+完整重排见 `MIGRATION_STATUS.md` 第十节。
 
 ---
 
