@@ -47,7 +47,7 @@ from GolemQ.core.constants import (
     AKA,
     FIELD as FLD,
 )
-from GolemQ.core.base import (
+from GolemQ.markets.StockCN.date_utils import (
     GQ_util_get_last_day,
 )
 from GolemQ.markets.StockCN.base import (
@@ -90,7 +90,7 @@ from GolemQ.markets.StockCN.date_utils import (
 from GolemQ.core.preprocessing import (
     GQ_util_to_json_from_pandas,
 )
-from GolemQ.core.base import (
+from GolemQ.markets.StockCN.date_utils import (
     GQ_util_get_last_day,
 )
 

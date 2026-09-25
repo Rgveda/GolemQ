@@ -28,7 +28,7 @@
 
 
 import pandas as pd
-from GolemQ.core.base import (
+from GolemQ.markets.StockCN.date_utils import (
     GQ_util_get_last_day,
 )
 
