@@ -2,9 +2,14 @@
 """回测引擎 —— **接口与输出契约已定，撮合实现待移植**。
 
 本模块当前是**骨架**：数据结构与契约完整，`BacktestEngine.run()` 尚未实现。
-参照实现是 `GolemQ_old` 之外的 `OneWaveQuant/GolemQ/benchmark/zen_bt.py`（821 行），
+参照实现是 `OneWaveQuant/GolemQ/benchmark/zen_bt.py`（821 行），
 **不直接搬** —— 它长在 QUANTAXIS 树上，直接搬会把耦合一起带进来。先定接口，
 再照接口选择性移植，可同时完成「解耦」与「可复用」两件事。
+
+> 📍 **参照实现在哪**（2026-09-25 核实）：`OneWaveQuant` 在 **`Y:/代码/OneWaveQuant`**，
+> 不在 `Y:/Projects` 下，按后者找会找不到。且树内 **`GolemQ_old/benchmark/zen_bt.py`
+> 与它逐字节相同**（md5 `148b63d79e8b19ae0deb767cbd785988`，同为 821 行）——
+> 所以不依赖另一个仓库也能读到参照实现。
 
 引擎负责什么（策略**不**负责）
 ==============================
