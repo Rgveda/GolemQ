@@ -436,17 +436,28 @@ QUANTAXIS 的 `.query('volume>1')` 把三者混为一谈，等于**每天都在�
 | 6 | **MongoDB 起一下**（当前 27017 超时、无服务、默认路径无 `mongod.exe`）| **阻塞 E 的数据拆分**与三项验证（数值基准、拆分后对照、端到端复权一次）。代码半边已完成 |
 | 7 | **E 的两处路由变更要不要随之搬数据** | `200–209`（`index_*`→`stock_*`）、`161–169`/`184`（`stock_*`→`index_*`）。查库定；若无数据则纯属分类修正 |
 
-### 📌 两处「低垂果实」（不依赖 DB，真实现已在同树，只是没接上）
+### ✅ 两处「低垂果实」**已做掉**（2026-09-25）
 
-2026-09-25 全量复核 `MIGRATION_STATUS.md` 时挖出来的，**成本极低、收益明确**：
+全量复核 `MIGRATION_STATUS.md` 时挖出来的，**真实现已在同树、只是没接上**：
 
-1. **`core/base.py::GQ_util_get_last_day` 接到真实现** —— 真实现早在
-   `markets/StockCN/date_utils.py:52`（用 `TRADE_DATE_SSE` 交易日历 + 09:30 切点），
-   而 `core/base.py` 那份是 20 行 stub、**只判周末**。抽 8 个日期实测 **8/8 行为不同**。
-   改 5 处 import 即可：`services/align.py:50,93`、`services/iwencai.py:31`、
-   `persistence/_daily.py:55`、`_stock.py:56`。影响 checkpoint `FrozenExpired`。
-2. **`services/align.py` 拆到 300 行以下** —— 492 行，**全树唯一**破 `services/` 300 行规则的文件
-   （其余最大 295）。纯机械。
+1. **`GQ_util_get_last_day` 接到真实现** —— 提交 `e798362`。`core/base.py` 那份是
+   **只判周末**的阉割版（真实现早在 `markets/StockCN/date_utils.py:52`，用
+   `TRADE_DATE_SSE` + 09:30 切点）。6 处 import 已接过去，stub 从 `core/base.py` **删除**。
+   **实测影响：2026 全年 488/730 = 67% 的调用拿到错的日子**（不只节假日 —— 它连
+   09:30 切点都没实现）。验证：与老算法 135 组比对 **0 处不一致**；全量测试逐项相同。
+2. **`services/align.py`（492 行）拆成 `align/` 包** —— 提交 `b0042f7`。
+   `_checkpoint.py` 276 + `_missing.py` 230 + `__init__.py` 56。照 `services/features/`
+   先例并**同时删掉同名 `align.py`**（那个先例当年就栽在没删同名模块上）。
+   **`services/` 现已全树无 >300 行文件。**
+   拆分可证伪：逐函数 `getsource` 去空白比对 → 5 个逐字相同、1 个 AST 相同。
+   搬运时发现并**修掉**一处：`align.py:195` 的 `sys.exc_info()` 用的 `sys` 只在
+   一个永不执行的 `except` 里 import → **错误处理路径自己抛 NameError**。
+   搬运时发现但**未修**一处：`calc_stock_hourly_kline_align` 必然 `NameError`
+   （返回的 `stock_hourly_feats` 全树从未定义，零调用者）—— 删/修都该由所有者定。
+
+**新记一条同源遗留**：`core/base.py::set_cpu_affinity_even` **也是阉割移植**
+（老树 `utils/base.py:190` 有 psutil 真实现，新树是 `pass`）→ **CPU 亲和性从未被设置过**。
+移植它**会真的改变运行时行为**，故未动，见 `MIGRATION_STATUS.md` 第十节第 4 条。
 
 完整重排见 `MIGRATION_STATUS.md` 第十节。
 

@@ -207,14 +207,15 @@ ETF 也进 `index_day`/`index_min`」；`symbol.py` 两处 ETF 分支至今留�
 | 问题 | 位置 | 后果 |
 |:--|:--|:--|
 | `analysis/timeseries.py` 被 stub（1399 → 18 行）🔶 **部分修** —— 文件现 112 行；`GQ_data_min_resample`（`:57-93`，含 A 股 9:30–11:30 / 13:00–15:00 分段重采样）与 `GQ_data_min_to_day`（`:96-111`）**已是真实现**；但 `Timeline_duration`（`:27` 返回 `pd.Series(0,…)`）与 `align_kline_timeline`（`:32` 返回 `True, kline_data, []`）**仍是 stub** | `analysis/timeseries.py`；被 `persistence/_concept.py:55` 调用 | 两个重采样器已恢复；对齐两个仍是空操作 |
-| `core/base.py` 被 stub（243 → 20 行）⛔ **未修**，**但真实现已存在于同树** —— `core/base.py` 仍 20 行，`GQ_util_get_last_day` **只判周末**（`weekday() >= 5`）。真实现早在 `markets/StockCN/date_utils.py:52`（用 `TRADE_DATE_SSE` 交易日历 + 09:30 切点）。**5 处调用方仍接 stub**：`services/align.py:50,93`、`services/iwencai.py:31`、`persistence/_daily.py:55`、`_stock.py:56`。实测 **8 个日期 8/8 行为不同** —— 不只是法定节假日，它**连 09:30 这个切点都完全没实现** | `core/base.py:10-15` | checkpoint `FrozenExpired` 仍拿到周末版结果。**这是 #6「真实现同树、接线接错」的翻版，成本最低、最该先修** |
+| `core/base.py` 被 stub（243 → 20 行）✅ **已修**（2026-09-25，提交 `e798362`）—— `core/base.py` 里的 `GQ_util_get_last_day` **只判周末**，真实现早在 `markets/StockCN/date_utils.py:52`。**6 处 import 已接过去**（`services/align.py`×2、`services/iwencai.py`、`persistence/_daily.py`、`_stock.py`），stub **已从 `core/base.py` 删除**（不转发 —— 它需要 A 股交易日历，属市场知识，放根层会让 `core/` 反向依赖 `markets/StockCN/`）。**实测影响：2026 全年逐日 488/730 = 67% 的调用拿到错的日子**（不只是节假日，它连 09:30 切点都没实现）。验证：与老算法 135 组比对 **0 处不一致** | `core/base.py` | checkpoint `FrozenExpired` 已拿到正确交易日 |
+| ⚠️ 同源遗留：`core/base.py::set_cpu_affinity_even` **仍是 `pass`** —— 老树 `utils/base.py:190` 有真实现（psutil 判物理/逻辑核 + 超线程，按平台设亲和性）→ **CPU 亲和性从未被设置过**。**未修**：移植会真的改变运行时行为（多进程管线的 CPU 绑定），属行为变更，需所有者点头。唯一调用方 `pipeline/base.py:50` | `core/base.py` | 潜伏；已记入该文件 docstring |
 | 越层直连 MongoDB ⛔ **未修**（复核确认，三处全在）| `core/settings.py:107`(`find_one`)、`:147`(`update_one`)；`cli/watchdog_manager.py` 整个文件仍直连（`find_one`:93,155、`insert_one`:109,169、`delete_one`:173,180、`create_index`:120,189、`find`:241,275）| 违反约定「所有 DB 操作必须在 `services/`」 |
 | CLI 层业务逻辑 ⛔ **未修**（三块仍在 CLI，行号已漂移）| `cli/__main__.py:388-433`（超时判定）、`:534-599`（`_send_timeout_alert`，表格构建在 `:562-589`）、`:258-279`（daemon 循环）| 违反约定「CLI 只做参数校验再委托 `pipeline/`」；无一处委托 `pipeline/` |
 | 估值源回退 xtquant → baostock ⛔ **未修，且比清单所述更彻底** —— 现在 `crawler.py` 里**完全没有 xtquant 估值路径**，直接只走 baostock（`:163`）；`adjustflag="3"`（**不复权**）在 `:230`。老树 `GolemQ_old/markets/StockCN/crawler.py:221` 用的是 `GQ_featch_stock_valuation_from_xtquant`（`dividend_type='front_ratio'` **前复权**）→ **xtquant 那条源被整个删了**，估值只剩不复权一个源 | `markets/StockCN/crawler.py:163,230` | 不复权 vs 前复权的语义差仍在 |
 | `resample_features_frequency` 被 stub ⛔ **未修**（复核确认）| `markets/StockCN/base.py:8-13` 仍是占位（docstring 自述 *placeholder — currently returns `features` unchanged*），老 `StockCN/base.py:39-94` 的多重采样未回迁 | 目前无人调用（潜伏）；一旦启用，15/30min 对齐会静默拿到未重采样数据 |
 | 测试覆盖损失 ⛔ **未修，两个子点均成立**（复核确认）| 老 `test_monitor.py`、`test_frequency_control.py` 在新树不存在；新 `test_heartbeat_fix.py` **既非 `unittest.TestCase`**（全文件只有一个普通函数 + `__main__`，discovery 发现不了）**又本身坏**（`:66` 调 `monitor._hash_instance_id`，而该方法只定义在 `HeartbeatModule`（`supervisor/heartbeat.py:447`），`HeartbeatMonitor` 没有 → `AttributeError`）| heartbeat / mutex / 限流 / watchdog 实质无测试 |
 | `--sub` 命令行面收窄 🔶 **部分修** —— 清单的「只有 `l1_tencent` 一个键」**已过时**：现有 `l1_tencent`（`markets/StockCN/__init__.py:124`）+ `l2_tencent`（`:127`）**两个键**。但整体收窄结论仍成立：老树 8 种模式（`sina_l1`/`tencent`/`xtquant`/`huobi_realtime`/`huobi`/`okex`/`binance`/`tencent_1min`）**其余 6 种全无注册点** | 另：`--save-qmt` **存在**（`cli/__main__.py:181-184`，分支 `:500-527`）；`--migrate-min83` **不存在**（全树 grep 零命中，现有的是 `--migrate-financial`）| 6 种订阅模式 CLI 不可达 |
-| 300 行文件规则被破 ✅ **已修** —— `services/features.py`（956 行巨石）**已删除**。全量复核 `services/` 下 **> 300 行的只剩 `services/align.py`（492 行）一个**；其余最大是 `persistence/_concept.py` 295、`_stock.py` 290 | `services/align.py` 492 行 | 违反 CLAUDE.md 规定（仅剩一处）|
+| 300 行文件规则被破 ✅ **已修，全树合规**（2026-09-25，提交 `b0042f7`）—— `services/features.py`（956 行巨石）已删；`services/align.py`（492 行）已拆成 `align/` 包（`_checkpoint.py` 276 + `_missing.py` 230 + `__init__.py` 56）。**全量复核：`services/` 下已无任何 > 300 行的文件**（其余最大 `persistence/_concept.py` 295）。拆分照 `services/features/` 先例并**同时删掉同名 `align.py`**（该先例当年就栽在没删同名模块上）| `services/align/` | 合规 |
 | `features.py` / `features/` 同名陷阱 ✅ **已修** —— `services/features/__init__.py` 已建，导出**全部 11 个**函数，`__all__` 含清单担心的三个（`GQ_update_hourly_metadata`/`GQ_remove_hourly_metadata`/`GQ_move_hourly_metadata`，来自 `_hourly_crud.py`）；巨石 `features.py` 已删，无残留 | `services/features/`（8 个子模块）| **死包陷阱已解除** |
 
 ---
@@ -315,12 +316,13 @@ ETF 也进 `index_day`/`index_min`」；`symbol.py` 两处 ETF 分支至今留�
 | ~~1~~ | ~~修 kline 接线错误（#6）~~ | ✅ **已完成** |
 | ~~2~~ | ~~`_StubMeta` 改抛 `AttributeError`（#3）~~ | ✅ **已完成** |
 | ~~3~~ | ~~字段名回滚或补迁移（#8）~~ | ✅ **已完成**（11 个常量实测全部等于老值）|
-| **1** | **`core/base.py::GQ_util_get_last_day` 接到真实现**（MEDIUM）| **新成本最低、收益最大**：真实现已在 `markets/StockCN/date_utils.py:52`，改 5 处 import 即可。实测 8/8 日期行为不同，且**连 09:30 切点都没实现** —— 影响 checkpoint `FrozenExpired` |
-| **2** | **`GolemQ/features/` 的 stub 接真实现**（#5）| 同一类接线错误，但**真实现要回迁**（老 `empirical.py` 4614 行 / `reviews.py` 3006 行），成本高于上一条。它现在是「完整性监控恒报缺失」的**主因** |
-| **3** | **K线新鲜度告警**（#10）| 老树 `supervisor/data_freshness.py` 147 行整体可回迁；**数据源静默断流是无人察觉的**，收益高 |
-| **4** | **benchmark 三个子类**（#4）| 目标模块根本不存在，要连 `models/mainstream.py` 等一起补 —— 成本高于前三条 |
-| **5** | **`services/align.py` 拆到 300 行以下**（MEDIUM）| 纯机械，但**唯一剩下的破规文件**，做完这条「300 行规则」就全树成立 |
-| **6** | **迁移入口**（#1）与 **QUANTAXIS 运行时绑定**（#2）| 架构级决定，牵涉 CLAUDE.md 与 Project.md 的冲突，**需要先定方向**（#2 的 import 已剥到 1 处，只差把 `DATABASE` 改由 `GQ_Setting` 绑 —— 但那是行为变更）|
+| ~~**1**~~ | ~~`core/base.py::GQ_util_get_last_day` 接到真实现~~ | ✅ **已完成**（`e798362`）|
+| ~~**5**~~ | ~~`services/align.py` 拆到 300 行以下~~ | ✅ **已完成**（`b0042f7`）—— `services/` 现已全树合规 |
+| **1** | **`GolemQ/features/` 的 stub 接真实现**（#5）| 与上面那条同一类接线错误，但**真实现要回迁**（老 `empirical.py` 4614 行 / `reviews.py` 3006 行），成本高一些。它现在是「完整性监控恒报缺失」的**主因** |
+| **2** | **K线新鲜度告警**（#10）| 老树 `supervisor/data_freshness.py` 147 行整体可回迁；**数据源静默断流是无人察觉的**，收益高 |
+| **3** | **benchmark 三个子类**（#4）| 目标模块根本不存在，要连 `models/mainstream.py` 等一起补 —— 成本更高 |
+| **4** | **`core/base.py::set_cpu_affinity_even`**（新发现）| 同一类阉割移植，老树真实现在 `utils/base.py:190`。**属行为变更**（多进程管线的 CPU 绑定），需先确认要不要 |
+| **5** | **迁移入口**（#1）与 **QUANTAXIS 运行时绑定**（#2）| 架构级决定，牵涉 CLAUDE.md 与 Project.md 的冲突，**需要先定方向**（#2 的 import 已剥到 1 处，只差把 `DATABASE` 改由 `GQ_Setting` 绑 —— 但那是行为变更）|
 
 **不排在修复序列里的（本节复核确认它们不是重构回归，各有专门记载）**：
 `timedelta(hours=8.3)`、`HeartbeatModule.mutex()` 非原子、`min/max_interval_minutes` 命名反、
