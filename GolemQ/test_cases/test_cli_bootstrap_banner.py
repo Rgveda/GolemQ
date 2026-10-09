@@ -330,11 +330,13 @@ class TestBannerTwoColumns(unittest.TestCase):
     def test_column_split_is_semantic(self):
         upper = bootstrap.SELF_CHECK_ROWS[0][2]
         lower = bootstrap.SELF_CHECK_ROWS[1][2]
-        for node in ('操作系统', 'python', '依赖包', '线程环境', 'CPU 架构', 'CUDA'):
-            self.assertIn(node, upper, '机器/解释器该在上栏')
-        for node in ('时区', '交易日历', 'tdxidata', 'tushare', 'iwencai',
+        # 上栏「本机」：含 **时区**（本机属性，跟着机器走 —— 用户 2026-10-10 调的换行）
+        for node in ('操作系统', 'python', '依赖包', '线程环境', 'CPU 架构', 'CUDA', '时区'):
+            self.assertIn(node, upper, '本机项该在上栏')
+        # 下栏「外部依赖」：日历 + 数据源 + 通知渠道
+        for node in ('交易日历', 'tdxidata', 'tushare', 'iwencai',
                      'serverchan', '讯投QMT'):
-            self.assertIn(node, lower, '环境/数据源该在下栏')
+            self.assertIn(node, lower, '外部依赖该在下栏')
 
     def test_second_row_shares_the_phase_name(self):
         """两行的阶段名相同 ⇒ 第二行**留白对齐**（渲染成一块，不是两块）。"""

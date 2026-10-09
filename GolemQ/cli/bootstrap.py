@@ -111,15 +111,20 @@ CALENDAR_RENEW_AFTER = (11, 10)
 #: xtquant**（那个包一 import 就打印一行），所以探测很便宜。
 OPTIONAL_SOURCES = {'tdxidata': 'tdxaidata', 'tushare': 'tushare', '讯投QMT': 'qmt'}
 
-#: 自检 banner 的表头 —— **两栏**（用户 2026-10-10 定）。
+#: 自检 banner 的表头 —— **两栏**（用户 2026-10-10 定，换行位置同日调整）。
 #:
-#: 11 个节点挤一行太长（2026-10-09 那版是 7 个），故按**语义**分两栏：
-#: 上栏是「机器 / 解释器」，下栏是「环境 / 数据源」。
+#: 13 个节点挤一行太长（2026-10-09 那版是 7 个），故按**语义**折成两栏：
+#: **上栏 = 「本机」**（操作系统/python/依赖包/线程环境/CPU 架构/CUDA/**时区** ——
+#: 时区是**本机属性**，跟着机器走），**下栏 = 「外部依赖」**
+#: （交易日历/txidata/tushare/iwencai/serverchan/讯投QMT）。
 #: 阶段名只在第一行打（`render_pipeline_banner` 对连续同名阶段的行为），
 #: 第二行留白对齐 —— 看起来仍是**一块**，只是折了两行。
+#:
+#: ⚠️ **两栏拼起来必须逐项等于 `SELF_CHECK_NODES`**（顺序即语义）—— 有用例钉着。
 SELF_CHECK_ROWS = (
-    ('环境自检', None, ['操作系统', 'python', '依赖包', '线程环境', 'CPU 架构', 'CUDA']),
-    ('环境自检', None, ['时区', '交易日历', 'tdxidata', 'tushare', 'iwencai',
+    ('环境自检', None, ['操作系统', 'python', '依赖包', '线程环境', 'CPU 架构', 'CUDA',
+                        '时区']),
+    ('环境自检', None, ['交易日历', 'tdxidata', 'tushare', 'iwencai',
                         'serverchan', '讯投QMT']),
 )
 
