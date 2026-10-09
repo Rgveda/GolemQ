@@ -291,9 +291,12 @@ def get_kline_price_min(codelist, start=None, market_type=None, frequency='60min
                         verbose=True, end=None, realtime=True):
     """分钟线读取（8.3 时序）。返回 ``(KlineResult, codename)``。
 
-    ``realtime=True`` 时**不做实时补数** —— 迁移数据已包含当日，实时拼接属另行
-    实现，此处保留参数只为与 ``markets/StockCN/fetch.py:721`` 的同名函数签名
-    兼容，使 service 层可以平滑替换。
+    ``realtime=True``（**默认**）→ **带 REALTIME**：读到的历史再与
+    ``realtime_YYYY-MM-DD`` 的 L1 tick 合成（见 :func:`_merge_realtime`）。
+
+    ⚠️ **2026-10-09 改**：此前这个形参是**空转**的（旧 docstring 写「不做实时补数，
+    保留参数只为签名兼容」）—— 用户要做分析、明确要「带 REALTIME」，故接通。
+    不需要补数时**代价只有一次 `list_collection_names()`**（~1ms），见 `_merge_realtime` 的两道门。
 
     无数据时返回**空** ``KlineResult``（详见模块 docstring 的契约说明）。
     """
@@ -308,11 +311,16 @@ def get_kline_price_min(codelist, start=None, market_type=None, frequency='60min
     codename = codelist[0] if isinstance(codelist, (list, tuple, set)) else codelist
     result = KlineResult(_to_kline_frame(df))
     _apply_adjustments(result, market, codelist, verbose=verbose)
+    if realtime:
+        # **带 REALTIME**（用户 2026-10-09：「我要做分析了，取行情，8.3库，带 REALTIME」）。
+        # ⚠️ 本函数那个 `realtime=True` **从"空转"变成"真的合并"** —— 但不需要补数时
+        # 代价只有一次 `list_collection_names()`（见 :func:`_merge_realtime` 的两道门）。
+        _merge_realtime(result, codelist, frequency, verbose=verbose)
     return result, codename
 
 
 def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
-                       end=None, realtime=None):
+                       end=None, realtime=True):
     """日线读取（8.3 时序）。返回 ``(KlineResult | None, codename)``。
 
     ⚠️ **先前这里写着「尚未就绪 / 日线未迁移」—— 那条已作废**（2026-10-08 实测：
@@ -322,6 +330,15 @@ def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
     集合名按 ``f'{market}_{frequency}'`` 推导、``frequency='day'``。
     无数据时返回 ``None`` 并打印明确日志，不静默返回空表 —— 后者是重演本模块
     所修复的那条静默失败链。
+
+    ``realtime=True``（**默认**）→ **带 REALTIME**：与 ``realtime_YYYY-MM-DD``
+    的 L1 tick 合成（见 :func:`_merge_realtime`）。
+
+    ⚠️ **默认值 2026-10-09 由 `None` 改成 `True`**：`base_market.py` 的抽象声明与
+    两个门面（`markets/StockCN/__init__.py`、`fetch/kline.py`）**一直写的就是
+    `True`**，而实现写 `None` —— 以前是空转所以看不出来，接通后必须对齐。
+    改它是**行为保持**的：门面**显式传** `realtime=realtime`，所以现有调用方本来就
+    一直在传 `True`。
     """
     market = _market_prefix(codelist, market_type)
     frequency = 'day'
@@ -341,7 +358,60 @@ def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
         return None, codename
     result = KlineResult(_to_kline_frame(df))
     _apply_adjustments(result, market, codelist, verbose=verbose)
+    if realtime:
+        _merge_realtime(result, codelist, 'day', verbose=verbose)
     return result, codename
+
+
+def _merge_realtime(result, codelist, frequency, verbose=False):
+    """**带 REALTIME**：把 ``realtime_YYYY-MM-DD`` 的 L1 tick 合成进结果（就地改 `result`）。
+
+    这是「历史 + 盘中」那条路的**读侧入口**（写侧是 `--sub`；合成是 `realtime.py`
+    的两个 `GQ_fetch_*_realtime_adv`）。此前 `get_kline_price_min` / `get_kline_price_v3`
+    的 `realtime` 形参是**空转**的（前一版的 docstring 明说「不做实时补数」）。
+
+    ⚠️ **两道门，都是为了「不需要补数时与不带 REALTIME 同速」**（用户 2026-10-09 要求）：
+
+    1. **集合不存在就直接返回** —— `realtime_ts_collection` 是
+       `create_collection` 包了 `try`，**读它会把不存在的集合建出来**（读路径的
+       写副作用）；一次 `list_collection_names()`（~1ms）就能挡掉，且顺带省掉
+       后面整条 tick 读。
+    2. 合并器**自带判据**（「历史最后一根落后最后交易日 >10h（盘中）/ >40h（盘前）
+       才去读 tick」），所以正常情况下它连 tick 集合都不读。
+
+    ⚠️ **实测边界**：本机 `golemq_stock_cn_realtime` 现在是**空的**（`--sub` 尚未跑过，
+    周一起才有数据），所以目前只验到「门挡掉、结果不变、耗时不增」；
+    **tick 合成那一半要等实时库里有数据才验得了**。
+    """
+    from . import GOLEMQ_STOCK_CN_REALTIME as rt_db
+    from .date_utils import GQ_util_get_last_day
+    from .realtime import realtime_collection_name
+
+    day = GQ_util_get_last_day()
+    name = realtime_collection_name(day)
+    try:
+        if name not in rt_db.list_collection_names():
+            if verbose:
+                print(f'[realtime] {name} 不存在（今天还没跑 --sub）→ 不合并')
+            return result
+    except Exception:      # noqa: BLE001 实时库连不上不该毁掉一次成功的历史读
+        if verbose:
+            print(f'[realtime] 探测 {name} 失败 → 不合并')
+        return result
+
+    # 延迟 import：`realtime.py` 与本模块没有互相 import，但它拖进的东西不少
+    # （requests / tqdm / easyquotation …），读历史时不必付这份 import 代价。
+    try:
+        if frequency == 'day':
+            from .realtime import GQ_fetch_stock_day_realtime_adv
+            return GQ_fetch_stock_day_realtime_adv(codelist, result, verbose=verbose)
+        from .realtime import GQ_fetch_stock_min_realtime_adv
+        return GQ_fetch_stock_min_realtime_adv(codelist, result, frequency,
+                                               verbose=verbose)
+    except Exception as exc:      # noqa: BLE001 合并失败不该把读到手的历史也丢了
+        if verbose:
+            print(f'[realtime] 合并失败（{type(exc).__name__}: {exc}）→ 返回纯历史')
+        return result
 
 
 def _apply_adjustments(result, market, codelist, verbose=False):

@@ -1535,6 +1535,20 @@ core/presentation.py 的状态 banner —— 纯渲染、显示宽度、光标�
 | f | `TestIdentityBlockAndColumn.test_phase_column_is_shared()` | ⚠️ 跨 banner 的那一列必须同宽 —— 环境自检（自检块）与 |
 | f | `TestIdentityBlockAndColumn.test_aligned_row_matches_the_phase_column()` |  |
 
+### `test_realtime_read`
+读路径的「带 REALTIME」—— kline83._merge_realtime 的两道门。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestRealtimeReadGuard` |  |
+| f | `TestRealtimeReadGuard.test_missing_collection_skips_and_never_touches_it()` | ⚠️ 集合不存在 ⇒ 直接返回：既省一次 tick 读，也不建集合。 |
+| f | `TestRealtimeReadGuard.test_existing_collection_calls_the_minute_merger()` |  |
+| f | `TestRealtimeReadGuard.test_existing_collection_calls_the_day_merger()` |  |
+| f | `TestRealtimeReadGuard.test_merge_failure_returns_history_not_none()` | 合并炸了 ⇒ 返回纯历史 —— 不能把已经读到手的数据也丢掉。 |
+| f | `TestRealtimeReadGuard.test_realtime_false_never_touches_the_realtime_db()` | realtime=False ⇒ 一次都不碰实时库（这是「不带 REALTIME」该有的代价：0）。 |
+| f | `TestRealtimeReadGuard.test_both_readers_default_to_realtime_true()` | ⚠️ 两族的默认都必须是 True，且必须与 base_market 的抽象声明一致。 |
+| f | `TestRealtimeReadGuard.test_default_call_does_merge()` | 默认（不给 realtime）就走合并 —— 用户口径是「带 REALTIME」。 |
+
 ### `test_realtime_store`
 
 | | 名称 | 摘要 |
@@ -1554,9 +1568,26 @@ core/presentation.py 的状态 banner —— 纯渲染、显示宽度、光标�
 | f | `TestWriteTsRows.test_rows_missing_code_or_ts_are_dropped()` |  |
 
 ### `test_refdata_guard`
-解析失败: SyntaxError('invalid syntax', ('<unknown>', 178, 17, "        with patch.object(rs, '_pick_source', pick), \\\n                patch.object(rs, 'GOLEMQ_STOCK_CN', db), \\\n                patch.object(rs, 'refdata_age_hours', return_value=age_hours), \\\n                # `**kw`：`mark_refdata_success` 现在还有一个 `echo=`（走 banner 的输出汇，\n", 178, 107))
 
-*(无公开成员)*
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestPartialScopeNeverDeletes` | 部分取数 × 差量删除 = 静默删掉其余全部（PITFALLS.md P19）。 |
+| f | `TestPartialScopeNeverDeletes.test_partial_scope_skips_delta_delete()` |  |
+| f | `TestPartialScopeNeverDeletes.test_full_scope_still_deletes_delta()` | 不给 codelist 时语义仍是「全量」，差量删除照旧（别把护栏扩大成不删）。 |
+| C | `TestOnProgressCallback` | --save 的 banner 靠 on_progress 点亮节点，每条出口都得调到。 |
+| f | `TestOnProgressCallback.test_fires_once_per_requested_collection()` |  |
+| f | `TestOnProgressCallback.test_fires_on_every_exit_including_failure()` | 源不可用（--save qmt 的常态）时也要回调，否则节点永远不亮。 |
+| f | `TestOnProgressCallback.test_absent_callback_is_harmless()` | 默认 on_progress=None：除 --save 外的调用方不受任何影响。 |
+| C | `TestEtfListReachableFromSaveTdx` | --save tdx 现在也做 etf_list。⚠️ 它只能由 akshare 供。 |
+| f | `TestEtfListReachableFromSaveTdx.test_tdx_source_can_supply_etf_list()` |  |
+| f | `TestEtfListReachableFromSaveTdx.test_qmt_source_does_not_claim_etf_list()` | qmt 适配器没声明 etf_list —— 列进去只会每次报一遍 UnsupportedCollection。 |
+| f | `TestEtfListReachableFromSaveTdx.test_akshare_is_first_for_etf_list()` |  |
+| f | `TestEtfListReachableFromSaveTdx.test_neither_tdx_side_source_supplies_etf_list()` | pytdx / qmt 都不提供 etf_list → akshare 是唯一可能，不能排除它。 |
+| C | `TestRefdataTtlGate` | 刷新闸：距上次成功完成不足 ttl_hours 就跳过、连源都不选。 |
+| f | `TestRefdataTtlGate.test_fresh_is_skipped_and_source_untouched()` |  |
+| f | `TestRefdataTtlGate.test_stale_is_fetched()` |  |
+| f | `TestRefdataTtlGate.test_never_succeeded_is_fetched()` | 从没成功过（age=None）按「该取」处理 —— 别把新库冻住。 |
+| f | `TestRefdataTtlGate.test_no_ttl_means_no_gate()` | 默认 ttl_hours=None = 不做闸，行为与从前逐字相同。 |
 
 ### `test_stock_cn`
 
