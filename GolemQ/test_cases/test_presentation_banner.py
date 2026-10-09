@@ -366,13 +366,15 @@ class TestIdentityBlockAndColumn(unittest.TestCase):
         任何工具链都不会碰坏它。
         """
         esc, lf = chr(27), chr(10)
+        dim_esc, reset = esc + '[90m', esc + '[0m'
         plain = identity('GolemQ', 'Copyright (c) x', when=_FIXED)
         self.assertNotIn(esc, plain)                  # 不上色时一个码都没有
         colored = identity('GolemQ', 'Copyright (c) x', when=_FIXED, color=True)
         self.assertIn(esc + '[90mCopyright (c) x' + esc + '[0m', colored)
-        # ⚠️ 只压版权行 —— 产品名与时刻戳保持原色（它们要读得清）
-        self.assertTrue(colored.startswith(
-            'GolemQ  [2026-10-09 15:12:57]' + lf + esc))
+        # ⚠️ **两行都压暗**（用户 2026-10-10 订正：原来是只压版权行 ——
+        # 「第一句 `GolemQ  [t]` 压暗」是后来明确要求的）
+        self.assertTrue(colored.startswith(dim_esc + 'GolemQ  [2026-10-09 15:12:57]'))
+        self.assertIn(dim_esc + 'Copyright (c) x' + reset, colored)
     def test_identity_without_contact_is_one_line(self):
         self.assertEqual(identity('GolemQ', when=_FIXED),
                          'GolemQ  [2026-10-09 15:12:57]\n\n')
@@ -414,3 +416,42 @@ class TestIdentityBlockAndColumn(unittest.TestCase):
                                       color=False)
         self.assertEqual(display_width(row[:row.index('pytdx')]),
                          display_width(real[:real.index('stock_list')]))
+
+
+class TestDimming(unittest.TestCase):
+    """**压暗**（用户 2026-10-10 一次点了三处）：身份块两行、banner 头行、阶段起行。
+
+    三处都走 :func:`dim` —— 散着写 `'\033[90m'` 就会在"哪几行该压暗"上分叉。
+    ⚠️ **只在真 TTY 上**：非 TTY 里掺转义码是本项目颜色规则的第一条禁忌。
+    """
+
+    def test_dim_wraps_only_when_color(self):
+        from GolemQ.core.presentation import dim
+        self.assertEqual(dim('x'), 'x')
+        self.assertEqual(dim('x', color=True), '\033[90mx\033[0m')
+
+    def test_identity_both_lines_are_dimmed(self):
+        from GolemQ.core.presentation import identity
+        out = identity('GolemQ', 'Copyright', when=_FIXED, color=True)
+        self.assertTrue(out.startswith('\033[90mGolemQ  [2026-10-09 15:12:57]\033[0m'))
+        self.assertIn('\033[90mCopyright\033[0m', out)
+
+    def test_banner_head_line_is_dimmed_on_tty_only(self):
+        from GolemQ.core.presentation import Banner
+        stream = _FakeTty()
+        with unittest.mock.patch.object(
+                __import__('GolemQ.core.presentation', fromlist=['x']),
+                '_vt_supported', return_value=True):
+            Banner('bootstrap', (('环境自检', None, ['python']),),
+                   stream=stream, caption='bootstrap', when=_FIXED).render()
+        self.assertIn('\033[90m[2026-10-09 15:12:57]: bootstrap\033[0m',
+                      stream.getvalue())
+
+    def test_banner_head_line_has_no_escape_on_a_pipe(self):
+        """非 TTY 的头行是**日志** —— 一个转义码都不许有。"""
+        stream = io.StringIO()
+        from GolemQ.core.presentation import Banner
+        Banner('bootstrap', (('环境自检', None, ['python']),),
+               stream=stream, caption='bootstrap', when=_FIXED).render()
+        self.assertIn('[2026-10-09 15:12:57]: bootstrap\n', stream.getvalue())
+        self.assertNotIn('\033', stream.getvalue())

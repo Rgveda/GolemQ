@@ -305,6 +305,7 @@ GolemQ Constants Module
 | f | `aligned_row(label, body, width)` | 阶段名 + 值 的一行，与 :func:render_pipeline_banner 的阶段列同宽。 `[dt]` |
 | f | `stamp_text(when)` | 裸的时刻戳：[2026-10-09 15:34:43]。 `[dt]` |
 | f | `stamp(text, when)` | 给静态头行盖时刻戳：[2026-10-09 15:34:43]: source: pytdx。 `[dt]` |
+| f | `dim(text, color)` | 压暗一行（color=True 时）。用 :data:_ANSI_GRAY，非 TTY 原样返回。 |
 | f | `stamp_done(caption, when, color)` | 收尾行：[2026-10-10 00:33:22]: bootstrap done.（color=True 时压暗）。 `[dt]` |
 | f | `identity(app, contact, when, color)` | 身份块 —— 每次运行开头那一小块，末尾带一个空行。 |
 | f | `render_pipeline_banner(rows, states, color)` | 把「各阶段」渲染成多行表头（纯函数）。 `[dt]` |
@@ -1593,6 +1594,11 @@ core/presentation.py 的状态 banner —— 纯渲染、显示宽度、光标�
 | f | `TestIdentityBlockAndColumn.test_header_true_still_prints_it()` | 默认 header=True 保持旧行为 —— 直接调用方与旧用例不受影响。 |
 | f | `TestIdentityBlockAndColumn.test_phase_column_is_shared()` | ⚠️ 跨 banner 的那一列必须同宽 —— 环境自检（自检块）与 |
 | f | `TestIdentityBlockAndColumn.test_aligned_row_matches_the_phase_column()` |  |
+| C | `TestDimming` | 压暗（用户 2026-10-10 一次点了三处）：身份块两行、banner 头行、阶段起行。 |
+| f | `TestDimming.test_dim_wraps_only_when_color()` |  |
+| f | `TestDimming.test_identity_both_lines_are_dimmed()` |  |
+| f | `TestDimming.test_banner_head_line_is_dimmed_on_tty_only()` |  |
+| f | `TestDimming.test_banner_head_line_has_no_escape_on_a_pipe()` | 非 TTY 的头行是日志 —— 一个转义码都不许有。 |
 
 ### `test_realtime_read`
 读路径的「带 REALTIME」—— kline83._merge_realtime 的两道门。

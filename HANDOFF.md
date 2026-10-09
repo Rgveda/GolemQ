@@ -975,3 +975,10 @@ T-1 17:30 扫过 → T 08:30 开盘前那一跑只隔 15h < 24h ⇒ **被跳** �
 两条硬约束：**止行必须在 `close()` 之后**（P22）、**必须在 `try` 之内**（崩了不许打 done.）。
 ⚠️ bootstrap 头行**恢复了**（D27 的 `header=False` 撤掉）⇒ 它与身份行的戳同刻紧挨着；
 ⚠️ `--save qmt` 的文案是 `saving stock_cn refdata`（它不取 K 线，照打 klines 是假话）。
+
+### ✅ 三处压暗 + 起行带 `...`（2026-10-10，`DECISIONS.md` D32 追加）
+
+身份块**两行**、banner 头行 `[t]: bootstrap`、`--save` 起行 —— 全部深灰；
+`--save` 起行带 `...`（进行中）、止行 ` done.`。压暗收进 `presentation.dim()` 一处。
+⚠️ 只在真 TTY（非 TTY 零转义码，有用例）。⚠️ bootstrap 起行**不带** `...`、
+`--save` 的**带** —— 按你逐字给的，要统一说一声。

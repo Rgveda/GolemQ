@@ -301,6 +301,17 @@ def stamp(text, when=None):
     return '{}: {}'.format(stamp_text(when), text)
 
 
+def dim(text, color=False):
+    """**压暗**一行（`color=True` 时）。用 :data:`_ANSI_GRAY`，非 TTY 原样返回。
+
+    ⚠️ **压暗只此一处** —— 身份行、阶段的起止行都走它。散着写 `'\\033[90m'`
+    就会在"哪几行该压暗"上分叉（用户 2026-10-10 一次点了三处）。
+    """
+    if not color:
+        return text
+    return '{}{}{}'.format(_ANSI_GRAY, text, _ANSI_RESET)
+
+
 def stamp_done(caption, when=None, color=False):
     """**收尾行**：``[2026-10-10 00:33:22]: bootstrap done.``（``color=True`` 时压暗）。
 
@@ -314,10 +325,7 @@ def stamp_done(caption, when=None, color=False):
     >>> stamp_done('bootstrap', _dt.datetime(2026, 10, 10, 0, 33, 22))
     '[2026-10-10 00:33:22]: bootstrap done.'
     """
-    text = stamp('{} done.'.format(caption), when)
-    if not color:
-        return text
-    return '{}{}{}'.format(_ANSI_GRAY, text, _ANSI_RESET)
+    return dim(stamp('{} done.'.format(caption), when), color)
 
 
 def identity(app='GolemQ', contact='', when=None, color=False):
@@ -348,10 +356,9 @@ def identity(app='GolemQ', contact='', when=None, color=False):
     :param contact: 版权/联系行（`cli/bootstrap.copyright_infos`）
     :param when: 可注入的时刻，`None` = 现在
     """
-    lines = ['{}  {}'.format(app, stamp_text(when))]
+    lines = [dim('{}  {}'.format(app, stamp_text(when)), color)]
     if contact:
-        lines.append('{}{}{}'.format(_ANSI_GRAY, contact, _ANSI_RESET)
-                     if color else contact)
+        lines.append(dim(contact, color))
     return '\n'.join(lines) + '\n\n'
 
 
@@ -521,7 +528,9 @@ class Banner:
                     if self._caption is None else self._caption)
             if self._stamp_line:
                 head = stamp(head, self._when)
-            self._write(head + '\n')
+            # 头行**压暗**（用户 2026-10-10：`[t]: bootstrap` 深灰）—— 只在真 TTY 上；
+            # 非 TTY 那一行是**日志**，掺转义码是本项目颜色规则的第一条禁忌。
+            self._write(dim(head, self._color) + '\n')
         self._draw()
 
     def mark(self, name, state=DONE):

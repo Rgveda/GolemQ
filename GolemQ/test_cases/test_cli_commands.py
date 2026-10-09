@@ -440,7 +440,7 @@ class TestSaveStageStartDoneLines(unittest.TestCase):
 
     def test_start_line_is_before_the_source_row(self):
         out = self._run(['--save', 'tdx'])
-        start = self._stamped(out, 'saving stock_cn klines')
+        start = self._stamped(out, r'saving stock_cn klines\.\.\.')
         self.assertEqual(len(start), 1,
                          '起行应恰好一行（整行匹配）：{}'.format(out.splitlines()[:6]))
         self.assertLess(start[0], self._row(out, '数据源')[0],
@@ -456,8 +456,8 @@ class TestSaveStageStartDoneLines(unittest.TestCase):
     def test_caption_matches_what_actually_runs(self):
         """⚠️ `--save qmt` **不取 K 线**（只做参考数据）—— 给它打 "klines" 就是假话。"""
         out = self._run(['--save', 'qmt'])
-        self.assertEqual(len(self._stamped(out, 'saving stock_cn refdata')), 1)
-        self.assertEqual(self._stamped(out, 'saving stock_cn klines'), [])
+        self.assertEqual(len(self._stamped(out, r'saving stock_cn refdata\.\.\.')), 1)
+        self.assertEqual(self._stamped(out, r'saving stock_cn klines\.\.\.'), [])
 
     def test_no_done_line_when_it_crashes(self):
         """⚠️ 中途炸了**不许打 `done.`** —— 那一段没 done。

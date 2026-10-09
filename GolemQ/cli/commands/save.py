@@ -93,7 +93,7 @@ def run_save(args) -> None:
     # 必须单独捕获 —— 否则 Ctrl-C 照样打一堆 traceback。
     try:
         from GolemQ.core.presentation import (Banner, DONE, PENDING, RUNNING,
-                                              aligned_row, ansi_enabled, stamp,
+                                              aligned_row, ansi_enabled, dim, stamp,
                                               stamp_done)
         from GolemQ.markets.StockCN.kline_save import (
             FREQUENCIES as KLINE_FREQS,
@@ -175,7 +175,7 @@ def run_save(args) -> None:
         # ⚠️ 文案**按实际做的东西**取：`--save qmt` 只做参考数据、**不取 K 线**，
         # 给它打 "saving stock_cn klines" 就是假话（用户给的正是 tdx 路径那句）。
         stage = 'saving stock_cn klines' if tdx_like else 'saving stock_cn refdata'
-        print(stamp(stage), flush=True)
+        print(dim(stamp(stage + '...'), ansi_enabled()), flush=True)   # 起行带 `...`（进行中）
         print(aligned_row('数据源', source_label), flush=True)
 
         # `header=False`：时刻戳只在开头的**身份块**出现一次，这里只出阶段行。

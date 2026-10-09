@@ -1306,3 +1306,22 @@ tushare（判断配置 tushare）、iwencai（判断配置东方财富问财）�
 ⚠️ **`--save` 那句的文案按实际做的东西取**：`--save qmt` **不取 K 线**（只做参考数据），
 给它打 `saving stock_cn klines` 就是假话。故 `tdx`/`pytdx` → `saving stock_cn klines`，
 `qmt` → `saving stock_cn refdata`。**用户给的那串正是 tdx 路径的。**
+
+**再追加（同日，压暗与 `...`）**：用户逐处点名了三行要**深灰**，并给起行加三点：
+
+| 行 | 现在 |
+|:--|:--|
+| 身份块第一行 `GolemQ  [t]` | **深灰**（原先只有版权行灰）|
+| banner 静态头行 `[t]: bootstrap` | **深灰** |
+| `--save` 阶段起行 `[t]: saving stock_cn klines...` | **深灰**，且**带 `...`**（进行中）|
+| `--save` 阶段止行 `[t]: saving stock_cn klines done.` | 深灰（原有）|
+
+**实现**：新增 `core/presentation.dim(text, color)` —— **压暗只此一处**，身份块（两行）、
+`stamp_done`、banner 头行、`--save` 起行都走它。散着写 `'\033[90m'` 就会在
+「**哪几行该压暗**」上分叉（用户一次点了三处，正是那种容易漏一处的改动）。
+
+⚠️ **一律只在真 TTY**：非 TTY 里掺转义码是本项目颜色规则的第一条禁忌 ——
+「非 TTY 一个转义码都没有」有用例钉着（身份块、banner 头行、`--save` 起止行各一条）。
+
+⚠️ **`bootstrap` 的起行不带 `...`、`--save` 的带** —— 按用户逐字给的照做（两处口径不统一，
+要统一说一声）。
