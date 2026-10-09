@@ -172,11 +172,16 @@ class TestRefdataTtlGate(unittest.TestCase):
         db.__getitem__.return_value.distinct.return_value = ['600519']
         pick = MagicMock(return_value=_FakeSource())
         marked = []
+        # ⚠️ `side_effect` 要收 `**kw`：`mark_refdata_success` 现在多一个 `echo=`
+        # （走 banner 的输出汇，不写死 `print` —— 见 PITFALLS P22）。
+        # 本用例只关心**哪个集合被记账**。
+        # （注：这条注释**不能**写进下面的 `\` 续行中间 —— 注释会终止逻辑行，
+        #   会让整个 `with` 语句截断成 SyntaxError。实测踩过。）
         with patch.object(rs, '_pick_source', pick), \
                 patch.object(rs, 'GOLEMQ_STOCK_CN', db), \
                 patch.object(rs, 'refdata_age_hours', return_value=age_hours), \
                 patch.object(rs, 'mark_refdata_success',
-                             side_effect=lambda n: marked.append(n)):
+                             side_effect=lambda n, **kw: marked.append(n)):
             report = rs.save_refdata(collections=['stock_info'], verbose=False,
                                      ttl_hours=ttl_hours)
         return report['stock_info'], pick, marked

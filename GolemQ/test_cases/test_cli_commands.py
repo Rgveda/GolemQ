@@ -262,7 +262,7 @@ class TestXdxrRefreshGate(unittest.TestCase):
 
     def _drive(self, argv, *, gate_open):
         args = build_parser().parse_args(argv)
-        calls = {'xdxr': [], 'marked': []}
+        calls = {'xdxr': [], 'marked': [], 'out': ''}
         from GolemQ.markets.StockCN import kline_save as ks
         from GolemQ.markets.StockCN import refdata_save as rs
         from GolemQ.cli.commands import save as save_cmd
@@ -271,7 +271,8 @@ class TestXdxrRefreshGate(unittest.TestCase):
             calls['xdxr'].append(k.get('target'))
             return {'codes': 0, 'updated': 0, 'events_changed': [], 'errors': []}
 
-        with contextlib.redirect_stdout(io.StringIO()), \
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), \
                 unittest.mock.patch.object(rs, 'save_refdata', return_value={}), \
                 unittest.mock.patch.object(ks, 'save_kline_tdx',
                                            return_value={'kline': {}, 'universe': {}}), \
@@ -282,7 +283,23 @@ class TestXdxrRefreshGate(unittest.TestCase):
                 unittest.mock.patch.object(ks, 'mark_kline_sweep',
                                            side_effect=lambda n: calls['marked'].append(n)):
             save_cmd.run_save(args)
+        calls['out'] = buf.getvalue()
         return calls
+
+    def test_gate_message_only_under_verbose(self):
+        """⚠️ 用户 2026-10-09：刷新闸那句话**只在 `-v` 下打**。
+
+        与参考数据的刷新闸、K线的「整段跳过」**同一口径** —— 闸的细节是排障信息，
+        不是每次运行都要看的东西（`age` 也只在 `-v` 下才算）。
+        第一版漏了这个门，用户实跑看到了两行 `[xdxr] … 刷新闸：…`。
+        """
+        quiet = self._drive(['--save', 'pytdx'], gate_open=True)
+        self.assertNotIn('刷新闸', quiet['out'])
+        loud = self._drive(['--save', 'pytdx', '-v'], gate_open=True)
+        self.assertIn('刷新闸', loud['out'])
+        # 两种情况都确实跳过了（只是说不说而已）
+        self.assertEqual(quiet['xdxr'], [])
+        self.assertEqual(loud['xdxr'], [])
 
     def test_gate_open_skips_the_whole_pass(self):
         got = self._drive(['--save', 'pytdx'], gate_open=True)

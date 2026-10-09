@@ -247,10 +247,13 @@ def run_save(args) -> None:
                     # （只在上面 `events_changed` 非空时才走到）—— 拿 TTL 拦它等于
                     # **该重标的时候不重标**，那正是它存在的理由。
                     if not args.save_refresh and allow_xdxr_shortcircuit(xdxr_node):
-                        age = kline_sweep_age_hours(xdxr_node)
                         banner.mark(xdxr_node, DONE)   # 数据是好的、只是没重取（同参考数据的 `cached`）
-                        say('[xdxr] {} 刷新闸：上次全查 {:.1f}h 前，本次跳过'
-                            .format(xdxr_node, age or 0.0))
+                        # ⚠️ 刷新闸这句话**只在 `-v` 下打**（用户 2026-10-09 指出）——
+                        # 与参考数据的刷新闸、K线的「整段跳过」**同一口径**：闸的细节是
+                        # 排障信息，不是每次运行都要看的东西（age 也就在 -v 下才算）。
+                        if args.verbose:
+                            say('[xdxr] {} 刷新闸：上次全查 {:.1f}h 前，本次跳过'.format(
+                                xdxr_node, kline_sweep_age_hours(xdxr_node) or 0.0))
                         continue
                     # ⚠️ **先点 RUNNING 再调**（2026-10-09 修）：这两个调用是**阻塞的**，
                     # 原先只在返回后 `mark(DONE)` —— 于是整段（几千只 × ~0.3s，分钟级）

@@ -712,7 +712,7 @@ A 股参考集合的取数与落库编排 —— 对应 CLI 的 --save <SOURCE> 
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `refdata_ttl_hours(collection, now)` | 该集合此刻该用的刷新间隔（小时）—— 查 :data:TTL_HOURS 的 (盘中, 盘后)。 `[dt]` |
-| f | `mark_refdata_success(collection)` | 把「该集合刚刚成功完成」记进 supervisor 的签到表。只该在真写完之后调。 |
+| f | `mark_refdata_success(collection, echo)` | 把「该集合刚刚成功完成」记进 supervisor 的签到表。只该在真写完之后调。 |
 | f | `refdata_age_hours(collection, now)` | 该集合距上次成功完成过去了多少小时；从没成功过 → None（调用方按「该取」处理）。 |
 | f | `save_refdata(collections, source, codelist, exclude_sources, verbose, on_progress, echo, ttl_hours)` | 把参考集合取回并落库到 8.3 的 golemq_stock_cn。 |
 | f | `GQ_migrate_financial(source, target, chunk, verbose)` | 把 4.4 quantaxis.financial 整体搬到 8.3 的 golemq_stock_cn.financial。 |
@@ -1235,6 +1235,7 @@ cli/commands/ 的注册表契约。
 | C | `TestBlockingCallsLightUpTheBanner` | 阻塞调用之前必须先点 RUNNING —— 否则那一段屏上是个灰点。 |
 | f | `TestBlockingCallsLightUpTheBanner.test_every_blocking_call_is_preceded_by_running()` |  |
 | C | `TestXdxrRefreshGate` | 复权段的 TTL 闸（用户 2026-10-09 定，推翻 D25 原先的「只记账不开闸」）。 |
+| f | `TestXdxrRefreshGate.test_gate_message_only_under_verbose()` | ⚠️ 用户 2026-10-09：刷新闸那句话只在 -v 下打。 |
 | f | `TestXdxrRefreshGate.test_gate_open_skips_the_whole_pass()` |  |
 | f | `TestXdxrRefreshGate.test_gate_closed_runs_both_targets()` |  |
 | f | `TestXdxrRefreshGate.test_save_refresh_forces_it()` | 一个旗子 = 别信缓存、全查一遍（与参考数据闸、K 线短路同一口径）。 |
@@ -1553,26 +1554,9 @@ core/presentation.py 的状态 banner —— 纯渲染、显示宽度、光标�
 | f | `TestWriteTsRows.test_rows_missing_code_or_ts_are_dropped()` |  |
 
 ### `test_refdata_guard`
+解析失败: SyntaxError('invalid syntax', ('<unknown>', 178, 17, "        with patch.object(rs, '_pick_source', pick), \\\n                patch.object(rs, 'GOLEMQ_STOCK_CN', db), \\\n                patch.object(rs, 'refdata_age_hours', return_value=age_hours), \\\n                # `**kw`：`mark_refdata_success` 现在还有一个 `echo=`（走 banner 的输出汇，\n", 178, 107))
 
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| C | `TestPartialScopeNeverDeletes` | 部分取数 × 差量删除 = 静默删掉其余全部（PITFALLS.md P19）。 |
-| f | `TestPartialScopeNeverDeletes.test_partial_scope_skips_delta_delete()` |  |
-| f | `TestPartialScopeNeverDeletes.test_full_scope_still_deletes_delta()` | 不给 codelist 时语义仍是「全量」，差量删除照旧（别把护栏扩大成不删）。 |
-| C | `TestOnProgressCallback` | --save 的 banner 靠 on_progress 点亮节点，每条出口都得调到。 |
-| f | `TestOnProgressCallback.test_fires_once_per_requested_collection()` |  |
-| f | `TestOnProgressCallback.test_fires_on_every_exit_including_failure()` | 源不可用（--save qmt 的常态）时也要回调，否则节点永远不亮。 |
-| f | `TestOnProgressCallback.test_absent_callback_is_harmless()` | 默认 on_progress=None：除 --save 外的调用方不受任何影响。 |
-| C | `TestEtfListReachableFromSaveTdx` | --save tdx 现在也做 etf_list。⚠️ 它只能由 akshare 供。 |
-| f | `TestEtfListReachableFromSaveTdx.test_tdx_source_can_supply_etf_list()` |  |
-| f | `TestEtfListReachableFromSaveTdx.test_qmt_source_does_not_claim_etf_list()` | qmt 适配器没声明 etf_list —— 列进去只会每次报一遍 UnsupportedCollection。 |
-| f | `TestEtfListReachableFromSaveTdx.test_akshare_is_first_for_etf_list()` |  |
-| f | `TestEtfListReachableFromSaveTdx.test_neither_tdx_side_source_supplies_etf_list()` | pytdx / qmt 都不提供 etf_list → akshare 是唯一可能，不能排除它。 |
-| C | `TestRefdataTtlGate` | 刷新闸：距上次成功完成不足 ttl_hours 就跳过、连源都不选。 |
-| f | `TestRefdataTtlGate.test_fresh_is_skipped_and_source_untouched()` |  |
-| f | `TestRefdataTtlGate.test_stale_is_fetched()` |  |
-| f | `TestRefdataTtlGate.test_never_succeeded_is_fetched()` | 从没成功过（age=None）按「该取」处理 —— 别把新库冻住。 |
-| f | `TestRefdataTtlGate.test_no_ttl_means_no_gate()` | 默认 ttl_hours=None = 不做闸，行为与从前逐字相同。 |
+*(无公开成员)*
 
 ### `test_stock_cn`
 

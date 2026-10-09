@@ -136,7 +136,7 @@ def _caller_key() -> str:
     return stable_caller_key()
 
 
-def mark_refdata_success(collection):
+def mark_refdata_success(collection, echo=None):
     """把「该集合**刚刚成功完成**」记进 `supervisor` 的签到表。**只该在真写完之后调**。
 
     `expired_time` 给的是该集合**此刻**的 TTL —— 签到表把 `expired_timestamp` 存成
@@ -147,12 +147,17 @@ def mark_refdata_success(collection):
     ⚠️ **记账失败绝不抛**（那一层在 :func:`checkin_function.mark_checkin` 里保证）：
     签到表在**运维库**（`GOLEMQ`）里，连不上 / 索引建不出来都有可能。这是记账，不是数据
     —— 为它把一次**成功的取数**变成失败是本末倒置。失败只是刷不成新、下次照常重取。
+
+    :param echo: 输出汇（默认 `print`）。⚠️ **不能写死 `print`**：本函数在
+        `save_refdata` 的集合循环里被调，那一刻 banner **正活着** —— 直接 `print`
+        会让它的行数记账少算一行、下次重画整块写花（`PITFALLS.md` P22）。
+        它是**故障报告**（不是闸的细节），所以**非 verbose 也要打**，只是要走 `echo`。
     """
     from GolemQ.supervisor.function_checkin import mark_checkin
     if not mark_checkin(_checkin_name(collection), refdata_ttl_hours(collection),
                         caller_ip=_caller_key()):
-        print('[refdata] ⚠️ {} 的签到时刻没记上 —— 刷新闸对它下次仍会重取'
-              .format(collection))
+        (echo or print)('[refdata] ⚠️ {} 的签到时刻没记上 —— 刷新闸对它下次仍会重取'
+                        .format(collection))
 
 
 def _resolve_ttl_hours(ttl_hours, collection):
@@ -455,7 +460,7 @@ def save_refdata(collections=None, source: str = None, codelist=None,
             # 只记「真成功」的时刻 —— `skipped`（源返回空/未写入）不算数，
             # 否则一次空跑就会把这个集合冻住一整个 TTL。
             if entry['status'] == 'ok':
-                mark_refdata_success(coll_name)
+                mark_refdata_success(coll_name, echo=echo)
             if verbose:
                 say(f'[refdata] {coll_name}: {entry["status"]} {len(rows)} 行 (源 {src.name})')
         finally:
