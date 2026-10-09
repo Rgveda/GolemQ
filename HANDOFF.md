@@ -997,3 +997,55 @@ T-1 17:30 扫过 → T 08:30 开盘前那一跑只隔 15h < 24h ⇒ **被跳** �
 后者**从索引**恢复（索引停在 HEAD）⇒ **把我刚做的修复洗掉了**，而 `git add -A` 把
 洗掉的状态提交了 ⇒ **`f86b14e` 的 message 说修了、文件里没有**。已 amend 改正，
 并补了 P29。**根因**：动工作树之前没先 `git add`。
+
+---
+
+## 🚀 推送与合并方案（2026-10-10 备好，**未推送** —— 等所有者确认）
+
+### 现状（已核实）
+
+| | |
+|:--|:--|
+| 远端 | `https://github.com/Rgveda/GolemQ.git` —— **35 条提交、2020-10-14 ~ 2021-01-26**（**初代项目**）；分支 `master` + `gh-pages` |
+| 本机新树 | **81 条提交、2026-09-20 起** |
+| **两棵历史的关系** | `git merge-base HEAD origin/master` **为空** ⇒ **无共同祖先**（重构时新建的基线 —— 与长期记忆里那条一致） |
+
+**本机已做的（纯本地、可撤销）**：`git remote add origin …` + `git fetch origin --tags`；
+**`main` 已 fast-forward 到新树**（15 条，`refactor/new-tree-2026-10-09` 可删）。
+
+**推送前体检**：拿 `config.ini` 的**真值**逐条在被跟踪文件里找 ——
+mongo uri / dingtalk appkey·appsecret·robot_code / serverchan sendkey / tdxaidata token
+**六个真值 0 命中** ✓（文档里那些 `appsecret = …` / `sctp` 全是**示例占位**）。
+受管 419 文件、`.git` 8.4M。
+
+### 推荐布局（**没做，等点头**）
+
+| 分支 | 内容 |
+|:--|:--|
+| `master` | **初代线，原样不动** |
+| `main` | **新树**（推上去后把仓库默认分支切到 `main`）|
+
+**为什么不 `merge --allow-unrelated-histories`**：两棵树都有 `GolemQ/`、`README.md` 等路径
+⇒ 全是 add/add 冲突（要逐条人工裁决），而结果是一棵**说假话的历史**（新树**不是** 2021 那棵的后代）。
+**保留两条线、两条都能 checkout** —— 既完整，又不撒谎。⚠️ 也**不做** graft/replace：
+那会把本机 81 条提交的 sha **全部重写**。
+
+### 所有者醒来后（两条命令）
+
+```bash
+git push origin main     # 推新树（需要你自己的 GitHub 凭据；我这台没有）
+# 再到 GitHub → Settings → Branches 把默认分支改成 main
+```
+
+⚠️ 本机到 github **网络间歇性**（同一分钟内 `ls-remote` 通、`fetch` 超时；直连可用，
+走系统代理 `127.0.0.1:7897` 反而 TLS 握手失败）。干跑 `git push --dry-run origin main`
+因此**没试成**。
+
+### 待所有者定的两件事（都**没动**）
+
+1. **`.claude/` 要不要一起推**：里面有 **239 个 ruflo 生成的文件 / 2.0M**（`agents/ skills/ helpers/`），
+   与本项目无关。**建议** `git rm -r --cached` 后只留 `settings.json`
+   （`CLAUDE.md` 说它 pin 了 UTF-8 环境变量，对协作者有用）—— 会改动已提交内容，故没动。
+2. **内网 IP**：`DECISIONS.md` / `MONGODB83.md` / `core/migrate44.py` /
+   `supervisor/function_checkin.py` 里共 **22 处 `192.168.x.x`**（实测记录里的服务器与网关）。
+   公开后可见但内网不可达 —— **倾向保留**（那是实测证据），要打码说一声。
