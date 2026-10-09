@@ -301,12 +301,17 @@ def run_save(args) -> None:
             print('失败: 所有参考集合都没取到行（见上面的逐集合说明）')
             sys.exit(1)
 
-    except (Exception, KeyboardInterrupt) as exc:      # noqa: BLE001 常规兜底
+    except KeyboardInterrupt:
+        # 用户按了 Ctrl-C ⇒ 首行**就该**说"被用户终止"
         print('收盘行情下载过程被用户终止')
-        if not isinstance(exc, KeyboardInterrupt):
-            # 只在**真异常**时补一行原因：否则一个真 Bug 会被误读成'用户按了 Ctrl-C'
-            print('  原因: {}: {}'.format(type(exc).__name__, exc))
-        sys.exit(0 if isinstance(exc, KeyboardInterrupt) else 1)
+        sys.exit(0)
+    except Exception as exc:      # noqa: BLE001 常规兜底
+        # ⚠️ **不能也说"被用户终止"**（用户 2026-10-09 指出）：程序错误被冠上
+        # "用户终止"会把排查引到错的方向 —— 实测踩过，一个 `UnboundLocalError`
+        # 就是这么被报成"用户按了 Ctrl-C"的。**两句分开写，各说各的真实情况。**
+        print('收盘行情下载过程意外终止')
+        print('  原因: {}: {}'.format(type(exc).__name__, exc))
+        sys.exit(1)
 
 
 # 命中判据用**默认的真值判据**即可：`choices=` 保证 `args.save` 只会是

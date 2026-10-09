@@ -694,7 +694,10 @@ def save_kline_tdx(targets=None, frequencies=None, codes=None, start_min=MIN_STA
             if not dry_run and not force_refresh:
                 reason = fast_skip_reason(coll, name, frequency, now=_now)
                 if reason is not None:
-                    stats['skipped_fresh'] = total
+                    # ⚠️ 这里**不能用 `total`** —— 它在本函数下面才定义
+                    # （2026-10-09 实测踩过：`UnboundLocalError: total`，
+                    # 而 `run_save` 的兜底 except 会把它报成"被用户终止"）。
+                    stats['skipped_fresh'] = len(cols)
                     if on_progress is not None:
                         on_progress(name, 'start', stats)
                         on_progress(name, 'done', stats)

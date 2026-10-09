@@ -1347,6 +1347,10 @@ ETF 独立成 ETF_CN / etf_* 之后的路由测试。
 | f | `TestTargetRoutedCollections.test_save_adj_routes_to_target_collections()` |  |
 | f | `TestTargetRoutedCollections.test_save_adj_default_target_is_stock()` |  |
 | f | `TestTargetRoutedCollections.test_save_xdxr_routes_to_target_collection()` |  |
+| C | `TestFastPathIntegration` | 快路径穿过 save_kline_tdx 的那一段 —— 谓词单测不够。 |
+| f | `TestFastPathIntegration.test_fast_path_completes_without_touching_tdx()` |  |
+| f | `TestFastPathIntegration.test_force_refresh_disables_the_fast_path()` | --save-refresh 必须把快路径也关掉（一旗两用）。 |
+| f | `TestFastPathIntegration.test_dry_run_disables_the_fast_path()` |  |
 
 ### `test_kline_shortcircuit`
 K 线保存的本地水位短路（DECISIONS.md D25）。

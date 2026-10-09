@@ -810,3 +810,40 @@ bar 的 `ts` 都落在**整分钟**上，所以只在 `60` 秒整数倍上提问
 
 **已有先例**：`test_presentation_banner.py` 与 `test_kline_save.py` 都因为同一个原因
 坏过一次；`PITFALLS.md` 自己也是。
+---
+
+### P28. 兜底 `except` 会**把程序错误报成"用户终止"** —— 排查方向被引偏
+
+**症状**（用户 2026-10-09 实报）：
+
+```
+收盘行情下载过程被用户终止
+  原因: UnboundLocalError: cannot access local variable 'total' where it is not associated with a value
+```
+
+**成因**：`run_save` 用 `except (Exception, KeyboardInterrupt)` 兜底，而**首行无条件**
+写"被用户终止"。**后果**：一个真 Bug 被冠上"用户按了 Ctrl-C" —— 排查先去问用户操作，
+而不是看刚写的那段代码。
+
+**修法**：**两句分开写，各说各的真实情况**（用户建议的措辞已采纳）：
+
+| 捕获 | 首行 | 退出码 |
+|:--|:--|:--|
+| `KeyboardInterrupt` | 收盘行情下载过程**被用户终止** | 0 |
+| `Exception` | 收盘行情下载过程**意外终止** + `原因: <类型>: <消息>` | 1 |
+
+⚠️ **同类纪律**：兜底 `except` 的措辞必须与它**真正捕获的东西**一致 ——
+捕获范围越宽，措辞越要中性。"用户终止"这种**带归因**的措辞只配用在
+`KeyboardInterrupt` 这种单一、明确的来源上。
+
+#### 它为什么漏过了测试（更值得记的一条）
+
+`fast_skip_reason` 有 **8 条谓词单测全过**，但**没有一条穿过 `save_kline_tdx`** ——
+而集成那一段引用了**还没定义**的 `total`（定义在下面 30 行处）。
+**谓词对 ≠ 集成对。**
+
+已补 `test_kline_save.TestFastPathIntegration`（3 条），并**双向验证过**：
+把 `len(cols)` 换回 `total` ⇒ 用例**指名报错** `UnboundLocalError: ... 'total'`。
+
+**教训**：写那种「在长函数中间插一段 `continue`」的改法时，**光测谓词不够** ——
+谓词是纯的，而插入点周围的**变量作用域与执行顺序**只有跑一遍整个函数才知道。

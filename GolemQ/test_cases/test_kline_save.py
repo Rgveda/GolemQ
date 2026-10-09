@@ -429,3 +429,67 @@ class TestTargetRoutedCollections(unittest.TestCase):
 
         self.assertIn('etf_xdxr', seen)
         self.assertNotIn('stock_xdxr', seen)
+
+
+class TestFastPathIntegration(unittest.TestCase):
+    """快路径**穿过 `save_kline_tdx`** 的那一段 —— **谓词单测不够**。
+
+    ⚠️ 2026-10-09 实测踩到：`fast_skip_reason` 的 8 条单测**全过**，但
+    `save_kline_tdx` 里那段集成代码引用了**还没定义**的 `total` ⇒ `UnboundLocalError`，
+    而 `run_save` 的兜底 except 把它报成「收盘行情下载过程被用户终止」（排查被引偏）。
+    **谓词对 ≠ 集成对** —— 这条用例专门盯"整段跳过后函数还能正常收尾"。
+    """
+
+    def _run(self, **kw):
+        from GolemQ.markets.StockCN import kline_save as ks
+        src = MagicMock()
+        db = MagicMock()
+
+        def _coll(name):
+            """假集合。`find_one -> None` = **没有水位** ⇒ `last_bar` 给 `(None, None)`。
+
+            ⚠️ 不能让它返回 MagicMock：那个值会一路进 `bj_date()` 变成
+            `TypeError: Cannot convert ... MagicMock ... to Timestamp`。
+            这直接影响**关掉快路径**的那两条用例（它们要落到常规路径）。
+            """
+            m = MagicMock(name=name)
+            m.find_one.return_value = None
+            return m
+
+        db.__getitem__.side_effect = _coll
+        swept = []
+        with unittest.mock.patch.object(ks, 'TdxSource', return_value=src), \
+                unittest.mock.patch.object(ks, '_db', return_value=db), \
+                unittest.mock.patch.object(ks, 'universe', return_value=['600519']), \
+                unittest.mock.patch.object(ks, '_resolve_bj_market', return_value=None), \
+                unittest.mock.patch.object(ks, 'fast_skip_reason',
+                                           return_value='（测试）整段跳过'), \
+                unittest.mock.patch.object(ks, 'mark_kline_sweep',
+                                           side_effect=lambda n: swept.append(n)), \
+                contextlib.redirect_stdout(io.StringIO()):
+            report = ks.save_kline_tdx(targets=('stock',), frequencies=('day', '1min'),
+                                       verbose=False, progress_every=0, **kw)
+        return report, src, swept
+
+    def test_fast_path_completes_without_touching_tdx(self):
+        report, src, swept = self._run()
+        # 两个集合都该被整段跳过，且计数等于该集合的标的数
+        for name in ('stock_day', 'stock_1min'):
+            with self.subTest(collection=name):
+                self.assertEqual(report['kline'][name]['skipped_fresh'], 1)
+                self.assertEqual(report['kline'][name]['inserted'], 0)
+        self.assertFalse(src.new_api.called, '整段跳过了却还是建了连接')
+        self.assertEqual(swept, [], '跳过的遍**不许**记账')
+
+    def test_force_refresh_disables_the_fast_path(self):
+        """`--save-refresh` 必须把快路径也关掉（一旗两用）。"""
+        from GolemQ.markets.StockCN import kline_save as ks
+        with unittest.mock.patch.object(ks, 'fast_skip_reason') as f:
+            self._run(force_refresh=True)
+        self.assertFalse(f.called, '--save-refresh 下不该再问快路径')
+
+    def test_dry_run_disables_the_fast_path(self):
+        from GolemQ.markets.StockCN import kline_save as ks
+        with unittest.mock.patch.object(ks, 'fast_skip_reason') as f:
+            self._run(dry_run=True)
+        self.assertFalse(f.called, 'dry_run 要与库内对拍 ⇒ 必须真取数')
