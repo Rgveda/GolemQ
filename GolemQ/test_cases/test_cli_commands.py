@@ -325,3 +325,73 @@ class TestXdxrRefreshGate(unittest.TestCase):
     def test_full_universe_marks_the_sweep(self):
         got = self._drive(['--save', 'pytdx'], gate_open=False)
         self.assertEqual(got['marked'], ['stock_xdxr', 'etf_xdxr'])
+
+
+class TestAdjNodeMarking(unittest.TestCase):
+    """`stock_adj` / `etf_adj` 两个节点**什么时候点白**。
+
+    ⚠️ 用户 2026-10-10：「**这两个 `_adj` 跑过了就更新白●更合理**」。
+
+    原先的做法是「**没有事件变化就不点**」，理由写成「点亮等于替没做的事谎报成功」——
+    **那是反的**：白点表示「这一步**已确认完成 / 数据是好的**」，而"事件比对通过 ⇒
+    `_adj` 已是最新"正是这个状态。同树里**参考数据那条早就这么做了**
+    （`cached ⇒ DONE`：「数据是好的、只是没重取，留灰会被读成「没取到」」），
+    两处口径必须一致。灰点留给"真的没轮上"。
+
+    但**有一条反向的**：事件**变了**却按 `--save-no-adj` 跳过重算 ⇒ `_adj` 此刻是
+    **过期**的（旧因子）—— 那种情况**不许点白**，否则才是真的谎报。
+    """
+
+    def _marks(self, events_changed, *, no_adj=False):
+        """跑一次 `run_save`，记下每个节点的 `mark` 序列。"""
+        args = build_parser().parse_args(['--save', 'pytdx'] + (['--save-no-adj'] if no_adj else []))
+        marked = []
+        from GolemQ.core import presentation
+        from GolemQ.markets.StockCN import kline_save as ks
+        from GolemQ.markets.StockCN import refdata_save as rs
+        from GolemQ.cli.commands import save as save_cmd
+        real = presentation.Banner
+
+        class _Spy(real):
+            def mark(self, name, state=None):
+                marked.append((name, state))
+                return super().mark(name) if state is None else super().mark(name, state)
+
+        with contextlib.redirect_stdout(io.StringIO()), \
+                unittest.mock.patch.object(presentation, 'Banner', _Spy), \
+                unittest.mock.patch.object(rs, 'save_refdata', return_value={}), \
+                unittest.mock.patch.object(ks, 'save_kline_tdx',
+                                           return_value={'kline': {}, 'universe': {}}), \
+                unittest.mock.patch.object(
+                    ks, 'save_xdxr_tdx',
+                    side_effect=lambda *a, **k: {'codes': 0, 'updated': 0,
+                                                 'events_changed': events_changed,
+                                                 'errors': []}), \
+                unittest.mock.patch.object(ks, 'save_adj'), \
+                unittest.mock.patch.object(ks, 'kline_sweep_age_hours', return_value=1.0), \
+                unittest.mock.patch.object(ks, 'allow_xdxr_shortcircuit', return_value=False), \
+                unittest.mock.patch.object(ks, 'mark_kline_sweep'):
+            save_cmd.run_save(args)
+        return marked
+
+    def test_adj_lights_white_when_there_is_nothing_to_do(self):
+        from GolemQ.core.presentation import DONE
+        marked = self._marks([])                       # 事件没变
+        self.assertIn(('stock_adj', DONE), marked, '事件没变 ⇒ _adj 已是最新，该点白')
+        self.assertIn(('etf_adj', DONE), marked)
+
+    def test_adj_stays_gray_when_events_changed_but_recompute_skipped(self):
+        """⚠️ **反向那条**：事件变了却 `--save-no-adj` ⇒ `_adj` 是**过期**的。
+
+        这时点白才是真的谎报 —— 所以它**必须**留灰。
+        """
+        from GolemQ.core.presentation import DONE
+        marked = self._marks(['600519'], no_adj=True)
+        self.assertNotIn(('stock_adj', DONE), marked, '_adj 过期时不许点白')
+        self.assertNotIn(('etf_adj', DONE), marked)
+
+    def test_adj_lights_white_after_recomputing(self):
+        from GolemQ.core.presentation import DONE
+        marked = self._marks(['600519'])               # 事件变了、正常重算
+        self.assertIn(('stock_adj', DONE), marked)
+        self.assertIn(('etf_adj', DONE), marked)

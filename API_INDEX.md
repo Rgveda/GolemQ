@@ -1279,6 +1279,10 @@ cli/commands/ 的注册表契约。
 | f | `TestXdxrRefreshGate.test_save_refresh_forces_it()` | 一个旗子 = 别信缓存、全查一遍（与参考数据闸、K 线短路同一口径）。 |
 | f | `TestXdxrRefreshGate.test_limited_codes_do_not_open_the_gate()` | ⚠️ 这条是静默丢数据的防线：试跑不许记账。 |
 | f | `TestXdxrRefreshGate.test_full_universe_marks_the_sweep()` |  |
+| C | `TestAdjNodeMarking` | stock_adj / etf_adj 两个节点什么时候点白。 |
+| f | `TestAdjNodeMarking.test_adj_lights_white_when_there_is_nothing_to_do()` |  |
+| f | `TestAdjNodeMarking.test_adj_stays_gray_when_events_changed_but_recompute_skipped()` | ⚠️ 反向那条：事件变了却 --save-no-adj ⇒ _adj 是过期的。 |
+| f | `TestAdjNodeMarking.test_adj_lights_white_after_recomputing()` |  |
 
 ### `test_cli_tools`
 测试 CLI 工具功能

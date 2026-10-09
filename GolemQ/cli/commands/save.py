@@ -272,7 +272,21 @@ def run_save(args) -> None:
                     # 就会把闸打开 → 之后**全量跑整段跳过 xdxr** → 新除权事件静默漏掉。
                     if codes is None:
                         mark_kline_sweep(xdxr_node)
-                    if xdxr['events_changed'] and not args.save_no_adj:
+                    if not xdxr['events_changed']:
+                        # **事件没变 ⇒ `{target}_adj` 已经是最新的**（不用重算）。
+                        # ⚠️ **点白，不是留灰**（用户 2026-10-10 指出）：灰点在这个 banner
+                        # 里表示「队列中 / 未获取」，而这里的事实是「**检查过了、结论是不用做**」
+                        # —— 留灰会被读成"这一步没做成"。与参考数据那条 `cached ⇒ DONE`
+                        # **同一条口径**（`PENDING` 只留给"真的没轮上"）。
+                        banner.mark(adj_node, DONE)
+                    elif args.save_no_adj:
+                        # ⚠️ 事件**变了**却按用户的 `--save-no-adj` 跳过重算 ⇒
+                        # `{target}_adj` 此刻是**过期**的（旧因子）。**不许点白** ——
+                        # 那才是真的谎报。留灰 + `-v` 说清。
+                        if args.verbose:
+                            say('[adj] {} 有事件变化，但 --save-no-adj ⇒ 因子停留在旧基准'
+                                .format(adj_node))
+                    else:
                         # 只对**事件变化**的 code 整条重算（见 save_adj 的护栏说明）
                         banner.mark(adj_node, RUNNING)      # 同 `xdxr_node`：阻塞调用前先点亮
                         save_adj(xdxr['events_changed'], verbose=args.verbose,
@@ -280,8 +294,6 @@ def run_save(args) -> None:
                         banner.mark(adj_node, DONE)
                         if codes is None:
                             mark_kline_sweep(adj_node)
-                    # ⚠️ 没有事件变化时 **不点 `{target}_adj`** —— 那一步压根没跑，
-                    # 点亮它等于替没做的事谎报成功，节点留在未获取才诚实。
 
         if banner is not None:
             banner.close()
