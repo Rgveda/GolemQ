@@ -27,7 +27,7 @@ env/
 .claude-flow/
 
 # Personal Claude Code settings (project-shared .claude/settings.json is tracked)
-.claude/settings.local.json
+.claude/
 
 # OS / editor cruft
 .DS_Store
