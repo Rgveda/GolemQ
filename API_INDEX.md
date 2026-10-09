@@ -64,6 +64,7 @@ CLI 环境自检 —— 版权页 + 机器 / 配置 / 服务三道闸。
 | f | `check_cpu()` | (状态, 说明)：厂商 · 物理核/逻辑线程 · 有无超线程 · 是否混合大小核。 |
 | f | `check_cuda()` | (状态, 说明)：有 N 卡就报卡型 + 驱动 + 驱动支持的 CUDA 版本。 |
 | f | `check_source(name)` | (状态, 说明)：某个可选数据源能不能用（配了 token / 包在不在）。 |
+| f | `check_xtquant()` | (状态, 说明)：[XTQUANT] 那一段配置齐不齐。 |
 | f | `check_serverchan()` | (状态, 说明)：Server酱（推送告警渠道）配了没。 |
 | f | `check_iwencai()` | (状态, 说明)：东方财富问财的配置。 |
 | f | `check_calendar(calendar, today)` | (状态, 说明)：交易日历（TRADE_DATE_SSE）够不够用。 |
@@ -1239,7 +1240,11 @@ cli/bootstrap.py —— 环境自检的口径。
 | f | `TestServerchanAndQmtChecks.test_serverchan_configured_is_ok()` |  |
 | f | `TestServerchanAndQmtChecks.test_serverchan_unconfigured_is_pending()` | 未配 ⇒ 灰：推送是可选渠道，不配不影响任何命令。 |
 | f | `TestServerchanAndQmtChecks.test_serverchan_probe_failure_does_not_raise()` |  |
-| f | `TestServerchanAndQmtChecks.test_qmt_reports_the_shutdown_not_the_config()` | ⚠️ 这条是防"顺手修绿"的钉子。 |
+| f | `TestServerchanAndQmtChecks.test_qmt_checks_the_xtquant_config_section()` | 用户 2026-10-10 明确：「讯投QMT 检查的是这一段 [XTQUANT] account/min_path」。 |
+| f | `TestServerchanAndQmtChecks.test_qmt_missing_keys_is_warn()` |  |
+| f | `TestServerchanAndQmtChecks.test_qmt_unreadable_config_is_warn()` |  |
+| f | `TestServerchanAndQmtChecks.test_qmt_green_still_reports_the_shutdown()` | ⚠️ 绿点不表示这条路可用 —— 「已停服」必须留在 detail 里。 |
+| f | `TestServerchanAndQmtChecks.test_qmt_is_not_an_adapter_source()` | 它查的是配置段，不该混进"适配器可用吗"那张表。 |
 
 ### `test_cli_commands`
 cli/commands/ 的注册表契约。

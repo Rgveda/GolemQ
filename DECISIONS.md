@@ -1233,13 +1233,21 @@ tushare（判断配置 tushare）、iwencai（判断配置东方财富问财）�
 
 **同批再加两个**（用户 2026-10-10 追加）：`serverchan`、`讯投QMT`。
 
+> 读 config.ini 的「取值」收进 `bootstrap._ini_value` 一处（`check_xtquant` / `_config_uri` 走它；**`check_config` 刻意不走**—— 它要区分「文件不在 / 解析失败 / 没有该键」三种错）。
+
 * `serverchan` → **复用 `agents.messenger.check_serverchan_config()`**（它读
   `[SERVERCHAN] sendkey` 并排除空值/默认值）。未配 ⇒ 灰（推送是可选渠道）。
-* `讯投QMT` → **复用 `QmtSource.available()` / `unavailable_reason()`**。
-  ⚠️ **这一条特别值得记**：`[XTQUANT] account` / `min_path` **两项都配着**，
-  所以"按配置判"会给出**绿点** —— 而那是**骗人**的：MiniQMT 自 2026-10-01 停服
-  （D13），这条路用不了。走适配器自己的判据，才会把「**已停用**」显示出来。
-  （顺带：它的 `available()` **故意不 import xtquant** —— 那个包一 import 就打印
+* `讯投QMT` → **查 `[XTQUANT] account / min_path` 这一段的配置**。
+  ⚠️ **订正**（用户 2026-10-10 明确「讯投QMT 检查的是这一段 [XTQUANT]」）：
+  我上一版让它走 `QmtSource.available()` —— 那个**恒为 False**
+  （`QMT_SOURCE_ENABLED = False`，MiniQMT 已停服），于是节点恒灰，
+  而那答的是「**这条路能用吗**」，不是用户要的「**配置齐没齐**」。
+  ⇒ 改成查配置段（齐 ⇒ 绿，缺 ⇒ 黄）。
+  ⚠️ **但「已停服」这个事实挪进了 detail，没有丢** —— 绿点只表示**配置齐**、
+  不表示这条路可用（D13）。判据换了，事实不能跟着消失，否则一个绿点就会让人
+  以为 QMT 能用。有用例 `test_qmt_green_still_reports_the_shutdown` 钉着。
+  📌 它因此**不在** `OPTIONAL_SOURCES` 里 —— 那张表是「适配器可用吗」。
+
   一行，所以这条探测很便宜。）
 
 **三个节点的判据：一律复用数据层自己的 `available()` / `unavailable_reason()`**

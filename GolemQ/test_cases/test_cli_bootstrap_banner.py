@@ -433,15 +433,43 @@ class TestServerchanAndQmtChecks(unittest.TestCase):
         self.assertEqual(state, PENDING)
         self.assertIn('RuntimeError', detail)
 
-    def test_qmt_reports_the_shutdown_not_the_config(self):
-        """⚠️ **这条是防"顺手修绿"的钉子。**
+    def test_qmt_checks_the_xtquant_config_section(self):
+        """用户 2026-10-10 明确：「**讯投QMT 检查的是这一段** `[XTQUANT] account/min_path`」。
 
-        `[XTQUANT] account/min_path` **两项都配着**，所以"按配置判"会给出**绿点** ——
-        而那是**骗人**的：MiniQMT 自 2026-10-01 停服（`DECISIONS.md` D13），这条路用不了。
-        所以判据必须走适配器自己的 `available()`/`unavailable_reason()`，
-        让「停用」这个事实**显示出来**。
+        ⚠️ 这是**订正**：我上一版让它走 `QmtSource.available()`（恒 False）⇒ 恒灰，
+        那答的是"**这条路能用吗**"，不是用户要的"**配置齐没齐**"。
         """
-        state, detail = bootstrap.check_source('qmt')
-        self.assertEqual(state, PENDING, 'QMT 已停用 —— 不许判绿')
-        self.assertIn('停用', detail)
+        with unittest.mock.patch.object(bootstrap, '_ini_value',
+                                        side_effect=lambda sec, opt: '设了'):
+            state, detail = bootstrap.check_xtquant()
+        self.assertEqual(state, OK)
+
+    def test_qmt_missing_keys_is_warn(self):
+        with unittest.mock.patch.object(bootstrap, '_ini_value',
+                                        side_effect=lambda sec, opt:
+                                        '' if opt == 'min_path' else '设了'):
+            state, detail = bootstrap.check_xtquant()
+        self.assertEqual(state, WARN)
+        self.assertIn('min_path', detail)
+
+    def test_qmt_unreadable_config_is_warn(self):
+        with unittest.mock.patch.object(bootstrap, '_ini_value', return_value=None):
+            self.assertEqual(bootstrap.check_xtquant()[0], WARN)
+
+    def test_qmt_green_still_reports_the_shutdown(self):
+        """⚠️ **绿点不表示这条路可用** —— 「已停服」必须留在 detail 里。
+
+        判据既然按用户口径定在**配置**上，那个事实就不能从屏上消失 ——
+        否则一个绿点会让人以为 QMT 能用（D13：MiniQMT 自 2026-10-01 停服）。
+        """
+        with unittest.mock.patch.object(bootstrap, '_ini_value',
+                                        side_effect=lambda sec, opt: '设了'):
+            state, detail = bootstrap.check_xtquant()
+        self.assertEqual(state, OK)
+        self.assertIn('停服', detail)
         self.assertIn('D13', detail)
+
+    def test_qmt_is_not_an_adapter_source(self):
+        """它查的是**配置段**，不该混进"适配器可用吗"那张表。"""
+        self.assertNotIn('讯投QMT', bootstrap.OPTIONAL_SOURCES)
+        self.assertEqual(bootstrap.XTQUANT_KEYS, ('account', 'min_path'))

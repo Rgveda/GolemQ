@@ -104,12 +104,14 @@ SELF_CHECK_NODES = ('操作系统', 'python', '依赖包', '线程环境', 'CPU 
 CALENDAR_RENEW_AFTER = (11, 10)
 
 #: **可选源**节点 → 适配器名（`markets/StockCN/datasource/` 的注册键）。
-#: ⚠️ `iwencai` **不在**这张表里 —— 它不是 `datasource/` 的适配器（见 `check_iwencai`）。
-#: ⚠️ `讯投QMT` 的适配器**恒不可用**（`QMT_SOURCE_ENABLED = False`，MiniQMT 自
-#: 2026-10-01 停服，`DECISIONS.md` D13）—— 但**照样走这张表**：它的
-#: `unavailable_reason()` 写得比这里能编的更准确，且 `available()` **故意不 import
-#: xtquant**（那个包一 import 就打印一行），所以探测很便宜。
-OPTIONAL_SOURCES = {'tdxidata': 'tdxaidata', 'tushare': 'tushare', '讯投QMT': 'qmt'}
+#: ⚠️ `iwencai` **不在**这张表里 —— 它不是 `datasource/` 的适配器（见 `check_iwencai`）；
+#: `讯投QMT` 也**不在** —— 它的适配器恒不可用，用户要的是查配置段（见 :data:`XTQUANT_KEYS`）。
+OPTIONAL_SOURCES = {'tdxidata': 'tdxaidata', 'tushare': 'tushare'}
+
+#: `讯投QMT`（迅投 QMT）要检查的**配置项** —— 用户 2026-10-10 明确「检查的是这一段」。
+#: ⚠️ 它**不走** `OPTIONAL_SOURCES`：那个是「适配器可用吗」，而 QMT 的适配器
+#: **恒不可用**（`QMT_SOURCE_ENABLED = False`，MiniQMT 已停服，D13）。
+XTQUANT_KEYS = ('account', 'min_path')
 
 #: 自检 banner 的表头 —— **两栏**（用户 2026-10-10 定，换行位置同日调整）。
 #:
@@ -467,6 +469,50 @@ def check_source(name):
         return PENDING, '探测失败（{}: {}）'.format(type(exc).__name__, exc)
 
 
+def _ini_value(section, option):
+    """读 ``~/.GolemQ/settings/config.ini`` 的某一项。
+
+    :returns: 去掉首尾空白的值（**键不存在返回 `''`**）；**整个文件/段读不到返回 `None`**
+        （不抛 —— 由调用方按"缺"处理）。
+
+    ⚠️ `check_xtquant` 与 `_config_uri` 都走它（读 config.ini 的"取值"只此一处）。
+    **`check_config` 不走** —— 它要区分「文件不在 / 解析失败 / 没有该键」三种错并
+    各报各的，只能在 `open` 那一层自己接异常。**别硬把它塞进来**：那会把三句
+    不同的报错压成一句「读不到」。
+    """
+    from GolemQ.core.path import setting_path
+    try:
+        parser = configparser.ConfigParser()
+        with open(os.path.join(setting_path, 'config.ini'), encoding='utf-8') as fh:
+            parser.read_file(fh)
+        return (parser.get(section, option, fallback='') or '').strip()
+    except Exception:      # noqa: BLE001
+        return None
+
+
+def check_xtquant():
+    """``(状态, 说明)``：`[XTQUANT]` 那一段**配置**齐不齐。
+
+    ⚠️ 用户 2026-10-10 明确：「**讯投QMT 检查的是这一段** `[XTQUANT] account / min_path`」
+    —— 所以本节点判的是「**配置到位**」，**不是**"QMT 现在能不能用"。
+
+    ⚠️ **两者不是一回事，所以 detail 里必须都写**：MiniQMT 自 **2026-10-01 停服**
+    （`DECISIONS.md` D13），取数与订阅**都已关闭**（`QMT_SOURCE_ENABLED = False`）。
+    ⇒ **绿点只表示「配置齐」，不表示这条路可用。** 判据既然按用户口径定在配置上，
+    就不能让那个事实从屏上消失（那才是真的会误导人）。
+    """
+    vals = {k: _ini_value('XTQUANT', k) for k in XTQUANT_KEYS}
+    if vals is None or any(v is None for v in vals.values()):
+        return WARN, '读不到 config.ini 的 [XTQUANT] 段'
+    missing = [k for k, v in vals.items() if not v]
+    if missing:
+        return WARN, ('缺 {} —— 在 ~/.GolemQ/settings/config.ini 的 [XTQUANT] 补上'
+                      .format('/'.join(missing)))
+    return OK, ('{} 已配；⚠️ MiniQMT 自 2026-10-01 停服（D13）取数与订阅均已关闭，'
+                '**绿点只表示配置齐、不表示这条路可用**'
+                .format('/'.join(XTQUANT_KEYS)))
+
+
 def check_serverchan():
     """``(状态, 说明)``：Server酱（推送告警渠道）配了没。
 
@@ -683,7 +729,7 @@ def run_checks(packages=None):
         ('tushare',) + _as_lines(check_source(OPTIONAL_SOURCES['tushare'])),
         ('iwencai',) + _as_lines(check_iwencai()),
         ('serverchan',) + _as_lines(check_serverchan()),
-        ('讯投QMT',) + _as_lines(check_source(OPTIONAL_SOURCES['讯投QMT'])),
+        ('讯投QMT',) + _as_lines(check_xtquant()),
     ]
 
 
@@ -777,8 +823,7 @@ def require_mongodb(verbose=False):
 
 def _config_uri():
     """从配置文件取 `[MONGODB] uri`（:func:`check_config` 已确认它存在）。"""
-    from GolemQ.core.path import setting_path
-    parser = configparser.ConfigParser()
-    with open(os.path.join(setting_path, 'config.ini'), encoding='utf-8') as fh:
-        parser.read_file(fh)
-    return parser.get('MONGODB', 'uri').strip()
+    value = _ini_value('MONGODB', 'uri')
+    if value is None:
+        raise configparser.NoSectionError('MONGODB')
+    return value
