@@ -342,7 +342,7 @@ class TestAdjNodeMarking(unittest.TestCase):
     **过期**的（旧因子）—— 那种情况**不许点白**，否则才是真的谎报。
     """
 
-    def _marks(self, events_changed, *, no_adj=False):
+    def _marks(self, events_changed, *, no_adj=False, gate=False):
         """跑一次 `run_save`，记下每个节点的 `mark` 序列。"""
         args = build_parser().parse_args(['--save', 'pytdx'] + (['--save-no-adj'] if no_adj else []))
         marked = []
@@ -369,10 +369,22 @@ class TestAdjNodeMarking(unittest.TestCase):
                                                  'errors': []}), \
                 unittest.mock.patch.object(ks, 'save_adj'), \
                 unittest.mock.patch.object(ks, 'kline_sweep_age_hours', return_value=1.0), \
-                unittest.mock.patch.object(ks, 'allow_xdxr_shortcircuit', return_value=False), \
+                unittest.mock.patch.object(ks, 'allow_xdxr_shortcircuit', return_value=gate), \
                 unittest.mock.patch.object(ks, 'mark_kline_sweep'):
             save_cmd.run_save(args)
         return marked
+
+    def test_adj_lights_white_when_the_gate_skips_xdxr(self):
+        """⚠️ **用户 2026-10-10 实报的那条**：xdxr 被**闸**跳过时，`_adj` 也必须点白。
+
+        闸跳会 `continue` —— 下面整个 `_adj` 段**一次都不执行**，于是它留灰。
+        而语义与"事件没变"同理：xdxr 未过期 ⇒ 事件与源端一致是**上次已验的结论**
+        ⇒ `_adj` 也是最新的（同参考数据 `cached ⇒ DONE`）。
+        """
+        from GolemQ.core.presentation import DONE
+        marked = self._marks([], gate=True)          # 闸跳、事件列表为空
+        self.assertIn(('stock_adj', DONE), marked, '闸跳时 _adj 留灰了')
+        self.assertIn(('etf_adj', DONE), marked)
 
     def test_adj_lights_white_when_there_is_nothing_to_do(self):
         from GolemQ.core.presentation import DONE

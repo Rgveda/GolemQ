@@ -891,3 +891,24 @@ def _run(self, *, last_bar_ts='default'):      # ← 哨兵，不是 None
 
 **钉它的测试**：`test_etf_routing.TestAdjFactorQueryUsesTheTimefield`（4 条：
 两处都必须带 `ts` 且不带 `date`、边界补到当日两端、投影保留 join 键）。
+---
+
+### P29. `git show HEAD:… > 文件` 之后再 `git checkout -- 文件` —— **会把改动洗掉**
+
+**症状**：为了"验一次非空转"而把工作树换成旧版，之后再 `git checkout -- <文件>` 恢复 ——
+**恢复的是索引里的版本**，而索引当时还停在 HEAD ⇒ **你刚做的修复被洗掉**，并且
+`git add -A` 会把洗掉的状态**提交**出去 ⇒ **commit message 说修了、文件里没有**。
+
+**怎么发生的**（2026-10-10 实测）：我想验「`_adj` 闸跳时点白」那条用例能不能抓到回归，
+`git show HEAD:save.py > save.py`（HEAD 是**改动前**的提交）→ 跑测试（红 ✓）→
+`git checkout -- save.py`（本意是"恢复我的修复"，实际是"恢复 HEAD"）→ 又跑一次还是红，
+我当时误读成"用例有问题"，**而其实是修复没了**；随后 `git add -A` 提交了一条
+**内容与 message 不符**的 commit。
+
+**该怎么办**：
+
+1. **先入索引再动工作树**：`git add -A` 之后再 `git show HEAD:… > 文件`，
+   `git checkout -- 文件` 恢复的就是**你暂存的版本** ✓
+2. 或者干脆别动工作树 —— 用 `git stash push -- <文件>`（它按工作树存，`pop` 回来的是你的改动）；
+3. **兜底自查**：动过工作树之后，`grep` 一下你新加的那行**还在不在**。
+   这次就是靠 `grep -c "闸跳过时这里…"` 才发现修复真的没了的。

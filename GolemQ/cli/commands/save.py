@@ -255,6 +255,12 @@ def run_save(args) -> None:
                     # **该重标的时候不重标**，那正是它存在的理由。
                     if not args.save_refresh and allow_xdxr_shortcircuit(xdxr_node):
                         banner.mark(xdxr_node, DONE)   # 数据是好的、只是没重取（同参考数据的 `cached`）
+                        # ⚠️ **`_adj` 也要点白**（用户 2026-10-10 实报「两个 _adj 运行过就该白」）：
+                        # 闸跳过时这里 `continue`，**下面整个 `_adj` 段一次都不执行** ⇒ 它会留灰。
+                        # 语义与"事件没变"同理：xdxr 集合未过期 ⇒ **事件与源端一致是上次已验的结论**
+                        # ⇒ 由它算出的 `_adj` 也是最新的（同参考数据 `cached ⇒ DONE`）。
+                        # 「最多滞后一个 TTL」是**闸本身**的代价，已体现在上面那个白点里（D25）。
+                        banner.mark(adj_node, DONE)
                         # ⚠️ 刷新闸这句话**只在 `-v` 下打**（用户 2026-10-09 指出）——
                         # 与参考数据的刷新闸、K线的「整段跳过」**同一口径**：闸的细节是
                         # 排障信息，不是每次运行都要看的东西（age 也就在 -v 下才算）。
