@@ -63,6 +63,8 @@ CLI 环境自检 —— 版权页 + 机器 / 配置 / 服务三道闸。
 | f | `check_os()` | (状态, 说明)：操作系统 + 位数。 |
 | f | `check_cpu()` | (状态, 说明)：厂商 · 物理核/逻辑线程 · 有无超线程 · 是否混合大小核。 |
 | f | `check_cuda()` | (状态, 说明)：有 N 卡就报卡型 + 驱动 + 驱动支持的 CUDA 版本。 |
+| f | `check_source(name)` | (状态, 说明)：某个可选数据源能不能用（配了 token / 包在不在）。 |
+| f | `check_iwencai()` | (状态, 说明)：东方财富问财的配置。 |
 | f | `check_calendar(calendar, today)` | (状态, 说明)：交易日历（TRADE_DATE_SSE）够不够用。 |
 | f | `check_tz()` | (状态, 说明)：本机时区是不是北京时间（UTC+08:00）。 |
 | f | `check_config()` | (ok, 说明)。查 ~/.GolemQ/settings/config.ini 在不在、能不能解析、 |
@@ -1219,6 +1221,19 @@ cli/bootstrap.py —— 环境自检的口径。
 | f | `TestTradingCalendarCheck.test_year_rollover_expires()` | 跨年：到了次年 1 月而日历没续 ⇒ 红（这是这条检查最该抓的情形）。 |
 | f | `TestTradingCalendarCheck.test_it_is_a_node_but_not_a_hard_gate()` | 在 banner 上有节点，但不进硬拦（红点也不拦启动）。 |
 | f | `TestTradingCalendarCheck.test_real_calendar_is_current()` | 真日历此刻应该是绿（覆盖到今年年底）。 |
+| C | `TestBannerTwoColumns` | 自检 banner 分两栏（用户 2026-10-10）。 |
+| f | `TestBannerTwoColumns.test_two_rows()` |  |
+| f | `TestBannerTwoColumns.test_rows_flatten_to_the_node_list_in_order()` | 两栏的顺序拼起来必须等于 SELF_CHECK_NODES —— 顺序是语义。 |
+| f | `TestBannerTwoColumns.test_column_split_is_semantic()` |  |
+| f | `TestBannerTwoColumns.test_second_row_shares_the_phase_name()` | 两行的阶段名相同 ⇒ 第二行留白对齐（渲染成一块，不是两块）。 |
+| C | `TestOptionalSourceChecks` | tdxidata / tushare / iwencai 三个节点。 |
+| f | `TestOptionalSourceChecks.test_configured_is_ok()` |  |
+| f | `TestOptionalSourceChecks.test_not_configured_is_pending_not_warn()` | 未配置 ⇒ 灰，不是红也不是黄：可选源没配不影响任何命令跑得通。 |
+| f | `TestOptionalSourceChecks.test_probe_failure_does_not_raise()` | 探测抛错也要给状态（灰 + 原因），不许把启动自检搞崩。 |
+| f | `TestOptionalSourceChecks.test_get_source_failure_does_not_raise()` |  |
+| f | `TestOptionalSourceChecks.test_iwencai_is_pending_and_says_unimplemented()` | ⚠️ 问财在新树尚未实现 —— 节点如实说，且不发明没人读的配置键。 |
+| f | `TestOptionalSourceChecks.test_three_nodes_are_present_but_not_hard_gates()` |  |
+| f | `TestOptionalSourceChecks.test_optional_source_map_covers_the_two_adapters()` | 节点名 → 适配器名的映射必须与 datasource/ 的注册键一致。 |
 
 ### `test_cli_commands`
 cli/commands/ 的注册表契约。

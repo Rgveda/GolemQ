@@ -96,14 +96,26 @@ MONGO_TIMEOUT_MS = 3000
 
 #: 自检 banner 的节点，**顺序即屏上顺序**（`DECISIONS.md` D17 的先例：顺序是语义）。
 SELF_CHECK_NODES = ('操作系统', 'python', '依赖包', '线程环境', 'CPU 架构', 'CUDA',
-                    '时区', '交易日历')
+                    '时区', '交易日历', 'tdxidata', 'tushare', 'iwencai')
 
 #: 交易日历「**该续下一年了**」的分界（月, 日）—— 用户 2026-10-10 定。
 #: 过了这一天而日历仍只到今年年底 ⇒ 黄点提醒（次年的安排通常那时已经公布）。
 CALENDAR_RENEW_AFTER = (11, 10)
 
-#: 自检 banner 的表头 —— 单阶段**一行平铺**（用户 2026-10-09 定）。
-SELF_CHECK_ROWS = (('环境自检', None, list(SELF_CHECK_NODES)),)
+#: 三个**可选数据源**节点 → 适配器名（`markets/StockCN/datasource/` 的注册键）。
+#: ⚠️ `iwencai` **不在**这张表里 —— 它不是 `datasource/` 的适配器（见 `check_iwencai`）。
+OPTIONAL_SOURCES = {'tdxidata': 'tdxaidata', 'tushare': 'tushare'}
+
+#: 自检 banner 的表头 —— **两栏**（用户 2026-10-10 定）。
+#:
+#: 11 个节点挤一行太长（2026-10-09 那版是 7 个），故按**语义**分两栏：
+#: 上栏是「机器 / 解释器」，下栏是「环境 / 数据源」。
+#: 阶段名只在第一行打（`render_pipeline_banner` 对连续同名阶段的行为），
+#: 第二行留白对齐 —— 看起来仍是**一块**，只是折了两行。
+SELF_CHECK_ROWS = (
+    ('环境自检', None, ['操作系统', 'python', '依赖包', '线程环境', 'CPU 架构', 'CUDA']),
+    ('环境自检', None, ['时区', '交易日历', 'tdxidata', 'tushare', 'iwencai']),
+)
 
 #: `nvidia-smi` 两次调用的超时（秒）。实测本机 `--query-gpu` 47ms + 全量 126ms，
 #: 这个上限只是为了别在一台驱动装坏的机器上挂死。
@@ -414,6 +426,51 @@ def check_cuda():
         return PENDING, 'nvidia-smi 探测失败（{}: {}）'.format(type(exc).__name__, exc)
 
 
+def check_source(name):
+    """``(状态, 说明)``：某个**可选数据源**能不能用（配了 token / 包在不在）。
+
+    ⚠️ 判据**复用数据层自己的** `available()` / `unavailable_reason()` ——
+    `markets/StockCN/datasource/` 的适配器**都实现了这两个**（`qmt_source.py` 的注释
+    还专门点过：「别处四个源（baostock / eastmoney / tdxaidata / tushare）都实现了」）。
+    **不要在 CLI 里重写一套「配置了没」** —— 那正是「平行实现不会报错，只会分叉」，
+    而且配置键名会散成两处真相。
+
+    **未配置 ⇒ 灰（`:data:`PENDING`）**，不是红也不是黄：这些都是**可选源**
+    （主源是 pytdx），没配不影响任何命令跑得通。灰点在这里表达的是
+    「**没去检查 / 不适用**」—— 与 CUDA 那条同一个口径。
+
+    :param name: 适配器注册名（`OPTIONAL_SOURCES` 的值）
+    """
+    try:
+        # 函数内导入：`markets/StockCN/__init__.py` 那一串不轻（quotes → easyquotation…），
+        # 而本函数在**每条命令**的启动自检里都会跑。
+        from GolemQ.markets.StockCN.datasource import get_source
+        src = get_source(name)
+    except Exception as exc:      # noqa: BLE001 源没注册也算「探不到」，不拦启动
+        return PENDING, '取不到该源适配器（{}: {}）'.format(type(exc).__name__, exc)
+    try:
+        if src.available():
+            return OK, '已配置（适配器 {}）'.format(getattr(src, 'name', name))
+        return PENDING, src.unavailable_reason()
+    except Exception as exc:      # noqa: BLE001
+        return PENDING, '探测失败（{}: {}）'.format(type(exc).__name__, exc)
+
+
+def check_iwencai():
+    """``(状态, 说明)``：东方财富**问财**的配置。
+
+    ⚠️ **新树尚未实现**（2026-10-10 核实）：`services/iwencai.py` 只有一个 `__init__`
+    （造了个空 index），**零请求逻辑、零调用点**（全树只有那个文件自己提到 iwencai）。
+    老树那边是**爬虫**（`GQ_SU_crawl_stock_*_from_iwencai_*`），**也没有 token 配置**。
+
+    ⇒ **没有可判的配置项**，故恒为**灰**并在 detail 里说明现状。
+    **不发明一个没人读的配置键** —— 那等于假配置（`config.ini` 里放个 token
+    却没有任何代码读它，比不放更坏）。真要接入，先把抓取实现搬过来。
+    """
+    return PENDING, ('新树尚未实现：`services/iwencai.py` 是空壳（零请求逻辑、'
+                     '零调用点），没有可判的配置项')
+
+
 def check_calendar(calendar=None, today=None):
     """``(状态, 说明)``：交易日历（`TRADE_DATE_SSE`）**够不够用**。
 
@@ -592,6 +649,9 @@ def run_checks(packages=None):
         ('CUDA',) + _as_lines(check_cuda()),
         ('时区',) + _as_lines(check_tz()),
         ('交易日历',) + _as_lines(check_calendar()),
+        ('tdxidata',) + _as_lines(check_source(OPTIONAL_SOURCES['tdxidata'])),
+        ('tushare',) + _as_lines(check_source(OPTIONAL_SOURCES['tushare'])),
+        ('iwencai',) + _as_lines(check_iwencai()),
     ]
 
 

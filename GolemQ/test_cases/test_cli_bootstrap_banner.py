@@ -309,3 +309,99 @@ class TestTradingCalendarCheck(unittest.TestCase):
                           .format(detail))
         self.assertEqual(state, OK)
         self.assertIn('{}-12-31'.format(year), detail)
+
+
+class TestBannerTwoColumns(unittest.TestCase):
+    """自检 banner **分两栏**（用户 2026-10-10）。
+
+    11 个节点挤一行太长（2026-10-09 那版 7 个时是一行平铺）。两栏按**语义**分：
+    上栏「机器 / 解释器」，下栏「环境 / 数据源」。
+    """
+
+    def test_two_rows(self):
+        self.assertEqual(len(bootstrap.SELF_CHECK_ROWS), 2,
+                         '应是**两栏**（两行），不是一行平铺')
+
+    def test_rows_flatten_to_the_node_list_in_order(self):
+        """两栏的**顺序拼起来**必须等于 `SELF_CHECK_NODES` —— 顺序是语义。"""
+        keys = [k for _, _, ks in bootstrap.SELF_CHECK_ROWS for k in ks]
+        self.assertEqual(keys, list(bootstrap.SELF_CHECK_NODES))
+
+    def test_column_split_is_semantic(self):
+        upper = bootstrap.SELF_CHECK_ROWS[0][2]
+        lower = bootstrap.SELF_CHECK_ROWS[1][2]
+        for node in ('操作系统', 'python', '依赖包', '线程环境', 'CPU 架构', 'CUDA'):
+            self.assertIn(node, upper, '机器/解释器该在上栏')
+        for node in ('时区', '交易日历', 'tdxidata', 'tushare', 'iwencai'):
+            self.assertIn(node, lower, '环境/数据源该在下栏')
+
+    def test_second_row_shares_the_phase_name(self):
+        """两行的阶段名相同 ⇒ 第二行**留白对齐**（渲染成一块，不是两块）。"""
+        self.assertEqual(bootstrap.SELF_CHECK_ROWS[0][0],
+                         bootstrap.SELF_CHECK_ROWS[1][0])
+        lines = render_pipeline_banner(bootstrap.SELF_CHECK_ROWS, {},
+                                       color=False).split('\n')
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith('环境自检'))
+        self.assertFalse(lines[1].startswith('环境自检'),
+                         '第二行不该重复阶段名（应留白对齐）')
+
+
+class TestOptionalSourceChecks(unittest.TestCase):
+    """`tdxidata` / `tushare` / `iwencai` 三个节点。
+
+    ⚠️ 判据**复用数据层自己的 `available()` / `unavailable_reason()`** ——
+    不在 CLI 里重写「配置了没」（那是平行实现，且配置键名会散成两处真相）。
+    """
+
+    def _check(self, name, *, available=True, reason='没配', boom=None):
+        fake = unittest.mock.MagicMock()
+        fake.available.return_value = available
+        fake.unavailable_reason.return_value = reason
+        if boom is not None:
+            fake.available.side_effect = boom
+        with unittest.mock.patch('GolemQ.markets.StockCN.datasource.get_source',
+                                 return_value=fake):
+            return bootstrap.check_source(name)
+
+    def test_configured_is_ok(self):
+        self.assertEqual(self._check('tushare')[0], OK)
+
+    def test_not_configured_is_pending_not_warn(self):
+        """**未配置 ⇒ 灰**，不是红也不是黄：可选源没配不影响任何命令跑得通。"""
+        state, detail = self._check('tushare', available=False, reason='未配置 token')
+        self.assertEqual(state, PENDING)
+        self.assertIn('未配置 token', detail)
+
+    def test_probe_failure_does_not_raise(self):
+        """探测抛错也要给状态（灰 + 原因），**不许把启动自检搞崩**。"""
+        state, detail = self._check('tushare', boom=RuntimeError('适配器炸了'))
+        self.assertEqual(state, PENDING)
+        self.assertIn('RuntimeError', detail)
+
+    def test_get_source_failure_does_not_raise(self):
+        with unittest.mock.patch('GolemQ.markets.StockCN.datasource.get_source',
+                                 side_effect=KeyError('没这个源')):
+            state, detail = bootstrap.check_source('nope')
+        self.assertEqual(state, PENDING)
+        self.assertIn('KeyError', detail)
+
+    def test_iwencai_is_pending_and_says_unimplemented(self):
+        """⚠️ 问财在新树**尚未实现** —— 节点如实说，且**不发明没人读的配置键**。"""
+        state, detail = bootstrap.check_iwencai()
+        self.assertEqual(state, PENDING)
+        self.assertIn('尚未实现', detail)
+
+    def test_three_nodes_are_present_but_not_hard_gates(self):
+        for node in ('tdxidata', 'tushare', 'iwencai'):
+            with self.subTest(node=node):
+                self.assertIn(node, bootstrap.SELF_CHECK_NODES)
+                self.assertNotIn(node, bootstrap.ENV_GATE_NODES,
+                                 '可选源不许拦启动')
+
+    def test_optional_source_map_covers_the_two_adapters(self):
+        """节点名 → 适配器名的映射必须与 `datasource/` 的注册键一致。"""
+        from GolemQ.markets.StockCN.datasource import get_source
+        for node, adapter in bootstrap.OPTIONAL_SOURCES.items():
+            with self.subTest(node=node):
+                self.assertIsNotNone(get_source(adapter))

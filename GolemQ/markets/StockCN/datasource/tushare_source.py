@@ -3,18 +3,21 @@
 
 ⚠️ 状态：无 token 时 `available()` 返回 False
 ==============================================
-tushare 1.4.21 已安装，但其所有接口都要求 `pro_api(token)`。当前配置里
-**没有 TUSHARE 段**，故无法调用。
+tushare 1.4.21 已安装，但其所有接口都要求 `pro_api(token)`。
 
-配置怎么加（有个坑）
-====================
-`core/settings.py` 只把 `MONGODB` / `DINGTALK` / `SERVERCHAN` / `XTQUANT`
-四个段当作 INI 支持（`:103` 读、`:132` 写），**其余段落入 Mongo 集合
-`GolemQ.settings`**。所以 `GQSETTING.get_config('TUSHARE', 'token')` 现在
-**能用**，但值存在 Mongo 里而不是 `config.ini`。
+配置怎么加
+==========
+在 `~/.GolemQ/settings/config.ini` 里填：
 
-token 属凭证，放 INI 更合适 —— 需要把 `'TUSHARE'` 加进那两处的元组。
-本模块不擅自改配置层，留给配置整理时一并做。
+```ini
+[TUSHARE]
+token = 你的 token
+```
+
+✅ **`'TUSHARE'` 已在 `core.settings.INI_ONLY_SECTIONS` 里**（2026-10-10 加）——
+该段只走 INI，**不会**落到 Mongo 集合 `GolemQ.settings`。凭证放 INI 是刻意的，
+也正因为进了那个元组才成立。（在此之前它虽然"能用"，但值会写进 Mongo。）
+`[TDXAIDATA]` 同批加的（它原先也漏在外面，能读只是"INI 命中在前"的巧合。）
 
 它能供什么（据接口能力，未实测）
 ================================
@@ -76,9 +79,12 @@ class TushareSource(DataSource):
             import tushare  # noqa: F401
         except ImportError:
             return 'tushare 未安装'
-        return ('未配置 tushare token。当前 GQSETTING.get_config("TUSHARE","token") '
-                '为空；注意该段落入的是 Mongo 集合 GolemQ.settings 而非 config.ini，'
-                '要放进 INI 需把 "TUSHARE" 加进 core/settings.py:103 与 :132 的元组。')
+        # ⚠️ 这段措辞 2026-10-10 改过：原文还在讲「要把 TUSHARE 加进 settings.py 的
+        # 两处元组」—— 那件事**已经做了**（现在是 `core.settings.INI_ONLY_SECTIONS`），
+        # 留着会把人引向一个不存在的待办（行号也早变了）。
+        return ('未配置 tushare token —— 在 ~/.GolemQ/settings/config.ini 的 '
+                '[TUSHARE] token 填上即可（该段属 INI_ONLY_SECTIONS，只读 INI，'
+                '不落 Mongo 集合）')
 
     def fetch(self, collection: str, **kwargs) -> list:
         if not self.supports(collection):

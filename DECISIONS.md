@@ -1213,3 +1213,45 @@ realtime=False  1.211s   |   realtime=True  1.209s   |   差 -0.003s（噪声内
 ⚠️ **它会在每年 11-10 之后变黄** —— 那是**有意的提醒**。用例
 `test_real_calendar_is_current` 在黄点时会 **skip 并说明原因**，免得日后有人误以为
 用例坏了；真到了那天该做的是**续 `TRADE_DATE_SSE`**，不是改用例。
+
+---
+
+## D31. 自检 banner **分两栏** + 三个**可选数据源**节点（`tdxidata` / `tushare` / `iwencai`）
+
+**用户 2026-10-10 定**：「bootstrap 分两栏，加上 tdxidata（判断配置 tdxidata+token）、
+tushare（判断配置 tushare）、iwencai（判断配置东方财富问财），这些都写进 config.ini」。
+
+**分两栏**：11 个节点挤一行太长（2026-10-09 那版 7 个时是一行平铺）。按**语义**分：
+
+```
+环境自检  操作系统 ●  python ●  依赖包 ●  线程环境 ●  CPU 架构 ●  CUDA ●
+          时区 ●  交易日历 ●  tdxidata ●  tushare ●  iwencai ●
+```
+
+上栏「机器 / 解释器」、下栏「环境 / 数据源」；两行**同阶段名** ⇒ 第二行留白对齐
+（`render_pipeline_banner` 对连续同名阶段的行为），看起来仍是**一块**。
+
+**三个节点的判据：一律复用数据层自己的 `available()` / `unavailable_reason()`**
+（`markets/StockCN/datasource/` 的适配器都实现了这两个）。**不在 CLI 里重写
+「配置了没」** —— 那是平行实现，而且配置键名会散成两处真相。
+
+**状态语义：未配置 ⇒ 灰（`PENDING`），不是红也不是黄。** 这些都是**可选源**
+（主源是 pytdx），没配不影响任何命令跑得通 —— 与 CUDA 那条同一口径。也**都不进
+`ENV_GATE_NODES`**（不拦启动）。
+
+⚠️ **`iwencai` 是个例外，且如实标注**：新树**尚未实现** —— `services/iwencai.py`
+只有一个 `__init__`（造了个空 index），**零请求逻辑、零调用点**；老树那边是**爬虫**
+（`GQ_SU_crawl_stock_*_from_iwencai_*`），**也没有 token 配置**。
+故它**恒为灰**、detail 写明现状，且**不发明一个没人读的配置键** ——
+`config.ini` 里放个没人读的 token 比不放更坏（假配置）。
+
+**配置写进 `config.ini`**：新建 `[TUSHARE] token`（`[TDXAIDATA] token` 本来就在）。
+⚠️ **`tdxaidata` 的 lib 不用配** —— `_ensure_lib()` 会自动把包内库目录镜像到
+`~/.GolemQ/tdxaidata_lib` 并注入 token。
+
+**顺带收口一处会分叉的东西**：`core/settings.py` 里「哪些段只走 INI」原先在
+`get_config` / `set_config` **各写了一遍**（`if section == 'DINGTALK' or …`），
+一旦不同步就会出现「读得到、写却写进 Mongo」的半吊子状态。收成
+`INI_ONLY_SECTIONS` 一处，并**把 `'TDXAIDATA'` / `'TUSHARE'` 一起加进去** ——
+`tushare_source` 的 docstring 里早就写着这条待办（`TDXAIDATA` 原先漏在外面，
+它"能用"只是因为 `get_config` 先试 INI 命中了的巧合）。

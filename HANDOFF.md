@@ -955,3 +955,15 @@ T-1 17:30 扫过 → T 08:30 开盘前那一跑只隔 15h < 24h ⇒ **被跳** �
 节点排在 `时区` 之后；**不进 `ENV_GATE_NODES`**（红点不拦启动）。
 真机 2026-10-10：`ok / 覆盖到 2026-12-31（8797 个交易日）`。
 ⚠️ 每年 **11-10 之后它会有意变黄**（提醒续日历）；那天该续 `TRADE_DATE_SSE`，别改用例。
+
+### ✅ banner 两栏 + 三个可选源节点（2026-10-10，`DECISIONS.md` D31）
+
+11 节点分两栏（机器/解释器 ‖ 环境/数据源）。新增 `tdxidata` / `tushare` / `iwencai`：
+判据**复用数据层的 `available()`/`unavailable_reason()`**，**未配置 ⇒ 灰**（可选源，
+不拦启动）。`config.ini` 加了 `[TUSHARE] token`（`[TDXAIDATA] token` 本来就有）。
+
+⚠️ **`iwencai` 恒为灰**：新树**尚未实现**（`services/iwencai.py` 是空壳、零调用点），
+**没有可判的配置项** —— 没给它编配置键（那会是假配置）。要接入得先搬抓取实现。
+
+**顺带收口**：`settings.py` 的「只走 INI 的段」收成 `INI_ONLY_SECTIONS`（原在两处各写一遍），
+并补进 `TDXAIDATA`/`TUSHARE` —— 否则「读得到、写却写进 Mongo」。自检全量耗时 **0.53s**。

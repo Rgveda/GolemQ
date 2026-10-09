@@ -40,7 +40,15 @@ from GolemQ.core.mongo import (
 
 DEFAULT_MONGO = os.getenv('MONGODB', 'localhost')
 DEFAULT_DB_URI = 'mongodb://{}:27017'.format(DEFAULT_MONGO)
-CONFIGFILE_PATH = os.path.join(setting_path, 'config.ini')
+CONFIGFILE_PATH = os.path.join(setting_path, 'config.ini')
+
+#: **只从 INI 读、不回落到 MongoDB 的段**（凭证类）。
+#: ⚠️ 原先这串在 `get_config` / `set_config` 里**各写了一遍**，两处一旦不同步
+#: 就会出现「读得到、写却写进 Mongo」这种半吊子状态 —— 收成一处。
+#: `TDXAIDATA` / `TUSHARE` 是 2026-10-10 补进来的（`tushare_source` 的模块
+#: docstring 里早就写着这条待办）。
+INI_ONLY_SECTIONS = ('DINGTALK', 'SERVERCHAN', 'XTQUANT', 'TDXAIDATA', 'TUSHARE')
+
 
 
 class GQ_Setting():
@@ -97,7 +105,7 @@ class GQ_Setting():
             return config.get(section, option)
         except Exception:
             # For DingTalk, Server酱, and XTQuant configuration, don't fall back to MongoDB
-            if section == 'DINGTALK' or section == 'SERVERCHAN' or section == 'XTQUANT':
+            if section in INI_ONLY_SECTIONS:
                 return default_value
             else:
                 # For other sections, use MongoDB as fallback
@@ -126,7 +134,7 @@ class GQ_Setting():
             [type] -- [description]
         """
         # For DingTalk, Server酱, and XTQuant configuration, write to INI file instead of MongoDB
-        if section == 'DINGTALK' or section == 'SERVERCHAN' or section == 'XTQUANT':
+        if section in INI_ONLY_SECTIONS:
             config = configparser.ConfigParser()
             if os.path.exists(CONFIGFILE_PATH):
                 config.read(CONFIGFILE_PATH)
