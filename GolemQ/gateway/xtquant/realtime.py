@@ -25,7 +25,6 @@
 
 
 import datetime
-from xtquant import xtdata
 from datetime import (
     datetime as dt,
     timedelta,
@@ -54,6 +53,17 @@ def sub_l1_from_xtquant(
 ):
     """
     从讯投获取L1数据，大约3秒钟更新一次
+
+    ⚠️ **MiniQMT 自 2026-10-01 起停服**（监管），目前取不到任何数据；本函数
+    在**新树里当前零调用点**（老树的 CLI 曾以 ``--sub xtquant`` 调它）。
+    代码与结构**保留**，等接上替代源（cfquant）后再启用 —— 不要因为"没人用"就删。
+
+    ⚠️ 复活前还须改写入方式：本函数走 ``collections_of_today``，那是
+    「按日**普通**集合 + 唯一索引 + upsert」，而现在的实时落库是**时间序列**
+    集合（`golemq_stock_cn_realtime.realtime_YYYY-MM-DD`）—— 实测时间序列
+    不支持唯一索引、也不能 upsert，原样启用第一次写就会抛
+    ``Cannot perform a non-multi update``。应改走
+    :func:`GolemQ.markets.StockCN.realtime._write_ts_rows`。
     """
     # 创建心跳监控实例
     module = HeartbeatModule(
@@ -120,6 +130,7 @@ def sub_l1_from_xtquant(
         if GQ_util_if_tradetime(_time) or \
                 (get_once):  # 如果在交易时间
             try:
+                from xtquant import xtdata  # 用到才导入（同上）
                 l1_ticks = xtdata.get_full_tick(stock_list_codes)
                 l1_ticks_data, symbol_list = formater_l1_ticks(l1_ticks)
             except Exception as e:

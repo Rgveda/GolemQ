@@ -32,5 +32,10 @@ def set_cpu_affinity_even():
 
     **本次未修**：移植它会**真的改变运行时行为**（多进程管线的 CPU 绑定），
     属行为变更，需所有者点头。唯一调用方是 `pipeline/base.py:50`。
+
+    要移植的话，**物理核/超线程怎么判**已经有现成的、实测过的实现：
+    :func:`GolemQ.cli.bootstrap.check_cpu` / `_cpu_topology`（2026-10-09）。
+    两个坑写在它的 docstring 里：`GetSystemCpuSetInformation` 的**条目步长要读
+    `Size` 字段**，超线程**别读 `AllFlags` 的 `Smt` 位**（本机实测有假阳性）。
     """
     pass

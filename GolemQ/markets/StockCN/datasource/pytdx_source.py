@@ -88,8 +88,49 @@ pytdx 是请求/响应式 socket，一个畸形响应让字节流错位，此后
 ==============================
 ``hosts`` 是**通达信行情服务器地址**（轮换/中继），与 HTTP 代理是两回事，
 不要混用（见 `proxy.py`）。默认服务器已实测可用，但机器在不同网络环境下未必。
+
+⚠️ ``000001`` 这类同码标的：**哪种写法才真取得到**（2026-10-09 实测）
+===================================================================
+``000001`` 既是深市**平安银行**又是沪市**上证指数**（`PITFALLS.md` P2）。实测
+逐个走完整链路 —— ``symbol._split_cn_code`` → ``is_stock_cn`` → ``tdx_market_of``，
+外加 :meth:`TdxSource.fetch_stock_info` 里那句 ``str(code).split('.')[0][-6:]`` 归一化：
+
+=========================  ==============  ====================  ==============
+写法                        拆出的裸码       fetch 归一化后        取得到平安银行吗
+=========================  ==============  ====================  ==============
+``000001``                 ``000001``      ``000001``            ✅
+``000001.sz``              ``000001``      ``000001``            ✅
+``sz000001``               ``000001``      ``000001``            ✅
+``000001.XSHE``            ``000001``      ``000001``            ✅
+``sz.000001``              ``000001``      ``sz``                ❌ 取数坏
+``000001sz``               ``000001sz``    ``0001sz``            ❌ 两层都坏
+=========================  ==============  ====================  ==============
+
+另：``000001.SH`` 判为 ``index_cn``（上证指数）—— **显式交易所标记优先于号段
+推断**，这是刻意设计，不是 Bug。
+
+⚠️ 那两处失败源于**同一个平行实现分叉**（`CLAUDE.md` 开头那条纪律的实例）：
+``symbol._split_cn_code`` 是一套拆码逻辑，``fetch_stock_info`` 里又自己写了一套
+``str(code).split('.')[0][-6:]``，两套结论不一致：
+
+* ``sz.000001`` —— ``_split_cn_code`` **能**正确拆成 ``('000001', 'SZ')``，
+  但 ``fetch_stock_info`` 那行把它变成 ``'sz'`` → 必然取不到。
+* ``000001sz`` —— 后缀不带点，两层都不认。``is_stock_cn`` 之所以仍报「深市股票」，
+  只是因为它按 ``'000'`` 前缀匹配了**没裁剪的**串 —— 碰巧对，别当依据。
+
+**结论：要取深市平安银行，用 ``000001`` / ``000001.sz`` / ``sz000001`` /
+``000001.XSHE`` 这四种，别用 ``sz.000001`` 与 ``000001sz``。**
+若日后要收敛那处分叉，正解是让 ``fetch_stock_info`` 也调 ``_split_cn_code``，
+**不要在这里再写第三套拆码。**
+
+⚠️ 真正承重的规矩仍是**显式传 ``target``**（见 :func:`tdx_market_of`），
+而不是「挑个好后缀」—— ``000001`` 在 ``stock`` 族是深市平安银行（market 0）、
+在 ``index`` 族是沪市上证指数（market 1），不区分就会静默串数据。
 """
 from __future__ import annotations
+
+import random
+import threading
 
 from GolemQ.datasource.base import (
     STOCK_BLOCK,
@@ -101,8 +142,29 @@ from GolemQ.datasource.base import (
     register,
 )
 
-#: 2026-09-20 实测可用。仅作为兜底，正常应由配置提供。
-DEFAULT_HOSTS = (('123.125.108.14', 7709),)
+#: pytdx 行情服务器。**2026-10-08 逐台实测**（`connect` + `get_security_count(0)`，
+#: 单台 0.16–0.22s）。保留多台的**唯一理由是 PITFALLS P3b**：pytdx 一次失败调用
+#: 会毒死整条连接（之后静默返回 None，不抛异常），而处置只有「换连接」——
+#: 只有一台时，那台一抖就整批任务失败。
+#:
+#: ⚠️ 不要从 `~/.quantaxis/setting/stock_ip.json` 读列表：那是 QUANTAXIS 的文件，
+#: 而本树已与 QUANTAXIS 解耦（`HANDOFF.md` 任务 D）。要扩就实测后加在这。
+#: ⚠️ 这只是**最后手段** —— 正常路径不经过它。优先级（`TdxSource.__init__`）：
+#: 显式传入 > `~/.GolemQ/settings/tdx_hosts.json` 缓存（**66 台**，由
+#: `--update-tdx-hosts` 每周探活刷新）> pytdx 包内池（64 台）> 本表。
+#: **活动服务器列表不硬编码**（`DECISIONS.md` D22）。
+#:
+#: ⚠️ 顺序有讲究：**能用的排前面**。
+#: `123.125.108.14` 已**降到最后**（2026-10-09 实测：TCP 连得上，但协议层可能不应答 ——
+#: `get_security_count(0)` 一次连测 5 次全部超时 10.055s，几十分钟后再测 6/6 成功
+#: 中位 0.233s —— **它是间歇的，不是死的**）。它原先排第一，害得**每次**
+#: `new_api()` 白等 10s（一次 `--save` 折合 93 小时）。
+DEFAULT_HOSTS = (
+    ('115.238.90.165', 7709),
+    ('180.153.18.170', 7709),
+    ('shtdx.gtjas.com', 7709),
+    ('123.125.108.14', 7709),
+)
 
 #: **按市场各自的**股票代码前缀。
 #:
@@ -134,7 +196,10 @@ BLOCK_FILES = {
 
 
 def _tdx_market_of(code: str):
-    """6 位代码 → 通达信 market 号（0=深 1=沪 2=北）。非股票返回 None。"""
+    """6 位**股票**代码 → 通达信 market 号（0=深 1=沪 2=北）。非股票返回 None。
+
+    ⚠️ 这只对**股票**成立 —— 指数/ETF 要用 :func:`tdx_market_of`（号段语义按族不同）。
+    """
     if code.startswith(('60', '68')):
         return 1
     if code.startswith(('00', '30')):
@@ -144,6 +209,55 @@ def _tdx_market_of(code: str):
         # 是可用的（实测 920808）—— 只要知道代码就能取。
         return 2
     return None
+
+
+#: **指数**的号段 → pytdx market 号。**2026-10-09 实测**（拿库内 `index_day` 的
+#: `close` 当基准，两个 market 各取一次，同量级者为真）：
+#:
+#: ==========  ==================  ============  ============
+#: 前缀         代表                 库内 close    真 market
+#: ==========  ==================  ============  ============
+#: ``000``      000001 上证指数       3888          **1（沪）**（market=0 给 11.71 = 平安银行 ✗）
+#: ``880``      880001               11297         **1（沪）**
+#: ``399``      399001 深证成指       13317         **0（深）**
+#: ``395``      395001               1494          **0（深）**
+#: ``810``/``899`` 810011/899050     99.8/1056     **取不到**（两个 market 都空）→ 跳过
+#: ==========  ==================  ============  ============
+_INDEX_MARKET = {'000': 1, '880': 1, '399': 0, '395': 0}
+
+#: **ETF** 的号段 → market 号（沪 ``51/52/53/55/56/58``；深 ``15x``/``16x``）。
+_ETF_SZ_PREFIXES = ('15', '16')
+
+
+def tdx_market_of(code: str, target: str = 'stock'):
+    """6 位代码 + **标的族** → pytdx market 号（0=深 1=沪 2=北）；不认识返回 ``None``。
+
+    ⚠️ **必须带 `target`**：号段语义**按族不同**，同一串数字是两只标的 ——
+    ``000001`` 在 ``stock`` 里是**深市平安银行**（market 0），在 ``index`` 里是
+    **沪市上证指数**（market **1**）。不区分就会**串数据**：实测拿 market=0 去取
+    指数 ``000001`` 得到 close=11.71，那是银行价，而它**看起来完全合理**
+    （所以是静默污染，不是报错）。见 `PITFALLS.md` P2。
+
+    * ``stock``：沿用 :func:`_tdx_market_of` 的股票号段（60/68 沪、00/30 深、82/92 北）
+    * ``index``：见 :data:`_INDEX_MARKET`（实测表；810/899 取不到 → ``None``）
+    * ``etf``：``51/52/53/55/56/58`` → 沪；``15x``/``16x`` → 深
+
+    >>> tdx_market_of('000001', 'stock'), tdx_market_of('000001', 'index')
+    (0, 1)
+    >>> tdx_market_of('510300', 'etf'), tdx_market_of('159915', 'etf')
+    (1, 0)
+    >>> print(tdx_market_of('810011', 'index'))
+    None
+    """
+    if target == 'index':
+        return _INDEX_MARKET.get(code[:3])
+    if target == 'etf':
+        if code[:2] in _ETF_SZ_PREFIXES:
+            return 0
+        if code.startswith('5'):
+            return 1
+        return None
+    return _tdx_market_of(code)
 
 
 def _market_of(code: str) -> str:
@@ -165,9 +279,41 @@ class TdxSource(DataSource):
 
     def __init__(self, throttle=None, proxy=None, hosts=None):
         super().__init__(throttle=throttle, proxy=proxy)
-        self.hosts = tuple(hosts) if hosts else DEFAULT_HOSTS
+        # 服务器表的优先级（**正常路径不经过任何硬编码 IP**）：
+        #   显式传入 > `~/.GolemQ/settings/tdx_hosts.json` 缓存 > pytdx 包内池
+        #   > 手写的 `DEFAULT_HOSTS`（**最后手段**，只在 pytdx 内部也拿不到时才用）
+        # 缓存由 `--update-tdx-hosts` 每周刷新（真协议探活 + 按中位延迟排序）。
+        # 每一级拿不到都**静默往下一级退** —— 服务器表的问题绝不能让取数链跑不起来。
+        if hosts:
+            self.hosts = tuple(hosts)
+        else:
+            from .tdx_hosts import candidates as _cand
+            from .tdx_hosts import load as _load_hosts
+            self.hosts = tuple(_load_hosts() or _cand() or DEFAULT_HOSTS)
         self._api = None
         self._host = None
+        #: 每 thread 一条「上次成功的那台」—— 见 :meth:`_host_order`。
+        self._local = threading.local()
+
+    def _host_order(self):
+        """本次尝试服务器的顺序 —— **每个 worker 线程各粘各的**，且首选用随机起点。
+
+        为什么不是全局一条「上次成功」：那会让**所有 worker 挤到同一台**
+        （实测 60 次连接**全打** `124.71.9.153`）。挤在一起的代价有两个：
+        ① 那台负载陡增，**反而更容易进入「不应答」的相位**（本机实测过同一台
+        一会儿 0.2s、一会儿 >10s）；② 单台抖动就拖慢全体。
+
+        为什么不是纯随机：纯随机会让**每一次**都有 `1/台数` 的概率踩到坏服、
+        白等一个超时（D21 实测过 10s；这里 66 台里坏 1 台 × 33,474 次 ≈ 500 次
+        × 10s）。所以是**两者都要** ——
+
+        * **每线程的第一次**：随机起点，把并发 worker 散到不同服务器上（分布式）；
+        * **之后**：粘住自己那台，不再从表头重试（D21 的教训）。
+        """
+        preferred = getattr(self._local, 'host', None)
+        rest = [h for h in self.hosts if h != preferred]
+        random.shuffle(rest)
+        return ([preferred] if preferred else []) + rest
 
     # ---- 可用性 --------------------------------------------------------
 
@@ -182,29 +328,44 @@ class TdxSource(DataSource):
 
     # ---- 连接 ----------------------------------------------------------
 
-    def _connect(self):
-        """连上第一个可用的服务器并保持。失败时逐个换，全失败才报不可用。"""
-        if self._api is not None:
-            return self._api
+    def new_api(self):
+        """**新建**并连上一个可用服务器（逐个试 `hosts`）。调用方负责 `disconnect()`。
+
+        为什么要暴露这个而不只用 `_connect()` 的常驻连接：**PITFALLS P3b** ——
+        pytdx 一次失败调用会**毒死**整条连接（之后同连接所有调用静默返回 `None`，
+        不抛异常），唯一处置是**换一条新连接**。批量 K 线任务（几万次调用）必须
+        每 task 一条新连接、用完即弃，否则一个坏包就让后面全部静默取空。
+        """
         try:
             from pytdx.hq import TdxHq_API
         except ImportError as exc:
             raise DataSourceNotAvailable('pytdx 未安装') from exc
 
+        # ⚠️ 这里的顺序是**承重的**，改之前先读 `_host_order` 的说明：
+        # 既要「别每次从表头重试坏服」（D21：那会白等 10s/次，33,474 次 ≈ 93 小时），
+        # 又要「别让全部 worker 挤在同一台」（挤在一起会让那台更容易进入不应答相位）。
+        # 正解 = 每线程随机起点 + 各自粘住自己那台。
         last_err = None
-        for host, port in self.hosts:
+        for host, port in self._host_order():
             try:
                 api = TdxHq_API(heartbeat=False)
                 api.connect(host, port, time_out=10)
                 # 探一次真实取数，确认连接可用（connect 本身不验证协议层）
                 api.get_security_count(0)
-                self._api, self._host = api, (host, port)
+                self._host = (host, port)             # 排障信息（`host` 属性）
+                self._local.host = (host, port)       # 本线程的**粘性**选择
                 return api
             except Exception as exc:      # noqa: BLE001 - 逐个换服，记录最后错误
                 last_err = exc
         raise DataSourceNotAvailable(
             f'pytdx 无可用行情服务器（试过 {len(self.hosts)} 个）：{last_err}'
         )
+
+    def _connect(self):
+        """连上第一个可用的服务器并**保持**（参考数据那条路用；K 线用 `new_api`）。"""
+        if self._api is None:
+            self._api = self.new_api()
+        return self._api
 
     @property
     def host(self):
@@ -324,8 +485,18 @@ class TdxSource(DataSource):
             codelist = [codelist]
 
         rows = []
-        for code in codelist:
+        # 进度条用 tqdm（老树的标准写法；`disable=None` = 非 TTY 自动关）。
+        # ⚠️ **`leave=False` 是承重的**：`--save` 的参考数据阶段在这条之上画了一条
+        # 状态 banner（`core/presentation.Banner`），靠「光标上移 N 行」原地重画。
+        # 条若 `leave=True` 会**留在屏上**，光标就不在 banner 之下，重画必然错位。
+        #
+        # `desc` 报**当前 code**而不是固定的 `[pytdx:stock_info]`：跑的是哪一只
+        # 比跑的是哪个集合有用得多（集合名 banner 上已经写了），固定前缀只是占位。
+        from tqdm import tqdm
+        bar = tqdm(codelist, unit='stock', disable=None, leave=False)
+        for code in bar:
             code = str(code).split('.')[0][-6:]
+            bar.set_description(code)
             market = _tdx_market_of(code)
             if market is None:
                 continue
@@ -340,7 +511,6 @@ class TdxSource(DataSource):
                 continue
             rows.append({
                 'code': code,
-                'name': None,                       # 名称走 stock_list；此处不重复取
                 'market': 1 if market == 1 else 0,
                 'liutongguben': fi.get('liutongguben'),
                 'zongguben': fi.get('zongguben'),

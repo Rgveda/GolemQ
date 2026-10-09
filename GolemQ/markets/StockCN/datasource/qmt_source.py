@@ -208,6 +208,13 @@ def _ensure_ready(verbose: bool = True) -> bool:
     return True
 
 
+#: MiniQMT 自 2026-10-01 停服（监管），xtquant 包**不再使用** —— 故直接关掉这个源。
+#: 关掉不等于删掉：取数结构保留（将来接替代源 cfquant 时对着改）。
+#: ⚠️ 关它还有一个**必须**的理由：开着时 `available()` 会 `import xtquant`，
+#: 而那个包的 import 有打印副作用，会污染**每一条** CLI 命令的输出。
+QMT_SOURCE_ENABLED = False
+
+
 @register
 class QmtSource(DataSource):
     name = 'qmt'
@@ -216,13 +223,31 @@ class QmtSource(DataSource):
     default_interval = 0.0
 
     def available(self) -> bool:
-        """只判断包是否可导入。**不做在线探测** —— 那要连客户端，成本高且
-        属于 fetch 的职责；排障路径不该成为故障点。"""
+        """本机 QMT 源是否可用。**恒为 False**（见 :data:`QMT_SOURCE_ENABLED`）。
+
+        ⚠️ 这里**故意不再 `import xtquant`**：那个包一被 import 就打印一行
+        `xtquant文档地址：…`，而所有 CLI 命令（含 `--save tdx`）在解析源优先级时
+        都会调本函数 —— 于是**每条命令都无端加载 xtquant 并打印它**。
+        要恢复时把 :data:`QMT_SOURCE_ENABLED` 改回 True 即可（届时才 import）。
+        """
+        if not QMT_SOURCE_ENABLED:
+            return False
         try:
             import xtquant  # noqa: F401
         except ImportError:
             return False
         return True
+
+    def unavailable_reason(self) -> str:
+        """给 :func:`refdata_save._pick_source` 的报错用 —— 否则报「原因未知」。
+
+        别处四个源（baostock / eastmoney / tdxaidata / tushare）都实现了本方法，
+        本类漏了，于是 `--save qmt` 只会打出一句毫无信息量的「qmt 当前不可用：原因未知」。
+        """
+        if not QMT_SOURCE_ENABLED:
+            return ('QMT 源已停用（QMT_SOURCE_ENABLED = False）：MiniQMT 自 2026-10-01 '
+                    '停服，xtquant 不再使用，只保留取数结构。见 DECISIONS.md D13。')
+        return 'xtquant 未安装或不可用'
 
     def fetch(self, collection: str, **kwargs) -> list:
         if not self.supports(collection):

@@ -105,11 +105,11 @@ def _adj_collection():
     """`stock_adj` 集合。**函数级导入**是刻意的。
 
     `markets/StockCN/__init__.py:55` 先 `from .quotes import StockCNQuotes`，
-    到 `:70` 才定义 `DATABASE_STOCK_CN` —— 本模块在那一刻被间接导入，模块级
-    `from . import DATABASE_STOCK_CN` 会直接 `ImportError`。
+    到 `:70` 才定义 `GOLEMQ_STOCK_CN` —— 本模块在那一刻被间接导入，模块级
+    `from . import GOLEMQ_STOCK_CN` 会直接 `ImportError`。
     """
-    from . import DATABASE_STOCK_CN
-    return DATABASE_STOCK_CN['stock_adj']
+    from . import GOLEMQ_STOCK_CN
+    return GOLEMQ_STOCK_CN['stock_adj']
 
 
 def _row_dates(data):

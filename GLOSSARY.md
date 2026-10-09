@@ -57,8 +57,6 @@
 | `moneyflw_vol_min` | **持久化字段名**，从老项目逐字继承 | `moneyflow` 的笔误 |
 | `frequence` | **QUANTAXIS 公开 API 参数名**，且出现在逐字复制的错误串里 | `frequency` 的笔误 |
 | `ckpo` | cookbook 名的一部分（`ckpo_align_stock_turnover_rate`）| 缩写错误 |
-| `GQ_` 前缀 | 本项目的函数前缀（`GQ_fetch_*`、`GQ_SU_save_*`）| QUANTAXIS 的 `QA_` 前缀 |
-| `QA_` 前缀的**本地**函数 | ⚠️ `scribe.py` 里的 `QA_fetch_stock_list` 等**已是 GolemQ 自己的实现**，只是沿用了旧名 | 还以为在调 QUANTAXIS |
 
 **判断方法**：拿不准时去 `GolemQ_old/` 搜同一个词。**老树也有 = 领域词汇；只在拼写上可疑 = 真笔误。**
 

@@ -259,7 +259,7 @@ benchmark/base.py:261,276,316-334   portfolio_batch: str = ''   传入并被透�
 | `calc_portfolio_returns/_ratio`、优化器、`PFL` | `portfolio/` | 真正的组合逻辑 |
 | `fof_v1/v2/v3` | `portfolio/` | 组合构建 |
 
-**阶段 3 —— 剥 QUANTAXIS（50 处）**
+**阶段 3 —— 剥 QUANTAXIS（50 处）** ✅ **已完成（2026-10-08，`DECISIONS.md` D12）：全树 import 归零**
 `QA_util_timestamp_to_str` / `QA_util_str_to_datetime` 在
 `markets/StockCN/date_utils.py` 已有等价物；`DATABASE` 改指
 `core.settings`。**与整体解耦合并做，不要单独一轮。**

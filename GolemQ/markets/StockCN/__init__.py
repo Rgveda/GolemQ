@@ -42,17 +42,8 @@ from .realtime import (
 from .symbol import (
     is_stock_cn,
     normalize_code,
-    is_future_cn,
-    GQ_fetch_stock_info,
-    GQ_fetch_etf_name, 
-    GQ_fetch_stock_name,
 )
 import atexit
-from .scribe import (
-    GQ_get_etf_list,
-    GQ_etf_a_spot_em,
-    GQ_stock_a_spot_em,
-)
 from .quotes import StockCNQuotes
 
 
@@ -68,8 +59,8 @@ DATABASE = GQ_util_mongodb_client(mongo_uri)
 # 内容：由旧 GolemQ 系统的 MongoDB 4.4 (stock_min / index_min) 迁移而来，
 # 为 timeField=ts、metaField=code 的时序集合，分 period 存于
 # stock_1min|5min|15min|30min|60min 与 index_*。读路径见 kline83.py。
-DATABASE_STOCK_CN_NAME = 'golemq_stock_cn'
-DATABASE_STOCK_CN = DATABASE[DATABASE_STOCK_CN_NAME]
+GOLEMQ_STOCK_CN_NAME = 'golemq_stock_cn'
+GOLEMQ_STOCK_CN = DATABASE[GOLEMQ_STOCK_CN_NAME]
 
 # 实时行情（L1/L2）的库。与 `golemq_stock_cn`（历史行情）分开：
 # 实时是**追加写、不复权、按 ts 时间序列**，与历史库的读多写少性质不同。
@@ -78,8 +69,8 @@ DATABASE_STOCK_CN = DATABASE[DATABASE_STOCK_CN_NAME]
 # 这解决了原先 `self.GQREALTIME` 的「待定」：它当时指向
 # `DATABASE.GolemQ_StockCN_REALTIME`，而那个库在 8.3 服务器上**并不存在**
 # （实测 0 集合）。项目所有者 2026-09-21 定为 `golemq_stock_cn_realtime`。
-DATABASE_STOCK_CN_REALTIME_NAME = 'golemq_stock_cn_realtime'
-DATABASE_STOCK_CN_REALTIME = DATABASE[DATABASE_STOCK_CN_REALTIME_NAME]
+GOLEMQ_STOCK_CN_REALTIME_NAME = 'golemq_stock_cn_realtime'
+GOLEMQ_STOCK_CN_REALTIME = DATABASE[GOLEMQ_STOCK_CN_REALTIME_NAME]
 
 
 def close_mongo_client():
@@ -112,9 +103,10 @@ class StockCN(BaseMarket):
             self._name = "中国A股市场"
             self._exchange_codes = ['SH', 'SZ', 'BJ']
             
-            self.DATABASE = DATABASE_STOCK_CN
-            # 实时库（原「待定」已定，见 `DATABASE_STOCK_CN_REALTIME` 的说明）。
-            self.GQREALTIME = DATABASE_STOCK_CN_REALTIME
+            # 命名规则：**名字即库名**（用户 2026-10-08 定）。`self.DATABASE` /
+            # `self.GQREALTIME` 那两个 QUANTAXIS 时代的名字已随 D12 一并去掉。
+            self.GOLEMQ_STOCK_CN = GOLEMQ_STOCK_CN
+            self.GOLEMQ_STOCK_CN_REALTIME = GOLEMQ_STOCK_CN_REALTIME
             self.quotes = StockCNQuotes()
 
             # 注册到全局市场注册表。register_market/register_subscriber 默认
@@ -122,6 +114,11 @@ class StockCN(BaseMarket):
             # 但把「重复注册怎么办」收敛到一处，不在每个市场里各写一遍。
             register_market('StockCN', self)
             register_subscriber('l1_tencent', sub_l1_from_tencent)
+            # 老树的键名（`GolemQ_old/cli/__main__.py` 里的 `--sub tencent`）
+            # —— **同一个函数**，保留旧键是为了让已有的脚本与肌肉记忆继续可用：
+            # 老树那条也是「腾讯 L1 写实时库」，只是当时写 4.4 的 `QAREALTIME`，
+            # 现在写 8.3 的 `golemq_stock_cn_realtime`（见 `realtime._realtime_db`）。
+            register_subscriber('tencent', sub_l1_from_tencent)
             # L2 五档盘口：股票走腾讯（3 秒一轮），ETF 走 MiniQMT。
             # 新浪那条 L2 已加 30s 请求限制，无法连续取，故不在此列。
             register_subscriber('l2_tencent', sub_l2_from_tencent)
@@ -228,7 +225,7 @@ class StockCN(BaseMarket):
     def purge_historical_collections(self):
         """清理历史数据集合"""
         from .tools import purge_historical_collections
-        return purge_historical_collections(self.GQREALTIME)
+        return purge_historical_collections(self.GOLEMQ_STOCK_CN_REALTIME)
 
 
 # 在模块导入时自动创建并注册 StockCN 单例实例
@@ -239,20 +236,13 @@ _stockcn_instance = StockCN()
 # 导出公共接口
 __all__ = [
     'StockCN',
-    'DATABASE_STOCK_CN',
-    'DATABASE_STOCK_CN_NAME',
+    'GOLEMQ_STOCK_CN',
+    'GOLEMQ_STOCK_CN_NAME',
     'normalize_code',
     'is_stock_cn',
-    'is_future_cn',
-    'GQ_etf_a_spot_em',
-    'GQ_stock_a_spot_em',
-    'GQ_fetch_etf_name',
-    'GQ_fetch_stock_name',
     'sub_l1_from_tencent',
     'sub_l2_from_tencent',
     'formater_l1_ticks',
     'collections_of_today',
-    'GQ_get_etf_list',
-    'GQ_fetch_stock_info',
 ]
 

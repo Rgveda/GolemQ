@@ -23,12 +23,19 @@ A 股源优先级
                            pytdx 的 `get_finance_info` 字段名与目标 schema 逐字相同，
                            且**无需 QMT 客户端在线**。
 `etf_list`                 akshare → tdxaidata
+                           ⚠️ **tdxaidata 那一位实测是坏的**（2026-10-09）：
+                           `get_trackzs_etf_info` 返回 **0 行 + `[错误码 2] 股票代码错误`**。
+                           它作为兜底只会**静默返回空**，故 akshare 实际是唯一可用源。
+                           （它按设计也只是「跟踪指数的 ETF」而非全量清单，见适配器 docstring。）
 `financial`                akshare → tdxaidata
                            原定 baostock，实测其服务器不可达，改用 akshare。
 ========================  ==========================================================
 
 表里**只列实测可用的源**。骨架源（baostock/tushare/eastmoney）的
 `available()` 恒为 False，列进来只会让调用方多走一次注定失败的分支。
+⚠️ 上面 `etf_list` 那一行的 tdxaidata **是例外**（表里仍留着，但实测不产出数据）——
+留着的坏处是「兜底静默返回空」，好处是不改变既有的回退顺序；改它要连带定回退语义，
+故先记账在这里。
 """
 from __future__ import annotations
 
@@ -60,7 +67,11 @@ from . import tushare_source  # noqa: F401,E402
 #: A 股的源优先级：集合 → 按序尝试的源名。顺序即优先级。
 #: 理由逐条见模块文档。**只列实测可用的源。**
 COLLECTION_SOURCE_PRIORITY = {
-    STOCK_LIST: ['tdxaidata', 'pytdx', 'qmt', 'tencent'],
+    # pytdx 主、tdxaidata 补：pytdx 给 code/name/pre_close 真值，但**枚举不到北交所**
+    # （`get_security_list(2, 0)` 返回 None 且会毒死连接，见 `pytdx_source` 的模块文档）；
+    # tdxaidata 给全 5,579 只但北交所那 351 只**只有代码**（name/pre_close 皆 None）。
+    # 两者互补是**接口边界**，不是谁的 bug —— 补行逻辑见 `refdata_save._supplement_stock_list`。
+    STOCK_LIST: ['pytdx', 'tdxaidata', 'qmt', 'tencent'],
     STOCK_BLOCK: ['pytdx', 'qmt', 'tdxaidata'],
     STOCK_INFO: ['pytdx', 'tdxaidata', 'qmt'],
     ETF_LIST: ['akshare', 'tdxaidata'],

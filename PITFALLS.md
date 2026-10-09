@@ -72,6 +72,12 @@ class _StubMeta(type):
    `is_stock_cn` 路由会把 `000905.SZ`（厦门港务）写进指数路径，
    **覆盖 `000905.SH`（中证500）的历史**。指数路径必须按号段显式定交易所。
 
+3. **带交易所标记的写法**（2026-10-09 实测）—— 六种转义里有两个**取不到数据**：
+   `sz.000001` 被 `fetch_stock_info` 的 `str(code).split('.')[0][-6:]` 变成 `'sz'`；
+   `000001sz` 两层都不认。可用的是 `000001` / `000001.sz` / `sz000001` /
+   `000001.XSHE`。完整对照表见 `markets/StockCN/datasource/pytdx_source.py`
+   模块 docstring 的「``000001`` 这类同码标的：哪种写法才真取得到」。
+
 **该怎么办**：**永远不要用裸 6 位代码推断市场。**
 
 ---
@@ -338,6 +344,12 @@ suspended = (vol is None) or (float(vol) < 1)     # < 1 而不是 == 0，见上
 **约束（新增订阅器必须遵守）**：**所有订阅函数必须可零参数调用。**
 `sub_l1_from_tencent` 已补默认值（`database_realtime=None` → 8.3 的
 `golemq_stock_cn_realtime`），`sub_l2_from_tencent` 一开始就按此约定写。
+现在这条由测试守着：`test_cases/test_subscribers.py` 对
+`GQSUBSCRIBER` 里**每一个**函数做签名检查（不允许有必填参数），新增订阅器若违规会直接红。
+
+**键名也是契约**：`--sub <key>` 直接查 `GQSUBSCRIBER`。老树的键名要保留时**登记别名**
+（同一个函数对象），不要复制一份实现 —— 例：`tencent` ≡ `l1_tencent`
+（老树 `GolemQ_old/cli/__main__.py` 的 `sub == 'tencent'`，旧脚本按这个名字调）。
 
 ### P11. 笔记本无 markdown 头 = 论证丢失
 
@@ -394,6 +406,189 @@ elif code.startswith('200'):
 `tools/dump_is_stock_cn_baseline.py`。差异必须**恰好等于**有意改的那几段，
 多一条都是回归。**别用抽样**：抽样看不出「某号段整体失效」这类系统性错误。
 
+### P13. `'realtime_{}'.format(dt.today())` → **集合名里带上时分秒**（静默读空）
+
+**症状**：查询**永远返回 `None`**，不报错、不告警。
+
+**成因**：`dt` 是 `datetime` **类**（`from datetime import datetime as dt`），
+`dt.today()` 是 `datetime` 而不是 `date`，`str()` 出来是
+`2026-10-08 01:00:27.222907` → 拼出的集合名是
+`realtime_2026-10-08 01:00:27.222907`，**那个集合不可能存在**。
+
+**引入方式**：老树那里写的是 `date.today()`（`GolemQ_old/StockCN/realtime.py:117`），
+重构时换成 `dt.today()` —— 一行之差，读路径静默变成 no-op。
+
+**判据/规矩**：
+* 名字生成收敛到一处（本树：`markets/StockCN/realtime.realtime_collection_name`），
+  不要把 `datetime` 直接 `format` 进任何名字；
+* 单测同时断言「不含空格/冒号」与「purge 认这个名字」——后一条是**跨模块**契约；
+* 同类症状见 P10（也是"看起来像运行期问题、实则是约定问题"）。
+
+### P14. 时间序列集合：**不能 upsert、不拦重复、删除条件必须含全部去重键**（实测 8.3.11）
+
+**四条实测约束**（探针验证，勿凭印象推翻）：
+
+| 操作 | 结果 |
+|:--|:--|
+| 唯一索引 | ❌ `Unique indexes are not supported on time-series collections` |
+| `update_one` / `replace_one` / `update_many`(非 metaField) | ❌ `Cannot perform a non-multi update on a time-series collection` |
+| 同一 `(code, ts)` 插两次 | ✅ **插进去两行**（库不拦重复） |
+| `delete_many` / 按 `ts` 区间删 / `collMod expireAfterSeconds` | ✅ 都支持 |
+
+**推论（本树的设计依据）**：
+
+* 写入必须「**先删后插**」才幂等 —— 靠内存里的 `last_ts` 判新只能挡**进程内**重复；
+  进程重启后第一轮必然重写一次已入库的行，而库**不会**拦。
+* 删除条件必须含**全部**去重键。实时库里 L1 与 L2 落在**同一日集合**、
+  同一 `(code, ts)` 各有一行（`source` 区分），少写 `source` 就会**互删对方刚写的行**。
+  同理，进程内判新的 `last_ts` 也要按 `(source, code)` 记，只按 code 记会让第二条流的
+  第一行被当成"重复"丢掉。
+* **删除的代价极高，别每轮删**：时序删除是「解压桶 → 摘测量 → 回写桶」，而命中的桶
+  正是**当前正在写的热桶**。探针实测（4,900 个 metaField 值 + 本轮的 `ts`）：
+  `insert_many` 4,900 行 **0.95 s**，而 `delete_many` 同样规模要 **3.7 s**。
+  所以正确写法是**只在「本进程首次见到该去重键」时删**（稳态零删除、重启后第一批
+  全量删一次），而不是每轮无条件删 —— 后者在 2 秒一轮的订阅器里直接跑不动。
+* `granularity` 只能**建集合时**定，`collMod` 改不了（实测报 unknown field）。
+
+
+### P15. 时序集合上**无时间窗**的 `distinct`/`aggregate` = 分钟级（跨系统通用）
+
+**症状**：一个看起来无害的「有哪些 code」查询挂住不动，**不报错**。
+
+**实测**（2026-10-08，8.3.11，`golemq_stock_cn`）：
+
+| 查询 | 耗时 |
+|:--|:--|
+| `stock_day.distinct('code', {'date_stamp': {'$gte': 近1月}})` | **1.93 s** |
+| `stock_day.distinct('code')`（**无时间窗**） | **>120 s 未返回** |
+| `stock_1min.distinct('code', {'date_stamp': {'$gte': 近5交易日}})` | **49.9 s** |
+| `stock_day.count_documents({})` | 3.8 s（全集合 17,893,343 行）|
+| `stock_1min.count_documents({})` | 74.6 s（21.3 亿行）|
+| `find_one({'code': c}, sort=[('ts', -1)])`（带 metaField） | **12–29 ms** |
+| `distinct('date', {'code': c})`（带 metaField） | **32–75 ms** |
+
+**规矩**：时序集合上的每次查询**必须**带 `code`（走 metaField 剪枝）**或**一个窄时间窗。
+「有哪些标的」这类全集合问题，去**普通集合**（`stock_list`/`etf_list`）或**窗口化**地取。
+
+⚠️ 另一条**计量**教训：`$collStats: {count: {}}` 在时序集合上给过**不可靠的计数**
+（`stock_day` 报 891,761，真值 17,893,343 —— 差 20 倍），据此下的"日线没迁全"结论是错的。
+要准确计数就用 `count_documents`（代价见上表）。
+
+### P16. pytdx 的三条**口径**（不按它写就会静默错位/错 100 倍）
+
+**① 分钟标签与 8.3 存量同口径，不要做任何偏移。** 一度按「盘口边界」推断出 +1 分钟，
+逐根对拍**证伪**：2026-09-30 全天 240 根里 **239 根 `close` 逐值相同**（差的 1 根是存量
+缺 `15:00`）。推断与实测冲突时，**以对拍为准**。
+
+**② `vol` 的单位按市场/频率不同**（实测比值；写错就是静默 100 倍）：
+
+| 集合 | 换算 | 证据 |
+|:--|:--|:--|
+| `stock_day`/`etf_day`/`fund_day` | **不换算** | 31239 = 31239 |
+| `stock_*min`/`etf_*min`/`fund_*min` | **÷100**（pytdx 给**股**、存量存**手**） | 比中位数 = 100 |
+| `index_day` | **×100** | 4,385,300 → 438,530,412 |
+| `index_*min` | **不可复现** | 比值 14–18 **非常数**、close 精度也不同源 |
+
+**③ `amount` 的 `5.877471754e-39` 是 pytdx 的零成交标记**（源端就长这样），
+而 8.3 **近期**行存的是 `0.0`。哨兵只出现在 2018-11-08/14、2024-09-27 这类早期异常日。
+写入时**归零**（`normalize_amount`），不要反过来"修"成哨兵。
+
+### P17. 前复权因子（`stock_adj`）：**事件对齐差一天，整段历史差一个因子**
+
+`stock_adj` 是**前复权**因子 —— **最新一根恒为 1.0**，一旦有新除权事件，**整条历史都要重标**。
+两个实测坑：
+
+1. **事件日期不一定在日线里**。实测 600519 的 2006-05-19 除权日，日线整段
+   2006-05-18~05-24 是空的（真洞，归档集合里也没有）。这种事件必须**挪到下一个
+   存在的交易日**再算 —— 直接 `join` 会把它丢掉，结果是**整段历史差一个因子**
+   （实测 600519 差 2 倍、600601 差 10 倍）。按「挪到下一交易日」对齐后，
+   抽样 120 只票与存量**逐值相同（<1e-9）**。
+2. **只补增量必错**。局部更新会留下「一半旧基准 + 一半新基准」，`to_qfq()` **静默**
+   输出错价。规矩：**整条重算** + 至少两道护栏（末日因子必须 == 1、因子必须 > 0），
+   不满足就**拒绝写并报错**。
+
+
+### P18. **别在模块级拿数据源包/跨库句柄** —— 它们有副作用，且会拖进半棵树
+
+**症状**：跑**任何** CLI 命令（包括跟 QMT 毫无关系的 `--save tdx`）都先打一行
+`xtquant文档地址：http://dict.thinktrader.net/nativeApi/start_now.html`。
+
+**成因**：这一行是 **xtquant 包自己**在 import 时打的（不在本仓库里）。原本的传导链是：
+
+```
+cli/__main__.py  顶层 → supervisor/scheduler.py:15 顶层
+                      → gateway/xtquant/xtquant_tools.py:30 顶层 → import xtquant
+```
+
+`QmtSource.available()`（数据源优先级解析时会挨个调）也曾 `import xtquant` —— 于是连
+`--save tdx`（当时还有 `--save-x`）都会把它拖进来。
+
+**规矩**：**xtquant 相关的 import 一律放到函数内**（用到才导）。MiniQMT 自 2026-10-01
+停服后 `xtquant` 包**不再使用**，所以这条不是"以后再说"：任何一处顶层 import 都会让
+每条命令无端加载它并打印。
+
+**同批处理**（2026-10-08，起因是 `--save tdx` 实测拖了一堆无关东西）：
+
+| 位置 | 原本 | 改成 |
+|:--|:--|:--|
+| `markets/StockCN/scribe.py` | 模块级 `try: import akshare` | 函数级 `_ak()`（akshare 整包 **375** 个模块）|
+| `supervisor/scheduler.py` | 模块级 `import xtquant_tools` | 函数级 `_export_positions()` |
+| `cli/__main__.py` | 顶层 import xtquant.config / scheduler | 三条 QMT 分支各自函数级导入 |
+| `xtquant_tools.py` / `trader.py` / `gateway/xtquant/realtime.py` | 顶层 `import xtquant` | 下移到使用处 |
+| `markets/StockCN/datasource/qmt_source.py` | `available()` 里 `import xtquant` | `QMT_SOURCE_ENABLED=False`，**不 import** |
+| `core/settings.py` | 顶层 `from QUANTAXIS...QASetting import QA_Setting` + 模块级建 5 个句柄 | **PEP 562 `__getattr__` 惰性**（首次引用才构造）|
+| `core/__init__.py`、`GolemQ/__init__.py` | re-export `DATABASE`；顶层 `from . import analysis/services/pipeline/supervisor` | 惰性（PEP 562），子包改用 `importlib` 按需导入 |
+| `supervisor/function_checkin.py` | 模块级 `global_function_manager = FunctionCheckinManager()`（构造即连库） | 惰性单例 `_manager()` + `__getattr__` 兼容旧名 |
+| `markets/StockCN/symbol.py` | 模块级 `DATABASE_QA`，且把它当**默认参数** | 函数级 `_db()`；默认参数改 `None` 再在函数内解析 |
+
+⚠️ **默认参数也是导入期求值** —— 这是最容易漏的一种：`def f(coll=DATABASE.stock_list)`
+等价于模块级取 `DATABASE`。
+
+✅ **2026-10-08 更新（D12）：本树已无这类写法** —— 那约 10 个文件（`scribe.py`/`align.py`/
+`crawler.py`/`services/*`/`supervisor/heartbeat.py`/`cli/watchdog_manager.py`…）
+或随死代码删除、或把句柄改成函数级/惰性；跨库句柄本身（QUANTAXIS 的 5 个）也已全删。
+实测 `--save tdx` 的 `sys.modules` 里 QUANTAXIS / xtquant / akshare **均为 0 个模块**，
+模块总数 3,564 → 1,709。守卫见 `test_cases/test_no_quantaxis.py`。
+
+**判据**：`python -c "import sys; import <你的入口>; print(len(sys.modules))"`，
+以及查 `sys.modules` 里有没有 `akshare` / `xtquant` / `QUANTAXIS`。
+
+
+### P19. 「只取一部分」的参数 × 「删差量」的写入 = **静默删掉其余全部**
+
+**症状**：一个看起来只读的调试开关（`--save-codes 600519,000001,300329`），
+跑完之后集合里**只剩这几只**。不报错、不告警。
+
+**成因**：参考集合的落库带 `delete_delta_key`（语义是「本次取到的就是全部，
+其余删掉」），而 `codelist` 是调用方**故意部分取数**。两者相乘 =
+把本次没取到的标的全部删掉。实测：`stock_info` 从 **5,574 行删到 250 行**。
+
+**规矩**：**部分取数与差量删除互斥**。`save_refdata` 现在在 `codelist is not None`
+时自动把 `delete_delta_key` 置空并打印一行说明 —— 这条护栏放在**函数里**而不是
+各调用点，否则每加一个调用方就得记得一次。
+
+**推广**：任何「带 delta 语义的写入」，只要上游可能给**部分结果**，
+就必须显式区分「全集」与「子集」；判断不了就**不删**。
+（同 `writer.save_collection` 的「空结果绝不删」守卫，是同一个道理的两种形态。）
+
+
+### P20. 盘中 **`day` 不更新** —— 盘中行情是 REALTIME 合成的（跨系统通用）
+
+**约定（项目所有者 2026-10-08 明确）**：所有行情系统都一样 —— **盘中最后一根 day bar
+仍是昨天那根**，不会出现"未收盘的当日 day bar"。**盘中的行情由 REALTIME 的 L1 tick
+合成**（本项目即 `--sub l1_tencent` → `realtime_YYYY-MM-DD` → 重采样），
+与日线取数路径**不是同一条**。
+
+**为什么值得记**：我一度把"盘中跑过 → 最后一根是不完整的当日 bar"当成
+`--save tdx` 要留 5 天窗口余量的理由之一 —— **那个理由不成立**（见下条实测），
+窗口余量因此从 5 天改成 **0**（`DEFAULT_MARGIN_DAYS`）。
+
+**⚠️ 但这条约定不等于 pytdx 的行为**：实测 `pytdx.get_security_bars(category=9)`
+**盘中会返回一根「当日累计」的 day bar**（标 `15:00`，量与额是当天至今的累计）。
+所以盘中跑 `--save tdx` 会把它写进去 —— **收盘后再跑一次即被覆盖**（窗口从
+"水位当天"起算，正好覆盖它）。**别把"系统约定"与"某个取数接口的行为"混为一谈**：
+前者说数据该怎么用，后者说这个接口此刻给你什么。
+
 ---
 
 ## 附：本项目**刻意不做**的事（别当缺失补上）
@@ -403,3 +598,215 @@ elif code.startswith('200'):
 | 代理池 | 需持续维护与可用性验证，仓促造会引入随机失败被误当成上游限频。**只留注入点** |
 | A 股默认成本/规则 | 成本与交易规则是通用概念、数值因市场而异；给默认值会让跨市场误用**静默算错一个数量级** |
 | `datasource/` 机制层的市场知识 | 机制层不认识任何市场，注册由**导入实现层**触发 |
+
+---
+
+### P21. `--save tdx` 「越跑越慢、迟迟不结束」的**两个真因**（都不报错）
+
+**症状**：跑了几小时后 `17.33s/code`（正常亚秒级），banner 停在 76%，不结束也不报错。
+
+**真因 ①：BLAS 线程守卫没搬过来。** numpy 的 OpenBLAS **按线程**预留提交量。
+老树 `GolemQ_old/__init__.py` 顶部有 `setdefault` 压到 1 的循环，**新树重构时漏了**。
+本机 18 核实测：**6573.9 MB → 19.8 MB** 单进程提交量；`jobs=4` 折合
+**32.1 GB → 0.43 GB**。撞的是 Windows 的 **commit limit**（物理 + 页面文件），
+所以**不报错，只是慢**。守卫必须**在 numpy 首次 import 之前**执行。
+
+**真因 ②：行情服务器表第一台是「TCP 通、协议层不应答」的死服。**
+`123.125.108.14` 的 `get_security_count(0)` 稳定超时 **10.055s**（同批另三台 0.13s），
+而 `new_api()` 每次**从表头重试** → 每次建连白等 10s。33,474 次折合 **93 小时**。
+
+⚠️ **纯 socket 连通性测试查不出真因 ②** —— 它 TCP 连得上。必须**用真协议调用**
+（`get_security_count`）测。第一轮排障就是在这里误判的。
+⚠️ `connect(time_out=10)` 对**后续调用**也生效（pytdx 拿它设 socket 超时），
+所以探针超时也是 10s。
+
+**该怎么办**：`new_api()` **记住上次成功的那台**（别每次从表头试）；排障时
+「TCP 通」与「协议层应答」**分开测**。详见 `DECISIONS.md` D21。
+
+---
+
+### P22. `tqdm` **进度条**活着时**谁也不许写 stdout** —— 不报错，只打花屏
+
+**症状**：`--save tdx` 跑到一半，屏上**表头与进度条错位**、叠字、上一次的链没擦干净。
+**不报错、不崩**，只是越来越难读 —— 所以很容易被当成"终端的问题"。
+
+**成因**：banner 的表头压在 tqdm 进度条**上面**，靠「光标上移 N 行」原地重画
+（`core/presentation.Banner`）。**期间多出任何一行，N 就算错**。所以有两条硬约束：
+
+1. **进度条绝不能 `leave=True`** —— 跑完留在屏上，光标就不在 banner 之下。
+   （`kline_save` / `pytdx_source` 的每一处 `tqdm(...)` 都写了 `leave=False`。）
+2. **进度条活着的时候，谁也不许另写 stdout。** 包括你以为"只是一行诊断"的那种。
+
+**已实证的一处违反**（2026-10-09）：`pytdx_kline._retry_page` 的**重连诊断**是裸
+`print`，而它跑在**每只 code 的内层** —— 那一刻进度条正活着。带 `-v` 跑就会碰上。
+**正解不是 `tqdm.write`**（那会把行推到进度条**下面**，banner 的记账照样错），
+而是：**诊断走 `note` 回调 → 调用方缓冲 → `bar.close()` 之后再交 `say` 吐**
+（那时光标恰好在 banner 之下）。见 `save_kline_tdx` 的 `_note`。
+
+**该怎么办**：
+
+* 往**进度条的生命期内的代码**（尤其 `_process_code` → `_fetch_docs` → `bars_paged`
+  这一串）加输出前，先问一句「**现在有进度条在跑吗**」。有 → 走缓冲回调；
+* 宽 except 里也要留意：`run_save` 的 `except (Exception, KeyboardInterrupt)`
+  会把内层异常打成一行 —— 那是进度条**已经退出**的路径，安全；但**内层**的
+  `except` 若顺手 `print`，就是本条说的打花屏。
+
+**钉它的测试**：`test_kline_save.TestNothingPrintsWhileTheBarIsAlive`（3 个用例）+
+`test_presentation_banner.TestBannerSurvivesAnActiveBar`（进度条开关一次，回退量必须不变）。
+
+#### ⚠️ 别把 `rich` 的进度条当成同一回事 —— 实测它是**另一套显示模型**
+
+`rich` **树内零 import**（它在 conda env 里是老树 `quantaxis`/`streamlit` 带来的，
+见 `CLAUDE.md`「env 与老树共用」）。2026-10-09 用 env 里的 **rich 15.0.0** 实测：
+
+* `rich.progress` 的进度条靠 `\r` + `\033[2K`（回行首、清整行、**原地**重画），
+  **一个 `\033[<n>A`（光标上移）都不发** —— 而 banner 的记账**正是靠上移 N 行**；
+* 它**自带 stdout 重定向**：它的进度条活着时裸 `print` 被并进它自己的输出流，
+  落在**进度条自己那一行**上（实测 `…\r\x1b[2KDIAG-0`），**既不另起一行、也就不会把 N 算错** ——
+  代价是**那一条进度条被冲掉**。
+
+所以「另起一行 → N 算错」是 **`tqdm` 家族**的失效方式，**别按本条去推 `rich`**。
+将来真要引 `rich`：**重测再写**。钉本条的测试只覆盖 `tqdm`，对 `rich` 无效。
+
+---
+
+### P23. 自检四态在**日志里会完全同形** —— 通过 / 警告 / 失败都是 `●`
+
+**症状**：TTY 上一切正常（绿/黄/红三色分明），`... > run.log` 之后翻日志，
+**看不出哪一项是坏的** —— 三个状态全是 `●`。看起来像"日志就是这样"，其实是丢了信息。
+
+**成因**：`:data:`_MARKS` 是「(符号, 颜色)」，符号那一列里 `OK/WARN/FAIL` 都是 `●`，
+只靠**颜色**区分。取数那三态（`·` / `●` / `●`）本来就不靠颜色也能读，**四态不行**。
+
+**该怎么办**：着色与不着色**各一张表** —— `_MARKS`（上色用）+ `_PLAIN_MARKS`
+（`color=False` 与 `Banner.mark` 的非 TTY 分支用），后者把后两态换成 `!` / `✗`。
+`render_pipeline_banner(..., color=False)` 与 `mark()` 都要走它。
+
+⚠️ **别「顺手统一」成一张表** —— 符号相同、只靠颜色区分，在 TTY 上完全看不出问题，
+只有翻日志时才发现，而那时已经过去几天了。
+
+**钉它的测试**：`test_cli_bootstrap_banner.TestFourStates.test_plain_mode_distinguishes_by_symbol`
+（断言 `警告 !` 与 `失败 ✗` 都在）。
+
+---
+
+### P24. Windows CPU 拓扑：**两种看起来对、其实错的解析法**（本机实测踩过）
+
+要判「物理核 / 逻辑线程 / 有无超线程 / 是否大小核」，Windows 上没有现成 API 一行搞定。
+2026-10-09 在本机（Ultra 5 250K Plus，**18 核 18 线程**，6P+12E）当场踩了两个：
+
+| 错法 | 结果 | 真相 |
+|:--|:--|:--|
+| 按 `PROCESSOR_RELATIONSHIP` 硬算步长（`24+16*GroupCount`）| 解析出 **22 个核** + 一串垃圾 `EfficiencyClass` | 18 核 |
+| 读 `AllFlags` 的 `Smt` 位判超线程 | 报「**4 个核有超线程**」 | 18/18 **无超线程** |
+
+**两个错法的共同点：都不报错。** 第一个还给出了「22」这种看着挺像的数 ——
+只有拿 `os.cpu_count()` 一对才发现不对。
+
+**正解**：
+
+* `GetSystemCpuSetInformation`，**条目步长一律读条目头的 `Size` 字段**（本机 32 字节）；
+  核号用 `(Group, CoreIndex)` 去重（>64 逻辑处理器时会多组）；
+* **超线程判据 = 逻辑线程数 > 物理核数**，别读那个 flag bit；
+* 拿不到就报「物理核未知」并转**黄**，**别猜**。
+
+**快慢方向不进代码**：`EfficiencyClass` 只报**分布**（本机 `6+12`），不贴 P/E 标签 ——
+实测「值大 = 快」（class 1 的 6 颗微基准 0.0536s vs class 0 的 12 颗 0.0683s），
+但那是**一台机器的一个观测**，不足以当 API 的语义用。
+
+见 `cli/bootstrap.py` 的 `_cpu_topology()` / `check_cpu()`，以及
+`test_cli_bootstrap_banner` 里对「CUDA 不许判红」的钉法。
+---
+
+### P25. 时序集合上的两个**静默**陷阱：查错字段慢 8800×、二分低估一分钟
+
+2026-10-09 做 K 线短路（`DECISIONS.md` D25）时当场踩到两个，**都不报错**。
+
+#### ① 范围查询必须走 `ts`（timeField），**绝不能**用 `time_stamp`
+
+实测同一批查询、只换字段（本机真库）：
+
+| 集合 | 查 `time_stamp`（普通 int 字段）| 查 **`ts`（timeField）** |
+|:--|--:|--:|
+| `stock_day` | 0.80 s | **0.0017 s** |
+| `stock_1min`（21.4 亿行）| **44.63 s** | **0.0051 s** |
+
+**8800 倍。** 时序集合的加速只对 `(metaField, timeField)` 生效；`time_stamp` 只有单键索引，
+范围/排序查询会退化。写错了不报错，只是每次探针白等几十秒（9 次探针 ≈ 7 分钟，
+看着像"网络慢"）。
+
+#### ② 二分找前沿**必须按格点**，连续二分只会**低估**
+
+第一版用连续时间二分（区间 < 60s 才停），把 `stock_1min` 的前沿报成 `06:59`
+而真实最新是 `07:00` —— 少一分钟。
+
+**看起来只是"保守"，实则是把判据推到了反面**：
+
+* **低估** ⇒ `code_ts >= frontier` 对**每一只票都成立**（大家的最后一根都在它之上）
+  ⇒ **全都跳**，短路看着"生效"了，实际**一根新数据都没取**；
+* **高估** ⇒ 连真在最新那根上的票也判成落后 ⇒ 每只白取，等于没做。
+
+bar 的 `ts` 都落在**整分钟**上，所以只在 `60` 秒整数倍上提问（`:data:`_FRONTIER_STEP_S``），
+就能**精确命中**那一根。实测修正后三个集合的前沿与该 code 最新一根**逐秒相同**。
+
+**钉它的测试**：`test_kline_shortcircuit.TestCollectionFrontier`
+（`test_finds_the_exact_newest_bar` / `test_probe_uses_the_timefield_not_the_int_stamp`）。
+
+#### 附：同族的一条既有约定
+
+`last_bar()` 的 docstring 早就写着「**按 `ts` 取**，不按 `date_stamp`」—— 同一条道理，
+只是这次量出了具体倍数。**改这一带的查询前先量，别按直觉挑字段。**
+---
+
+### P26. 盘中 / 收盘后的判据**不许"统一"** —— 统一了不报错，只静默做错事
+
+**症状**：把两条看起来重复的判断合并成一条"更简洁"的表达式（例如把日线与分钟
+共用同一个"今天算不算数"的时刻），跑起来**一切正常**，只是：
+
+* 盘中每轮**白扫全市场**（5,575 条连接 × 6 个频率），或
+* 分钟线**冻在某一分钟**不动（最长 5 小时，直到 TTL 兜底网到期），或
+* 把**未收盘的当日累计 bar** 写进日线（错数据，收盘后才会被覆盖）。
+
+**成因**：这一带**同一个表达式在两种时段必须给出不同答案**，而两种答案都是"对的" ——
+所以合并之后没有任何一处会报错，只是行为悄悄偏一侧。
+
+**完整的差异表在 `DECISIONS.md` D26**（八条，逐条给了"为什么必须不同"）。
+改 `drop_today` / `alive_threshold` / `intraday_blocks_shortcircuit` /
+`KLINE_TTL_HOURS` 之前**先读那张表**。
+
+**2026-10-09 实测采到的两处**（都已修，也都有用例钉住）：
+
+| 错法 | 后果 |
+|:--|:--|
+| `alive_threshold('day')` 盘中认「今天」（与分钟共用 09:30 这个时刻）| 当天日线盘中不该存在 ⇒ 探针永远探不到前沿 ⇒ **盘中每轮白扫全市场** |
+| 分钟频率盘中照常短路 | 前沿是**数据自证**的，全跳之后没人写新 bar ⇒ 前沿不前进 ⇒ **集合冻在那一分钟** |
+
+**钉它的测试**：`test_kline_shortcircuit.TestAliveThreshold.test_day_does_not_count_today_before_the_close`
+与 `TestIntradayBlocksMinuteShortcircuit`（盘中禁 / 午休放 / 收盘后放 / 非交易日放 / `day` 永不拦）。
+---
+
+### P27. 写 Python 源码**别用 heredoc / `sed`** —— 转义会把源码弄坏，而且坏得看不见
+
+**症状**（2026-10-09 第三次踩）：往源文件里写 `'\033[90m'` 或 `'...\n...'`，
+写进去的成了**真的 ESC 字节 / 真的换行**。后果分两种，都难查：
+
+* **真 ESC 字节**：源码里那一段变成不可见字符，`SyntaxWarning` 或直接 `SyntaxError`；
+  更坏的是**它可能看起来是对的** —— 编辑器把它渲染成空白，`grep` 也搜不到 `\033`；
+* **真换行**：字符串字面量被截断成两行 → `SyntaxError: unterminated string literal`，
+  报错行还指向那半行。
+
+**这一条为什么反复发生**：heredoc 里的反斜杠要经过 **shell 一层 + Python 字符串一层**，
+`\n` 究竟变成 `\n`（两字符）还是真换行，取决于引号与工具 —— 每换一种写法结论就变一次。
+`sed -i 's/…/…/'` 同理（`\n` 在替换串里含义又不一样）。
+
+**该怎么办**：
+
+1. **改代码一律用 Edit / Write 工具**（它按字面写入，不做任何转义解释）；
+2. 必须用脚本批量改时：**新写的源码里不出现 `\033` / `\n` 这类转义序列**，
+   改用 `chr(27)` / `chr(10)` 拼 —— 任何工具链都不会碰坏 `chr()`；
+3. 改完**验一次**：`python -c "import ast,io; ast.parse(io.open(p,encoding='utf-8').read())"`
+   （语法）以及**数字面控制字节**：`open(p,'rb').read().count(b'\x1b')` 应为 0。
+   实测三份被改过的文件都是 `0x1b 出现 0 次`。
+
+**已有先例**：`test_presentation_banner.py` 与 `test_kline_save.py` 都因为同一个原因
+坏过一次；`PITFALLS.md` 自己也是。

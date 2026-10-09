@@ -31,29 +31,41 @@ from datetime import (
 )
 
 
-def purge_historical_collections(client):
-    """清理历史数据集合"""
-    consecutive_misses = 0  # 连续失败计数器
-    day_offset = 14         # 起始时间偏移
-    
+def purge_historical_collections(client) -> list:
+    """清理过期的实时集合 —— **纯逻辑，不打印**。
+
+    ⚠️ **唯一的打印处是 `cli/tools.py::purge_mongodb_database`。**
+    这里曾经逐日 `print('⏩ 未找到集合: …')`，于是同一条命令**有两处打印、分属两个
+    模块**，测试只 patch 得到其中一个（patch 了 `GolemQ.cli.tools.print`，
+    `markets/StockCN/tools.py` 这 14 行照样漏到屏上）。现在统一：本函数产出结果，
+    CLI 负责说。
+
+    规则：``realtime_YYYY-MM-DD`` 按名字**从 14 天前往回**逐日找，命中就 drop
+    并**继续往回**；连续 14 次没命中即停（即「昨天到今天一个都没剩」的自然终止）。
+
+    异常**不再吞**：集合清单拿不到（Mongo 不可达）或 drop 失败都直接抛出，
+    由 `cli/tools.py` 的 `[warn] 清理 X 数据时出错: …` 统一报 —— 原来把它记成
+    「一次未命中」等于**静默空转 28 轮然后报成功**。
+
+    :param client: 实时库句柄（`StockCN.GOLEMQ_STOCK_CN_REALTIME`）
+    :returns: 已 drop 的集合名，**按 drop 顺序**；没删到就是空列表。
+    """
+    existing = set(client.list_collection_names())   # 一次取全，别在循环里反复问
+    dropped = []
+    consecutive_misses = 0
+    day_offset = 14
+
     while consecutive_misses < 14:
-        try:
-            # 计算目标日期
-            target_date = dt.now() - timedelta(days=day_offset)
-            collection_name = f"realtime_{target_date.strftime('%Y-%m-%d')}"
-            
-            # 执行删除操作
-            if collection_name in client.list_collection_names():
-                client[collection_name].drop()
-                print(f"✅ 成功删除历史集合: {collection_name}")
-                consecutive_misses = 0  # 重置计数器
-            else:
-                print(f"⏩ 未找到集合: {collection_name}")
-                consecutive_misses += 1
-                
-        except Exception as e:
-            print(f"❌ 处理 {collection_name} 时发生异常: {str(e)}")
-            consecutive_misses += 1  # 异常视为失败
-        finally:
-            day_offset += 1  # 确保偏移量始终递增
-            
+        target_date = dt.now() - timedelta(days=day_offset)
+        collection_name = f"realtime_{target_date.strftime('%Y-%m-%d')}"
+
+        if collection_name in existing:
+            client[collection_name].drop()
+            dropped.append(collection_name)
+            consecutive_misses = 0          # 命中就重置，继续往回走
+        else:
+            consecutive_misses += 1
+
+        day_offset += 1                     # 始终递增（原先靠 finally 保证）
+
+    return dropped

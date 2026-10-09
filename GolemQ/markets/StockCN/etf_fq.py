@@ -85,8 +85,8 @@ def _adj_collection():
     """``etf_adj`` 集合句柄。**函数级导入是刻意的。**
 
     ``markets/StockCN/__init__.py:55`` 经 ``from .quotes import StockCNQuotes``
-    间接走到本模块，而 ``DATABASE_STOCK_CN`` 到 ``:70`` 才定义 —— 顶层
-    ``from . import DATABASE_STOCK_CN`` 会抛
+    间接走到本模块，而 ``GOLEMQ_STOCK_CN`` 到 ``:70`` 才定义 —— 顶层
+    ``from . import GOLEMQ_STOCK_CN`` 会抛
     ``ImportError: cannot import name ... from partially initialized module``。
     ``datastruct.py`` / ``kline83.py`` / ``refdata.py`` 出于同一原因也这样写。
 
@@ -94,8 +94,8 @@ def _adj_collection():
     （2026-09-21 实测：两边都是 397,499 行 / 294 只 code），故取 8.3 ——
     与 D5「参考集合的家是 golemq_stock_cn」一致。
     """
-    from . import DATABASE_STOCK_CN
-    return DATABASE_STOCK_CN['etf_adj']
+    from . import GOLEMQ_STOCK_CN
+    return GOLEMQ_STOCK_CN['etf_adj']
 
 
 def GQ_is_etf(code) -> bool:

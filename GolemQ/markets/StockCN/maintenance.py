@@ -52,10 +52,8 @@ from .kline83 import bj_date
 
 __all__ = [
     'SUSPENDED_TARGETS',
-    'REMOVED_FROM_44',
     'GQ_suspension_dates',
     'GQ_purge_suspended',
-    'GQ_migrate_removed_from_44',
     'GQ_restore_suspended',
 ]
 
@@ -84,8 +82,8 @@ REMOVED_BY_IMPORT44 = 'import44'
 
 def _stock_cn_db():
     """8.3 库句柄。**函数级导入**（同 `kline83` / `datastruct` 的理由）。"""
-    from . import DATABASE_STOCK_CN
-    return DATABASE_STOCK_CN
+    from . import GOLEMQ_STOCK_CN
+    return GOLEMQ_STOCK_CN
 
 
 def GQ_suspension_dates(daily_collection=None, verbose: bool = False) -> set:
@@ -224,81 +222,6 @@ REMOVED_FROM_44 = (
     ('stock_min_removed', 'stock'),
     ('index_min_removed', 'index'),
 )
-
-
-def GQ_migrate_removed_from_44(dry_run: bool = False, verbose: bool = True) -> dict:
-    """把 4.4 的 ``stock_min_removed`` / ``index_min_removed`` 搬到 8.3 的分频归档。
-
-    三件事，都由实测决定
-    ====================
-
-    **① 补 `ts`（源没有这个字段）** —— 由 ``datetime``（naive 北京时间）经
-    :func:`kline83.bj_date` 换算成 UTC-aware。口径已**对照源的 `time_stamp`
-    验证**：抽 8 条**逐条吻合（8/8）**，即
-    ``bj_date(datetime).timestamp() == time_stamp``。本函数在迁移时会**全量核对**
-    这个等式，把不符的条数报出来 —— 不静默放过。
-
-    **② 保住 int32（勿拓宽）** —— 实测源的 ``vol`` / ``volume`` / ``date_stamp`` /
-    ``time_stamp`` **本来就是 BSON int32**（``$type`` = ``int``），价格与 ``amount``
-    是 double。所以**没有东西要「转换」**，要做的是**别把它们拓宽**：
-    pymongo 按位宽把 Python ``int`` 编成 int32/int64，而**只要让这些整数过一遍
-    numpy/pandas，就可能变成 int64**。故本函数**逐字段透传、不经 DataFrame**。
-
-    **③ 按 `type` 拆到分频归档** —— 4.4 是一个集合装全部频率（``type`` ∈
-    ``1min/5min/15min/60min``）；8.3 的归档是分频的（``stock_1min_removed`` …），
-    与 :func:`GQ_purge_suspended` 产出的形状一致，两者落到**同一批集合**。
-
-    幂等：归档是普通集合，``(code, ts)`` 唯一索引 + ``ReplaceOne`` upsert，
-    反复跑不会出两份。
-    """
-    from GolemQ.core.settings import DATABASE_QA
-    db = _stock_cn_db()
-    report: dict = {}
-    src_names = set(DATABASE_QA.list_collection_names())
-
-    for src_name, prefix in REMOVED_FROM_44:
-        if src_name not in src_names:
-            if verbose:
-                print(f'[migrate:removed] {src_name} 不存在，跳过')
-            continue
-        src = DATABASE_QA[src_name]
-        for freq in sorted(src.distinct('type')):
-            tgt_name = f'{prefix}_{freq}_removed'
-            docs, bad_ts = [], 0
-            for d in src.find({'type': freq}, {'_id': 0}):
-                ts = bj_date(d.get('datetime'))
-                # 来源标记：这批**不是**停牌伪 0（所在交易日有正常日线），
-                # 回迁时必须能与之区分 —— 见 REMOVED_BY_FIELD 的说明。
-                d[REMOVED_BY_FIELD] = REMOVED_BY_IMPORT44
-                # 全量核对：推导出的 ts 必须与源自己的 time_stamp 一致
-                if ts is None or int(ts.timestamp()) != int(d.get('time_stamp', -1)):
-                    bad_ts += 1
-                d['ts'] = ts
-                docs.append(d)
-            if dry_run:
-                report[tgt_name] = {'rows': len(docs), 'ts_mismatch': bad_ts,
-                                    'moved': 0}
-                if verbose:
-                    print(f'[migrate:removed] 试跑 {src_name}[{freq}] → {tgt_name}: '
-                          f'{len(docs)} 行，ts 不符 {bad_ts}')
-                continue
-
-            dst = db[tgt_name]
-            try:
-                dst.create_index(list(_ARCHIVE_KEYS), unique=True)
-            except Exception:         # 索引已存在不应中断
-                pass
-            ops = [ReplaceOne({k: d[k] for k in _ARCHIVE_KEYS}, d, upsert=True)
-                   for d in docs if all(k in d for k in _ARCHIVE_KEYS)]
-            if ops:
-                dst.bulk_write(ops, ordered=False)
-            report[tgt_name] = {'rows': len(docs), 'ts_mismatch': bad_ts,
-                                'moved': len(ops)}
-            if verbose:
-                print(f'[migrate:removed] {src_name}[{freq}] → {tgt_name}: '
-                      f'搬 {len(ops)} 行'
-                      + (f'，⚠️ ts 不符 {bad_ts} 行' if bad_ts else '，ts 全部吻合'))
-    return report
 
 
 def GQ_restore_suspended(targets=None, removed_by: str = REMOVED_BY_PURGE,

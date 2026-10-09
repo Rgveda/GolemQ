@@ -27,7 +27,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import asyncio
 
 
-def GQ_util_mongodb_client(uri='mongodb://localhost:27017/GolemQ'):
+def GQ_util_mongodb_client(uri='mongodb://localhost:27017/GolemQ', **kwargs):
     """
     explanation:
         根据给定的uri返回一个MongoClient实例，
@@ -36,6 +36,11 @@ def GQ_util_mongodb_client(uri='mongodb://localhost:27017/GolemQ'):
         * uri ->:
             meaning: mongodb连接uri
             type: str
+            optional: [null]
+        * kwargs ->:
+            meaning: 直通 `pymongo.MongoClient`。**CLI 环境自检靠它设短超时**
+                （`serverSelectionTimeoutMS` —— 默认 30s，服务器不可达时自检会挂很久）
+            type: dict
             optional: [null]
 
     return:
@@ -51,7 +56,7 @@ def GQ_util_mongodb_client(uri='mongodb://localhost:27017/GolemQ'):
     # 采用@几何的建议,使用uri代替ip,port的连接方式
     # 这样可以对mongodb进行加密:
     # uri=mongodb://user:passwor@ip:port
-    client = pymongo.MongoClient(uri)
+    client = pymongo.MongoClient(uri, **kwargs)
     return client
 
 # async

@@ -93,10 +93,14 @@ def purge_mongodb_database(verbose: bool = False) -> None:
             if hasattr(market_instance, 'purge_historical_collections'):
                 try:
                     collections = market_instance.purge_historical_collections()
-                    if verbose and collections:
-                        print(f"  清理了 {len(collections)} 个集合: {collections}")
                 except Exception as e:
                     print(f"[warn] 清理 {market_name} 数据时出错: {e}")
+                else:
+                    # ⚠️ 这里是**唯一**的打印处。市场那边（`markets/StockCN/tools.py`）
+                    # 只返回删了哪些、不打印 —— 否则同一条命令有两处打印分属两个模块，
+                    # 测试只能 patch 到一个，另一个照样漏到屏上。
+                    if verbose and collections:
+                        print(f"  清理了 {len(collections)} 个集合: {collections}")
             else:
                 print(f"[warn] {market_name} 市场没有实现 purge_historical_collections 方法")
         

@@ -31,9 +31,6 @@ from GolemQ.core.mongo import (
     GQ_util_mongodb_client_async,
     GQ_util_mongodb_client,
 )
-from QUANTAXIS.QAUtil.QASetting import (
-    QA_Setting,
-)
 
 
 # quantaxis有一个配置目录存放在 ~/.quantaxis
@@ -196,12 +193,6 @@ class GQ_Setting():
     def client_async(self):
         return GQ_util_mongodb_client_async(self.mongo_uri)
 
-    def change(self, ip, port):
-        self.ip = ip
-        self.port = port
-        global DATABASE
-        DATABASE = self.client
-        return self
 
 
 def test_mongodb_connection(uri: str) -> bool:
@@ -271,9 +262,12 @@ def setup_mongodb_config() -> None:
 
 
 GQSETTING = GQ_Setting()
-QASETTING = QA_Setting()
-DATABASE_QA = QASETTING.client.quantaxis
-DATABASE = QASETTING.client.golemq
-QAREALTIME = QASETTING.client.QAREALTIME
-# GQREALTIME = GQSETTING.client.GQREALTIME
-DATABASE_ASYNC = QASETTING.client_async.golemq
+
+#: 8.3 的**框架运维库**（心跳、函数签到、关注列表）。**名字即库名**（用户 2026-10-08 定的命名规则）。
+#:
+#: 为什么定义在这里而不是 `markets/StockCN/`：里面装的是**与市场无关的运维数据**，
+#: 三个消费者（`supervisor/heartbeat`、`supervisor/function_checkin`、`cli/watchdog_manager`）
+#: 都在根层/CLI 层 —— 让它们反向 import 某个市场包会违反 D1/D4 的分层。
+GOLEMQ_NAME = 'golemq'
+GOLEMQ = GQ_util_mongodb_client(
+    GQSETTING.get_config('MONGODB', 'uri'))[GOLEMQ_NAME]

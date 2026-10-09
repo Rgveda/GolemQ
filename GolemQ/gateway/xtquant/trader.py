@@ -24,9 +24,6 @@
 #
 
 import pandas as pd
-from xtquant.xttrader import XtQuantTrader
-from xtquant.xttype import StockAccount
-from xtquant import xtconstant
 from .config import get_xtquant_config
 import random
 from datetime import (
@@ -82,6 +79,9 @@ class xtQmtTrader:
 
         # session_id为会话编号，策略使用方对于不同的Python策略需要使用不同的会话编号
         session_id = self.session_id
+        # ⚠️ xtquant 用到才导入（见 QmtSource.available() 的说明）
+        from xtquant.xttrader import XtQuantTrader
+        from xtquant.xttype import StockAccount
         xt_trader = XtQuantTrader(path, session_id)
         # 创建资金账号为1000000365的证券账号对象
         account = self.account
@@ -292,6 +292,7 @@ class xtQmtTrader:
         '''
         单独独立股票买入函数
         '''
+        from xtquant import xtconstant
         order_type = xtconstant.STOCK_BUY
 
         if price == 0:
@@ -321,6 +322,7 @@ class xtQmtTrader:
         '''
         单独独立股票卖出函数
         '''
+        from xtquant import xtconstant
         order_type = xtconstant.STOCK_SELL
 
         if price == 0:

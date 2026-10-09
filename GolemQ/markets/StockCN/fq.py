@@ -217,3 +217,87 @@ def multiply_ohlc(data: pd.DataFrame, factor, *,
     if keep_factor_column:
         out[factor_name] = factor.to_numpy()
     return out
+
+
+#: `stock_xdxr` 里参与前复权计算的事件字段（`category == 1` 即除权除息）。
+XDXR_FIELDS = ('fenhong', 'peigu', 'peigujia', 'songzhuangu')
+
+
+def xdxr_to_adj(dates, close, xdxr):
+    """日线 + 除权除息事件 → **前复权因子**（`stock_adj` 的 `adj` 列）。
+
+    公式逐字照抄 QUANTAXIS `QAData/data_fq.py::_QA_data_stock_to_fq` 的 **qfq 分支**：
+
+        preclose = (close.shift(1) * 10 - fenhong + peigu * peigujia) / (10 + peigu + songzhuangu)
+        adj      = (preclose.shift(-1) / close).fillna(1)[::-1].cumprod()
+
+    ⚠️ **一个必须照做的对齐细节**：事件日期**不一定落在日线里**（实测 600519 的
+    2006-05-19 除权日，日线整段 2006-05-18~05-24 是空的）。这种事件要**挪到
+    下一个存在的交易日**再去算 —— 直接 `join` 会把它丢掉，结果就是**整段历史
+    差一个因子**（实测 600519 差 2 倍、600601 差 10 倍）。实证：按这个对齐，
+    抽样 120 只票与存量 `stock_adj` **逐值相同（<1e-9）**。
+
+    :param dates: 交易日 `'YYYY-MM-DD'` 列表（**升序**，与 `close` 等长）
+    :param close: 对应的**不复权**收盘价
+    :param xdxr: 该 code 的 `stock_xdxr` 文档列表（只用 `category == 1` 的行）
+    :returns: `pd.Series`，索引 = `dates`（升序），值 = 因子；**最新一根恒为 1.0**
+
+    >>> s = xdxr_to_adj(['2024-01-01', '2024-01-02', '2024-01-03'], [10.0, 11.0, 12.0], [])
+    >>> [round(float(x), 6) for x in s]
+    [1.0, 1.0, 1.0]
+    >>> ev = [{'date': '2024-01-03', 'category': 1, 'fenhong': 0.0, 'peigu': 0.0,
+    ...        'peigujia': 0.0, 'songzhuangu': 10.0}]
+    >>> [round(float(x), 6) for x in xdxr_to_adj(
+    ...     ['2024-01-01', '2024-01-02', '2024-01-03'], [10.0, 11.0, 12.0], ev)]
+    [0.5, 0.5, 1.0]
+
+    **扩缩股**（``category == 11``，ETF 的份额折算）走**另一条乘性口径**：
+    ``参考价 = 前收盘 / suogu``。实测 ``suogu`` 就是除权日价格跳变的比值本身
+    （159901 2010-11-22 ``suogu=5.0``：前收 3.966 → 当日开 0.797，比值 4.976）：
+
+    >>> ev = [{'date': '2024-01-03', 'category': 11, 'suogu': 5.0}]
+    >>> [round(float(x), 6) for x in xdxr_to_adj(
+    ...     ['2024-01-01', '2024-01-02', '2024-01-03'], [10.0, 10.0, 2.0], ev)]
+    [0.2, 0.2, 1.0]
+    """
+    idx = [str(d) for d in dates]
+    df = pd.DataFrame({'close': list(close)}, index=pd.Index(idx, name='date'))
+
+    slots: dict = {}
+    for r in (xdxr or []):
+        if int(r.get('category') or 0) != 1:
+            continue
+        pos = [i for i, d in enumerate(idx) if d >= str(r.get('date'))]
+        if not pos:
+            continue            # 事件晚于最后一根 bar：不影响任何已有行
+        slot = slots.setdefault(idx[pos[0]], {k: 0.0 for k in XDXR_FIELDS})
+        for k in XDXR_FIELDS:
+            slot[k] += r.get(k) or 0.0
+
+    ev = (pd.DataFrame(slots).T.reindex(columns=list(XDXR_FIELDS)) if slots
+          else pd.DataFrame(columns=list(XDXR_FIELDS), index=pd.Index([], name='date')))
+    data = df.join(ev, how='left').astype(float).fillna(0.0)
+    data['preclose'] = (
+        data['close'].shift(1) * 10 - data['fenhong']
+        + data['peigu'] * data['peigujia']
+    ) / (10 + data['peigu'] + data['songzhuangu'])
+
+    # 扩缩股（ETF 份额折算）：**乘性**，与上面那条加性公式不同形态，故单独盖掉
+    # 该交易日的 `preclose`（其余日子 preclose == 前收盘，乘 1 无影响）。
+    # 事件日同样要**挪到下一个存在的交易日**（与上面同一套对齐理由）。
+    for r in (xdxr or []):
+        if int(r.get('category') or 0) != 11:
+            continue
+        suogu = r.get('suogu')
+        if not suogu:
+            continue                      # 缺 suogu 的扩缩股无从计算，宁可不动
+        pos = [i for i, d in enumerate(idx) if d >= str(r.get('date'))]
+        if not pos:
+            continue
+        day = idx[pos[0]]
+        prev = data['close'].shift(1).loc[day]
+        if prev == prev and prev > 0:     # 非 NaN
+            data.loc[day, 'preclose'] = float(prev) / float(suogu)
+
+    data['adj'] = (data['preclose'].shift(-1) / data['close']).fillna(1)[::-1].cumprod()
+    return data['adj']

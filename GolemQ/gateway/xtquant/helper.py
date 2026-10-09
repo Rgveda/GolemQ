@@ -24,11 +24,11 @@
 #
 
 from typing import List
-from GolemQ.core.settings import DATABASE as DATABASE_GolemQ
+from GolemQ.core.settings import GOLEMQ
 import time
 
 
-def get_recent_xtquant_order_symbols(days: int = 30, collection=DATABASE_GolemQ.StockCN_xtquant_orders) -> List[str]:
+def get_recent_xtquant_order_symbols(days: int = 30, collection=GOLEMQ.StockCN_xtquant_orders) -> List[str]:
     """
     获取最近一段时间内（默认30天）XTQuant挂单的股票代码列表
     

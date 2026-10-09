@@ -29,7 +29,7 @@ class TestMarketQuotes(unittest.TestCase):
         mock_struct.to_qfq.return_value = mock_struct
         return mock_struct
 
-    def _make_day_kline_df(self, code='000001', days=5):
+    def _make_day_kline_df(self, code='600519', days=5):
         """Create a realistic day kline DataFrame with MultiIndex (date, code)"""
         dates = pd.date_range('2024-01-15', periods=days, freq='B')
         arrays = [dates, [code] * days]
@@ -43,7 +43,7 @@ class TestMarketQuotes(unittest.TestCase):
             'amount': [float(10000000 + i * 100000) for i in range(days)],
         }, index=index)
 
-    def _make_min_kline_df(self, code='000001', hours=5):
+    def _make_min_kline_df(self, code='600519', hours=5):
         """Create a realistic minute kline DataFrame with MultiIndex (datetime, code)"""
         dts = pd.date_range('2024-01-15 09:30', periods=hours, freq='h')
         arrays = [dts, [code] * hours]
@@ -64,7 +64,7 @@ class TestMarketQuotes(unittest.TestCase):
         mock_struct = self._make_mock_qa_data_struct(data_df)
         mock_fetch.return_value = mock_struct
 
-        result = self.quotes.get_kline_quotes('000001', '2024-01-01', '2024-01-20')
+        result = self.quotes.get_kline_quotes('600519', '2024-01-01', '2024-01-20')
 
         self.assertIsInstance(result, pd.DataFrame)
         for col in ['open', 'high', 'low', 'close', 'volume']:
@@ -78,9 +78,9 @@ class TestMarketQuotes(unittest.TestCase):
         mock_struct = self._make_mock_qa_data_struct(data_df)
         mock_fetch.return_value = mock_struct
 
-        self.quotes.get_kline_quotes('000001.XSHE', '2024-01-01', '2024-01-20')
+        self.quotes.get_kline_quotes('002594.XSHE', '2024-01-01', '2024-01-20')
 
-        mock_fetch.assert_called_once_with('000001', start='2024-01-01', end='2024-01-20')
+        mock_fetch.assert_called_once_with('002594', start='2024-01-01', end='2024-01-20')
 
     @patch('GolemQ.markets.StockCN.quotes.GQ_fetch_stock_day_adv')
     def test_get_kline_quotes_applies_qfq_when_fq_set(self, mock_fetch):
@@ -89,7 +89,7 @@ class TestMarketQuotes(unittest.TestCase):
         mock_struct = self._make_mock_qa_data_struct(data_df)
         mock_fetch.return_value = mock_struct
 
-        self.quotes.get_kline_quotes('000001', '2024-01-01', '2024-01-20', fq=1)
+        self.quotes.get_kline_quotes('600519', '2024-01-01', '2024-01-20', fq=1)
 
         mock_struct.to_qfq.assert_called_once()
 
@@ -100,7 +100,7 @@ class TestMarketQuotes(unittest.TestCase):
         mock_struct = self._make_mock_qa_data_struct(data_df)
         mock_fetch.return_value = mock_struct
 
-        self.quotes.get_kline_quotes('000001', '2024-01-01', '2024-01-20', fq=0)
+        self.quotes.get_kline_quotes('600519', '2024-01-01', '2024-01-20', fq=0)
 
         mock_struct.to_qfq.assert_not_called()
 
@@ -122,7 +122,7 @@ class TestMarketQuotes(unittest.TestCase):
         mock_fetch.return_value = mock_struct
 
         result = self.quotes.get_kline_quotes_min(
-            '000001', '2024-01-15', '2024-01-15', frequency='60min'
+            '600519', '2024-01-15', '2024-01-15', frequency='60min'
         )
 
         self.assertIsInstance(result, pd.DataFrame)
@@ -135,7 +135,7 @@ class TestMarketQuotes(unittest.TestCase):
         mock_struct = self._make_mock_qa_data_struct(data_df)
         mock_fetch.return_value = mock_struct
 
-        self.quotes.get_kline_quotes_min('000001', '2024-01-15', '2024-01-15', frequency='60m')
+        self.quotes.get_kline_quotes_min('600519', '2024-01-15', '2024-01-15', frequency='60m')
 
         call_args = mock_fetch.call_args
         self.assertEqual(call_args[1]['frequence'], '60min')
@@ -157,7 +157,7 @@ class TestMarketQuotes(unittest.TestCase):
         mock_struct = self._make_mock_qa_data_struct(data_df)
         mock_fetch.return_value = mock_struct
 
-        self.quotes.get_kline_quotes_min('000001', '2024-01-15', '2024-01-15', fq=1)
+        self.quotes.get_kline_quotes_min('600519', '2024-01-15', '2024-01-15', fq=1)
 
         mock_struct.to_qfq.assert_called_once()
 
@@ -168,7 +168,7 @@ class TestMarketQuotes(unittest.TestCase):
         mock_struct = self._make_mock_qa_data_struct(data_df)
         mock_fetch.return_value = mock_struct
 
-        self.quotes.get_kline_quotes_min('000001', '2024-01-15', '2024-01-15', fq=0)
+        self.quotes.get_kline_quotes_min('600519', '2024-01-15', '2024-01-15', fq=0)
 
         mock_struct.to_qfq.assert_not_called()
 

@@ -37,14 +37,42 @@
 ### 集合布局
 
 ```
-golemq_stock_cn
+golemq_stock_cn                       ← 历史行情（读多写少、全量保留）
   ├─ stock_1min | stock_5min | stock_15min | stock_30min | stock_60min    ← 时序集合
   └─ index_1min | index_5min | index_15min | index_30min | index_60min    ← 正在转时序（另一会话）
+
+golemq_stock_cn_realtime              ← 实时行情（追加写、按日退役）
+  └─ realtime_YYYY-MM-DD              ← 一天一个时序集合，保留约 14 天
 ```
 
 时序规格：`{timeField: 'ts', metaField: 'code', granularity: 'minutes'|'hours', bucketMaxSpanSeconds: 86400|2592000}`
 
 集合名推导统一为 `f'{market}_{frequency}'`，`market ∈ {'stock','index'}`。
+
+### 实时库的集合布局（2026-10-08 定，取代 2026-09-21 的单集合写法）
+
+* **按日**：`realtime_YYYY-MM-DD`，`{timeField:'ts', metaField:'code', granularity:'seconds'}`。
+  名字格式是**硬契约** —— 保留策略（`markets/StockCN/tools.py` 的
+  `purge_historical_collections`）正是按这个名字删整日集合的。名字生成收敛在
+  `realtime.realtime_collection_name()` 一处，并有单测钉住「写入端产出的名字 =
+  purge 要找的名字」。
+* **一个日集合里混三条流**，靠行内 `source` 区分；它**同时是去重键的一部分**：
+
+| `source` | 内容 | 写入方 |
+|:--|:--|:--|
+| `tencent_l1` | 腾讯全市场快照（**含五档**），2 秒一轮 | `realtime.sub_l1_from_tencent` |
+| `tencent_l2` | 腾讯盘口（字段是 L1 的**真子集**），3 秒一轮 | `realtime.sub_l2_from_tencent` |
+| `qmt` | MiniQMT 五档 —— **2026-10-01 起停服，当前无数据** | 同上（`QMT_REALTIME_ENABLED=False` 已关） |
+
+* 写入**先删后插，但只在「本进程首次见到该 `(source, code)`」时删**：
+  `delete_many({'code':…, 'ts':…, 'source':…})` + `insert_many`
+  —— 时序集合不能 upsert、也不拦重复（见 `PITFALLS.md` P14）。
+  ⚠️ 每轮无条件删是跑不动的：实测同规模 `delete_many` 要 **3.7 s** 而
+  `insert_many` 只要 **0.95 s**，L1 却是 2 秒一轮（数字见 `HANDOFF.md`）。
+* 读取按 `ts`（timeField）过滤 + 排序；`datetime`（北京时字符串）只作可读列与
+  重采样（`GQ_data_tick_resample_1min`）用。
+* 每条行内**同时保留** `ts`（UTC-aware）与 `datetime`（北京时），时区换算仍只经
+  `kline83.bj_date` 一处。
 
 ---
 
@@ -57,23 +85,23 @@ golemq_stock_cn
 mongo_uri = GQSETTING.get_config('MONGODB', 'uri')   # ~/.GolemQ/settings/config.ini
 DATABASE = GQ_util_mongodb_client(mongo_uri)          # → 57017
 
-DATABASE_STOCK_CN_NAME = 'golemq_stock_cn'
-DATABASE_STOCK_CN = DATABASE[DATABASE_STOCK_CN_NAME]
+GOLEMQ_STOCK_CN_NAME = 'golemq_stock_cn'
+GOLEMQ_STOCK_CN = DATABASE[GOLEMQ_STOCK_CN_NAME]
 ```
 
 **理由**：StockCN **就是** A 股市场，其存储库名是市场定义的一部分，不随部署环境变化，故归市场所有、就地硬编码。而"连到哪台服务器"是部署信息，归配置所有。
 
 > ⚠️ 注意 `[MONGODB]` 目前**只有 `uri` 键，没有库名键** —— 这是刻意的，不要"顺手"把库名挪进配置。
 
-**同一处遗留问题**（本次保留不动，已就地加注释）：
+**实时库句柄**（2026-10-08 更新：先前的"待定"已定，此处先前记的是旧状态）：
 
 ```python
-self.DATABASE = DATABASE_STOCK_CN
-# 待定：GolemQ_StockCN_REALTIME 在 8.3 上并不存在（实测 0 集合），
-self.GQREALTIME = DATABASE.GolemQ_StockCN_REALTIME
+self.DATABASE = GOLEMQ_STOCK_CN             # golemq_stock_cn（历史行情）
+self.GQREALTIME = GOLEMQ_STOCK_CN_REALTIME  # golemq_stock_cn_realtime（实时）
 ```
 
-保留而非删除，是为了不掩盖"实时库尚无归属"这一真实状态。
+`DATABASE.GolemQ_StockCN_REALTIME` 在 8.3 上**实测 0 集合**，故不用它；库名同样是
+硬编码的市场定义（`__init__.py:81-82`）。
 
 ---
 
@@ -183,8 +211,8 @@ each_day = sorted(kline.index.get_level_values(level=0).unique())
 
 | 项 | 状态 |
 |:--|:--|
-| **日线未迁移** | 8.3 上**无** `stock_day` / `index_day`。读取器已按 `f'{market}_{frequency}'` 预留接口，日线迁移完成后**无需改动本模块或 service 层**；当前恒返回 `None` 并打印明确告警 |
-| **指数集合数据不全** | `index_*` 目前只有 `code='000001'` 一个标的，且另一会话正在重建为时序集合，数据量在变动中 |
+| ~~**日线未迁移**~~ **已作废**（2026-10-08） | 先前那条是**错的**：`stock_day` **17,893,343** 行、`index_day` 4,564,152 行、`etf_day` 3,220,050 行 —— 日线**迁全了**。当时据以判断的计数来自时序集合上不可靠的 `$collStats count`，见 `PITFALLS.md` P15。⚠️ **实测真有洞的是 ETF**：`etf_day` 抽查 1,689 只里 **739 只有缺日**（`--save-coverage` 可复现）|
+| **指数集合数据不全** | ~~先前的说法~~ 实测 `index_day` 有 8,733 个 code、`index_1min` 亦然（2026-10-08）。⚠️ 但**指数分钟与 pytdx 不同源**：`vol` 比值 14–18 非常数、`close` 精度也不同 → `--save tdx` 里指数分钟**按 pytdx 原值写**（`INDEX_MIN_VOL_SCALE`），边界处会与存量跳变 |
 | **概念 K 线仍是 stub** | `GolemQ.fetch.concept` 无真实实现；真实版本只在 `GolemQ_old/fetch/concept.py:865`（读 4.4）。`_concept.py:56` 已加 TODO |
 | **下游 stub 未解** | `load_massive_reviews` / `attach_reality_features` / `align_kline_timeline` 仍是 stub，端到端检查会停在这些点 —— 与 kline 通路无关 |
 
@@ -200,8 +228,8 @@ each_day = sorted(kline.index.get_level_values(level=0).unique())
 **禁止全表扫描**（`stock_1min` 逾 14 亿行）。一律「单 code + 窄时间窗」：
 
 ```python
-from GolemQ.markets.StockCN import DATABASE_STOCK_CN
-assert DATABASE_STOCK_CN.name == 'golemq_stock_cn'
+from GolemQ.markets.StockCN import GOLEMQ_STOCK_CN
+assert GOLEMQ_STOCK_CN.name == 'golemq_stock_cn'
 
 from GolemQ.markets.StockCN.kline83 import get_kline_price_min, get_kline_price_v3
 

@@ -23,16 +23,15 @@
 # SOFTWARE.
 #
 
+from __future__ import annotations  # 注解里的 XtQuantTrader/StockAccount 变成惰性字符串，故不必在顶层导入 xtquant
 import pandas as pd
 import datetime
 from typing import List, Dict, Any, Set
 import traceback
-from xtquant.xttrader import XtQuantTrader
-from xtquant.xttype import StockAccount
 from .trader import xtQmtTrader
 from GolemQ.markets.StockCN.date_utils import GQ_util_if_trade
 from GolemQ.gateway.xtquant.config import get_xtquant_config
-from GolemQ.core.settings import DATABASE as DATABASE_GolemQ
+from GolemQ.core.settings import GOLEMQ
 from GolemQ.core.constants import DATASOURCE
 from GolemQ.markets.StockCN.date_utils import (
     get_15min_aligned_timestamp,
@@ -142,8 +141,8 @@ def calculate_position_stats(positions_data: List[Dict[str, Any]]) -> Dict[str, 
 
 def save_positions_to_mongodb(
         df: pd.DataFrame,
-        collection=DATABASE_GolemQ.StockCN_watchdog_eneloop,
-        archive_collection=DATABASE_GolemQ.StockCN_watchdog_eneloop_archive
+        collection=GOLEMQ.StockCN_watchdog_eneloop,
+        archive_collection=GOLEMQ.StockCN_watchdog_eneloop_archive
 ):
     """
     将持仓数据保存到MongoDB，并将不在当前持仓中的XTQuant记录移动到归档库
@@ -220,7 +219,7 @@ def save_positions_to_mongodb(
 def save_sync_summary_to_mongodb(
         positions_data: List[Dict[str, Any]],
         asset_info: Dict[str, float],
-        collection=DATABASE_GolemQ.StockCN_xtquant_synchronized
+        collection=GOLEMQ.StockCN_xtquant_synchronized
 ):
     """
     保存同步汇总信息到MongoDB
@@ -331,8 +330,8 @@ def export_xtquant_positions_to_mongodb(
         # 保存持仓数据到MongoDB
         success1 = save_positions_to_mongodb(
             df,
-            DATABASE_GolemQ.StockCN_watchdog_eneloop,
-            DATABASE_GolemQ.StockCN_watchdog_eneloop_archive
+            GOLEMQ.StockCN_watchdog_eneloop,
+            GOLEMQ.StockCN_watchdog_eneloop_archive
         )
         
         # 保存汇总信息到MongoDB
@@ -350,8 +349,8 @@ def watchdog_xtquant_positions_checkpoint(
     verbose: bool = False,
 ):
     print(f"{datetime.datetime.now():%Y-%m-%d}持仓个股监控")
-    collection = DATABASE_GolemQ.StockCN_watchdog_eneloop
-    archive_collection = DATABASE_GolemQ.StockCN_watchdog_eneloop_archive
+    collection = GOLEMQ.StockCN_watchdog_eneloop
+    archive_collection = GOLEMQ.StockCN_watchdog_eneloop_archive
     
     try:
         # 计算一年前的时间戳
@@ -524,7 +523,7 @@ def get_xtquant_orders(xt_trader: XtQuantTrader, acc: StockAccount) -> List[Dict
 
 
 def save_orders_to_database(orders_data: List[Dict[str, Any]],
-                            collection=DATABASE_GolemQ.StockCN_xtquant_orders) -> int:
+                            collection=GOLEMQ.StockCN_xtquant_orders) -> int:
     """
     将挂单数据保存到数据库
     
@@ -593,7 +592,7 @@ def save_orders_to_database(orders_data: List[Dict[str, Any]],
         return 0
 
 
-def get_pushed_order_ids(collection=DATABASE_GolemQ.StockCN_xtquant_orders) -> Set[int]:
+def get_pushed_order_ids(collection=GOLEMQ.StockCN_xtquant_orders) -> Set[int]:
     """
     获取已推送的订单时间戳集合
     
@@ -628,7 +627,7 @@ def get_pushed_order_ids(collection=DATABASE_GolemQ.StockCN_xtquant_orders) -> S
         return set()
 
 
-def mark_order_as_pushed(time_stamp: int, collection=DATABASE_GolemQ.StockCN_xtquant_orders) -> bool:
+def mark_order_as_pushed(time_stamp: int, collection=GOLEMQ.StockCN_xtquant_orders) -> bool:
     """
     标记订单为已推送
     
@@ -812,6 +811,10 @@ def xtquant_sync_during_trading_hours():
         
         # 创建交易实例
         session_id = int(datetime.datetime.now().timestamp())
+        # ⚠️ xtquant **用到才导入**（模块级导入会让 `import xtquant_tools` 也加载它，
+        # 而那个包的 import 有打印副作用）。见 QmtSource.available() 的同一说明。
+        from xtquant.xttrader import XtQuantTrader
+        from xtquant.xttype import StockAccount
         xt_trader = XtQuantTrader(min_path, session_id)
         acc = StockAccount(account, 'STOCK')
         
@@ -967,8 +970,8 @@ def export_xtquant_positions_to_mongodb_v2(
         # 保存持仓数据到MongoDB
         success1 = save_positions_to_mongodb(
             df,
-            DATABASE_GolemQ.StockCN_watchdog_eneloop,
-            DATABASE_GolemQ.StockCN_watchdog_eneloop_archive
+            GOLEMQ.StockCN_watchdog_eneloop,
+            GOLEMQ.StockCN_watchdog_eneloop_archive
         )
         
         # 保存汇总信息到MongoDB

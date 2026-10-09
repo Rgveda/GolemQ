@@ -27,9 +27,7 @@ from .settings import (
     DEFAULT_DB_URI,
     CONFIGFILE_PATH,
     GQ_Setting,
-    GQSETTING,
-    DATABASE,
-    DATABASE_ASYNC
+    GQSETTING
 )
 
 from .mongo import (
@@ -67,8 +65,6 @@ __all__ = [
     'CONFIGFILE_PATH',
     'GQ_Setting',
     'GQSETTING',
-    'DATABASE',
-    'DATABASE_ASYNC',
 
     # MongoDB
     'GQ_util_mongodb_client',

@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""环境自检的 banner（`cli/bootstrap.py` + `core/presentation.py` 的四态）。
+
+为什么值得测：自检结果**只由那个点表达**（用户口径：「banner 提示检查结果，
+`--verbose` 显示详细文字」），所以「点对不对」就是全部的信息量 —— 而它有四个坑：
+
+1. **非 TTY 下四态必须靠符号区分** —— 通过/警告/失败在高亮下是三个同形的 `●`，
+   一旦落到日志里完全同形，而日志正是出事后唯一能翻的东西；
+2. **`未检查`（灰）不是失败** —— CUDA 探不到要灰不要红，否则每台没显卡的机器
+   与每个 CI 都变红，而那条路根本不跑 GPU；
+3. **banner 活跃期间一个 `print` 都不许有**（`PITFALLS.md` P22）—— 自检里唯一会
+   `print` 的是「硬拦项不过」与「配置有问题」两条，它们都必须在 `close()` **之后**；
+4. **时间戳只盖静态头行** —— 盖到会重画的状态行上，会让「变化规则」失真。
+"""
+
+import contextlib
+import datetime
+import io
+import os
+import sys
+
+try:
+    import GolemQ  # noqa: F401
+except ImportError:
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+import unittest
+import unittest.mock
+
+from GolemQ.cli import bootstrap
+from GolemQ.cli.commands._registry import EXIT_FAILURE
+from GolemQ.core.presentation import (
+    Banner,
+    FAIL,
+    OK,
+    PENDING,
+    WARN,
+    render_pipeline_banner,
+    stamp,
+)
+
+FIXED = datetime.datetime(2026, 10, 9, 15, 12, 57)
+
+
+class TestStamp(unittest.TestCase):
+    def test_exact_format(self):
+        self.assertEqual(stamp('bootstrap', FIXED), '[2026-10-09 15:12:57]: bootstrap')
+
+    def test_only_the_header_gets_stamped(self):
+        """`caption` 覆盖头行全文，且**只有头行**带戳 —— 状态行不带。"""
+        stream = io.StringIO()
+        banner = Banner('bootstrap', bootstrap.SELF_CHECK_ROWS, stream=stream,
+                        caption='bootstrap', when=FIXED)
+        banner.render()
+        banner.mark('python', OK)
+        out = stream.getvalue()
+
+        self.assertIn('[2026-10-09 15:12:57]: bootstrap\n', out)
+        self.assertEqual(out.count('[2026-10-09'), 1, '戳只该出现一次（头行）')
+
+    def test_save_banner_keeps_source_prefix(self):
+        """取数 banner 不给 `caption` → 头行仍是 `source: {名}`，只是前面多了戳。"""
+        stream = io.StringIO()
+        banner = Banner('pytdx', (('参考数据', None, ['stock_list']),),
+                        stream=stream, when=FIXED)
+        banner.render()
+        self.assertIn('[2026-10-09 15:12:57]: source: pytdx', stream.getvalue())
+
+
+class TestFourStates(unittest.TestCase):
+    """四态在**两种渲染模式**下都要分得出来。"""
+
+    ROWS = (('环境自检', None, ['通过', '警告', '失败', '未查']),)
+
+    def _render(self, color):
+        states = {'通过': OK, '警告': WARN, '失败': FAIL, '未查': PENDING}
+        return render_pipeline_banner(self.ROWS, states, color=color)
+
+    def test_colored_uses_three_colours_and_one_gray(self):
+        out = self._render(color=True)
+        self.assertIn('\033[32m●\033[0m', out)      # 通过 = 绿
+        self.assertIn('\033[33m●\033[0m', out)      # 警告 = 黄
+        self.assertIn('\033[31m●\033[0m', out)      # 失败 = 红
+        self.assertIn('\033[90m·\033[0m', out)      # 未检查 = 灰
+
+    def test_plain_mode_distinguishes_by_symbol(self):
+        """**非 TTY 的命门**：没有颜色时 警告/失败 必须换成不同符号。
+
+        否则日志里 通过 / 警告 / 失败 全是 `●`，翻日志的人分不出哪个是坏的。
+        """
+        out = self._render(color=False)
+        self.assertIn('通过 ●', out)
+        self.assertIn('警告 !', out)
+        self.assertIn('失败 ✗', out)
+        self.assertIn('未查 ·', out)
+
+    def test_pending_is_not_a_failure(self):
+        """灰 = 未检查 / 不适用，**不是**失败 —— 别把它算进红。"""
+        out = self._render(color=False)
+        self.assertIn('未查 ·', out)
+        self.assertNotIn('未查 ✗', out)
+
+    def test_new_states_do_not_change_the_old_three(self):
+        """扩四态不得动 `--save` 那三态的渲染（那是 2026-10-09 刚定的契约）。"""
+        from GolemQ.core.presentation import DONE, RUNNING
+        rows = (('K线', 'stock', ['stock_day']),)
+        self.assertEqual(render_pipeline_banner(rows, {})
+                         .replace('\033[90m·\033[0m', '·'), 'K线  stock  day ·')
+        self.assertIn('\033[32m●\033[0m',
+                      render_pipeline_banner(rows, {'stock_day': RUNNING}))
+        self.assertIn('\033[97m●\033[0m',
+                      render_pipeline_banner(rows, {'stock_day': DONE}))
+
+
+class TestCheckResults(unittest.TestCase):
+    def test_run_checks_returns_one_entry_per_node_in_order(self):
+        got = bootstrap.run_checks()
+        self.assertEqual([node for node, _, _ in got], list(bootstrap.SELF_CHECK_NODES))
+
+    def test_every_node_is_in_the_banner_header(self):
+        """节点名与表头键**必须是同一批** —— 不然 `mark` 会**静默忽略**（不报错）。"""
+        keys = [k for _, _, keys in bootstrap.SELF_CHECK_ROWS for k in keys]
+        self.assertEqual(keys, list(bootstrap.SELF_CHECK_NODES))
+
+    def test_details_are_always_a_list_of_lines(self):
+        """明细**一律是 list** —— 裸字符串会被下游逐**字**迭代（实测踩过）。"""
+        for node, _, lines in bootstrap.run_checks():
+            with self.subTest(node=node):
+                self.assertIsInstance(lines, list)
+                self.assertTrue(lines)
+                self.assertTrue(all(isinstance(x, str) for x in lines))
+
+    def test_cuda_is_never_a_failure(self):
+        """新树零 GPU 依赖 → 探不到只算「未检查」。"""
+        state, _ = bootstrap.check_cuda()
+        self.assertIn(state, (OK, PENDING))
+        self.assertNotEqual(state, FAIL)
+
+    def test_blas_warns_on_a_non_one_value(self):
+        """`OPENBLAS_NUM_THREADS=4` 与「没设」后果几乎一样，旧版却报绿。"""
+        with unittest.mock.patch.dict(os.environ, {'OPENBLAS_NUM_THREADS': '4'}):
+            ok, detail = bootstrap.check_blas()
+        self.assertFalse(ok)
+        self.assertIn('不是 1', detail)
+
+    def test_pytdx_has_no_version_and_is_not_penalised(self):
+        """`want=''` = 只查 import —— pytdx **没有** `__version__`，不能因此报红。"""
+        rows = dict((d.split()[0], ok) for ok, d in bootstrap.check_packages())
+        self.assertIn('pytdx', rows)
+        self.assertTrue(rows['pytdx'])
+
+
+class TestHardGate(unittest.TestCase):
+    """硬拦项（python / 依赖包）才拦人，且**修配置那四条命令必须放行**。"""
+
+    def _with_broken(self, **patch):
+        return unittest.mock.patch.multiple(bootstrap, **patch)
+
+    def test_failing_python_exits_when_strict(self):
+        broken = ((False, 'python 3.9.0（要求 >= 3.12）'),)
+        with self._with_broken(check_python=lambda: broken[0]):
+            with contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as ctx:
+                    bootstrap.check_environment(verbose=False, strict=True)
+        self.assertEqual(ctx.exception.code, EXIT_FAILURE)
+
+    def test_same_failure_does_not_exit_when_not_strict(self):
+        with self._with_broken(check_python=lambda: (False, 'python 3.9.0')):
+            with contextlib.redirect_stdout(io.StringIO()):
+                ok = bootstrap.check_environment(verbose=False, strict=False)
+        self.assertFalse(ok)
+
+    def test_a_warning_never_exits(self):
+        """黄点（线程环境 / 时区 / CUDA）**不拦** —— 它们可能是显式选择或不适用。"""
+        with unittest.mock.patch.dict(os.environ, {'OPENBLAS_NUM_THREADS': '4'}):
+            with contextlib.redirect_stdout(io.StringIO()):
+                ok = bootstrap.check_environment(verbose=False, strict=True)
+        self.assertTrue(ok)
+
+    def test_repair_commands_are_exactly_the_config_ones(self):
+        """放行集合必须就是那四条修配置的命令 —— 多一条就绕过闸，少一条就修不回来。"""
+        self.assertEqual(bootstrap.REPAIR_COMMANDS,
+                         frozenset({'setup', 'mongodb-init',
+                                    'dingtalk-init', 'serverchan-init'}))
+
+
+class TestNothingPrintsWhileTheBannerIsAlive(unittest.TestCase):
+    """`PITFALLS.md` P22：banner 活跃期间一个 `print` 都不许有。
+
+    自检里会 `print` 的只有两处 —— 「硬拦项不过」与「配置有问题」——
+    两者都**必须在 `close()` 之后**。这条用例把顺序钉住：用一个记账版的 Banner
+    记录 `render`/`close` 的先后，再断言这期间的 `print` 次数为 0。
+
+    ⚠️ 与 `test_kline_save.TestNothingPrintsWhileTheBarIsAlive` 并列：
+    那条钉的是**取数**内层漏 print，这条钉的是**自检**自己。
+    """
+
+    def _run(self, broken_cfg=False):
+        from GolemQ.core import presentation
+
+        opened = {'live': False, 'prints': 0, 'was_live': False}
+        real_banner = presentation.Banner
+
+        class _Spy(real_banner):
+            def render(self):
+                super().render()
+                opened['live'] = True
+                opened['was_live'] = True
+
+            def close(self):
+                super().close()
+                opened['live'] = False
+
+        def _counting_print(*args, **kwargs):
+            if opened['live']:
+                opened['prints'] += 1
+            return None
+
+        patch_cfg = (unittest.mock.patch.object(bootstrap, 'check_config',
+                                                lambda: (False, '没找到配置文件'))
+                     if broken_cfg else contextlib.nullcontext())
+        with unittest.mock.patch.object(presentation, 'Banner', _Spy), \
+                unittest.mock.patch('builtins.print', _counting_print), \
+                patch_cfg, \
+                contextlib.redirect_stdout(io.StringIO()):
+            bootstrap.check_environment(verbose=False, strict=False)
+        return opened
+
+    def test_no_print_when_everything_is_fine(self):
+        got = self._run()
+        # ⚠️ 先证「监视真的挂上了」—— 否则 spy 没生效时 `prints == 0` 也会绿，
+        # 这条用例就变成了永远通过的空转。
+        self.assertTrue(got['was_live'], 'Banner 根本没被打开，用例失去意义')
+        self.assertEqual(got['prints'], 0)
+
+    def test_no_print_even_when_there_is_a_problem(self):
+        """有问题的路径也要走 「关掉 banner → 再 print」，不然屏上会花。"""
+        got = self._run(broken_cfg=True)
+        self.assertTrue(got['was_live'])
+        self.assertEqual(got['prints'], 0)
+
+
+if __name__ == '__main__':
+    unittest.main()

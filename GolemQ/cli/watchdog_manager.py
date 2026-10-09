@@ -25,7 +25,7 @@
 import datetime
 import re
 from typing import List
-from GolemQ.core.settings import DATABASE as DATABASE_GolemQ
+from GolemQ.core.settings import GOLEMQ as DATABASE_GolemQ
 from GolemQ.core.constants import DATASOURCE
 
 
@@ -371,3 +371,52 @@ def list_watchlist_symbols(verbose: bool = False) -> List[str]:
     except Exception as e:
         print(f"查询关注列表时出错: {e}")
         return []
+
+def migrate_eneloop_watchlist(verbose: bool = True, source_uri: str = None) -> dict:
+    """把 4.4 的**关注列表**搬到 8.3 的 `GOLEMQ`（**一次性**，见 `core/migrate44.py`）。
+
+    为什么必须搬：`--eneloop-*` 是活 CLI，而改绑之后它的两张表在 8.3 是**空的** ——
+    只改代码不搬数据，`--eneloop-list` 会**静默变空**（数据没丢，还在 4.4，但新树看不见）。
+
+    两张表的幂等键**不同**（别图省事用同一个）：
+    * 活动表 `StockCN_watchdog_eneloop` → ``['symbol']``（写入侧就是 ``find_one({'symbol':…})``）
+    * 归档表 `StockCN_watchdog_eneloop_archive` → ``['symbol', 'removed_at']``
+      —— 归档是 append-only，同一个 symbol 可以有多行（每删一次加一行）
+
+    ⚠️ **归档表不能用 `writer.save_collection`**：它对缺 key 的行是
+    ``if all(k in r …)`` **静默跳过**（`datasource/writer.py:71-77`），而归档行
+    可能是早期版本写的、未必都有 `removed_at` —— 那会**静默丢行**。
+    所以这里手写 `ReplaceOne`，并把跳过数打进报告。
+
+    :returns: ``{'src':…, 'dst':…, 'skipped':…}``（两张表各一份计数）
+    """
+    from pymongo import ReplaceOne, DESCENDING  # noqa: F401
+    from GolemQ.core.migrate44 import db44
+
+    src_db = db44('golemq', uri=source_uri)
+    out = {}
+    for name, keys in (('StockCN_watchdog_eneloop', ['symbol']),
+                       ('StockCN_watchdog_eneloop_archive', ['symbol', 'removed_at'])):
+        src = src_db[name]
+        dst = DATABASE_GolemQ[name]
+        if name not in src_db.list_collection_names():
+            raise RuntimeError(
+                '源集合不存在：4.4 golemq.{0} —— 这条搬运就是为了避免 '
+                '`--eneloop-list` 静默变空，所以宁可直接失败'.format(name))
+        rows = list(src.find({}, {'_id': 0}))
+        stats = {'src': len(rows), 'dst': 0, 'skipped': 0}
+        ops, skipped = [], 0
+        for r in rows:
+            if not all(k in r for k in keys):
+                skipped += 1
+                continue
+            ops.append(ReplaceOne({k: r[k] for k in keys}, r, upsert=True))
+        if ops:
+            dst.bulk_write(ops, ordered=False)
+        stats['dst'] = dst.count_documents({})
+        stats['skipped'] = skipped
+        out[name] = stats
+        if verbose:
+            print('[migrate:eneloop] {0}: 源 {1} 行 → 目标 {2} 行（跳过 {3}）'.format(
+                name, stats['src'], stats['dst'], stats['skipped']))
+    return out

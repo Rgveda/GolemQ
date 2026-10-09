@@ -12,7 +12,16 @@ import pytz
 
 from GolemQ.supervisor.heartbeat import HeartbeatMonitor
 from GolemQ.supervisor.messenger import send_alert
-from GolemQ.gateway.xtquant.xtquant_tools import export_xtquant_positions_to_mongodb
+
+
+def _export_positions():
+    """**函数级**导入 `xtquant_tools` —— 它在模块级 `import xtquant`，而 xtquant 包
+    被 import 时会打印一行 banner（`xtquant文档地址：…`）。本模块被 `cli/__main__.py`
+    在**模块级**导入，所以只要这里有顶层 import，**任何** CLI 子命令都会先打那行 ——
+    包括 `--save tdx` 这种根本不碰 QMT 的。"
+    """
+    from GolemQ.gateway.xtquant.xtquant_tools import export_xtquant_positions_to_mongodb
+    return export_xtquant_positions_to_mongodb()
 
 
 class TradingTimeChecker:
@@ -77,7 +86,7 @@ class XtquantSyncScheduler:
         
         try:
             # 执行同步
-            success = export_xtquant_positions_to_mongodb()
+            success = _export_positions()
             
             if success:
                 # 同步成功，标记完成

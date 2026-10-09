@@ -11,7 +11,7 @@ import hashlib
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
-from GolemQ.core.settings import DATABASE
+from GolemQ.core.settings import GOLEMQ
 from .messenger import Messenger
 
 
@@ -26,7 +26,7 @@ class HeartbeatMonitor:
             check_interval: 检查间隔（秒）
             timeout_threshold: 默认超时阈值（秒）
         """
-        self.db = DATABASE
+        self.db = GOLEMQ
         self.module_collection = self.db.module_heartbeats
         self.archive_collection = self.db.module_heartbeats_archive
         self.messenger = Messenger()

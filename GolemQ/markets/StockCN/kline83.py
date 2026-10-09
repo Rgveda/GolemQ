@@ -211,13 +211,13 @@ def _collection(name):
     """取 8.3 库里的集合句柄。**函数级导入是刻意的。**
 
     ``markets/StockCN/__init__.py:55`` 先 ``from .quotes import StockCNQuotes``，
-    到 ``:70`` 才定义 ``DATABASE_STOCK_CN``。``quotes.py`` 会在模块级导入本模块，
-    所以顶层 ``from . import DATABASE_STOCK_CN`` 会抛
+    到 ``:70`` 才定义 ``GOLEMQ_STOCK_CN``。``quotes.py`` 会在模块级导入本模块，
+    所以顶层 ``from . import GOLEMQ_STOCK_CN`` 会抛
     ``ImportError: cannot import name ... from partially initialized module``。
     ``datastruct.py`` 出于同一原因也这样写。
     """
-    from . import DATABASE_STOCK_CN
-    return DATABASE_STOCK_CN[name]
+    from . import GOLEMQ_STOCK_CN
+    return GOLEMQ_STOCK_CN[name]
 
 
 def _read_timeseries(codelist, start, end, frequency, market,
@@ -313,14 +313,15 @@ def get_kline_price_min(codelist, start=None, market_type=None, frequency='60min
 
 def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
                        end=None, realtime=None):
-    """日线读取（8.3 时序，**尚未就绪**）。返回 ``(KlineResult | None, codename)``。
+    """日线读取（8.3 时序）。返回 ``(KlineResult | None, codename)``。
 
-    8.3 上还没有 ``stock_day`` / ``index_day`` 集合 —— 日线迁移未完成。集合名
-    仍按 ``f'{market}_{frequency}'`` 推导、``frequency='day'``，因此日线一旦迁移
-    完成，本函数**无需改动**即可工作。
+    ⚠️ **先前这里写着「尚未就绪 / 日线未迁移」—— 那条已作废**（2026-10-08 实测：
+    `stock_day` 有 **17,893,343** 行、`index_day` 4,564,152 行，日线是迁全了的；
+    当时那个"未迁移"的结论来自时序集合上**不可靠的计数方式**，见 `PITFALLS.md` P15）。
 
-    在就绪之前，无数据时返回 ``None`` 并打印一条明确日志，而非静默返回空表 ——
-    否则就是重演本模块所修复的那条静默失败链。
+    集合名按 ``f'{market}_{frequency}'`` 推导、``frequency='day'``。
+    无数据时返回 ``None`` 并打印明确日志，不静默返回空表 —— 后者是重演本模块
+    所修复的那条静默失败链。
     """
     market = _market_prefix(codelist, market_type)
     frequency = 'day'

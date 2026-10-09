@@ -38,6 +38,7 @@ MongoDB 对 UTF-8 键名无障碍。若日后确需英文键，再按实际用�
 """
 from __future__ import annotations
 
+from GolemQ.core.presentation import suppress_stdout_stderr
 from GolemQ.datasource.base import (
     ETF_LIST,
     FINANCIAL,
@@ -158,12 +159,19 @@ class AkshareSource(DataSource):
         start_year = start_year or str(_dt.date.today().year - 1)
 
         rows: list = []
-        for code in codelist:
+        # `desc` 报**当前 code**，不报固定的 `[akshare:financial]` —— 跑的是哪一只
+        # 比跑的是哪个集合有用（与 pytdx 的 `fetch_stock_info` 同一口径）。
+        from tqdm import tqdm
+        bar = tqdm(codelist, unit='stock', disable=None, leave=False)
+        for code in bar:
             code = str(code).split('.')[0][-6:]
+            bar.set_description(code)
             self.gate()
             try:
-                df = ak.stock_financial_analysis_indicator(symbol=code,
-                                                           start_year=start_year)
+                # akshare 内部有 tqdm（见上），逐只调用会闪 —— 压掉它
+                with suppress_stdout_stderr():
+                    df = ak.stock_financial_analysis_indicator(symbol=code,
+                                                               start_year=start_year)
             except Exception as exc:      # noqa: BLE001 单只失败不中断全批
                 if verbose:
                     print(f'[akshare:financial] {code} 失败: {exc!r}')

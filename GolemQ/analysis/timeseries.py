@@ -4,11 +4,9 @@
 **本模块的定位（两层模型）**：重采样是「所有交易系统共性」的能力，属**第一层**，
 放根目录下的 `analysis/`，而不是 `markets/<Market>/`。
 
-⚠️ 本文件的两个旧函数（`Timeline_duration` / `align_kline_timeline`）**仍是 stub**
-（重构未迁完），它们的真实实现在老树。`services/persistence/` 有引用它们，所以
-「恒返回 0 / 恒返回 True」的现状是**已知缺陷**，见 `MIGRATION_STATUS.md` —— 不要
-因为本文件现在有了真实现就以为整模块已就绪。
-
+本文件只保留两个重采样器（`GQ_data_min_resample` / `GQ_data_min_to_day`）——
+原先的两个 stub（`Timeline_duration` / `align_kline_timeline`）已随
+`services/persistence/` 的删除一并移除（它们的唯一调用方在那个包里）。
 本文件新增的两个重采样器是从 QUANTAXIS **逐行回迁**的（原先
 `markets/StockCN/realtime.py` 直接调 QUANTAXIS 的 `QA_data_min_resample` /
 `QA_data_min_to_day`）。回迁而非重写是为了保行为：它们内含 A 股**分段交易时段**
@@ -20,28 +18,6 @@
 import numpy as np
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
-
-
-def Timeline_duration(series):
-    """Calculate timeline duration (stub)."""
-    return pd.Series(0, index=series.index if hasattr(series, 'index') else range(len(series)))
-
-
-def align_kline_timeline(kline_data, freq='30min', annual=1008):
-    """Align kline timeline to standard timestamps (stub)."""
-    return True, kline_data, []
-
-
-#: 重采样的聚合口径。`vol` 与 `volume` 两套写法都支持 —— 迁移把成交量存成 `vol`，
-#: 而 QUANTAXIS 口径与下游消费方用 `volume`（见 `markets/StockCN/kline83.py` 的说明）。
-_MIN_CONVERSION_VOL = {
-    'code': 'first', 'open': 'first', 'high': 'max', 'low': 'min',
-    'close': 'last', 'vol': 'sum', 'amount': 'sum',
-}
-_MIN_CONVERSION_VOLUME = {
-    'code': 'first', 'open': 'first', 'high': 'max', 'low': 'min',
-    'close': 'last', 'volume': 'sum', 'amount': 'sum',
-}
 
 
 def _min_conversion(min_data):

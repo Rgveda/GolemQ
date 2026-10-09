@@ -56,6 +56,19 @@ DOCTEST_MODULES = (
     # 来源模块里），所以能进这个列表。两处调用方都靠它，且各自的数值基准
     # （股票 40,192 行 vs QUANTAXIS、ETF 独立重算）都依赖这些函数。
     'GolemQ.markets.StockCN.fq',
+    # 实时/history 落库的**写侧契约**：pytdx bar → 8.3 时序文档的字段映射与分页数学。
+    # 纯函数（不碰 DB/网络），判错会静默写坏库里每一根 bar，故把口径写进 doctest 钉住。
+    'GolemQ.markets.StockCN.kline_doc',
+    # 状态 banner 的**渲染**部分（`render_refdata_banner` / `ansi_enabled`）：
+    # 纯函数、不看环境（上不上色由调用方传），故能钉。模块本身不是纯函数模块
+    # （还拖 pandas/tqdm/joblib），但按本文件的规矩，**收不收是逐函数的**。
+    'GolemQ.core.presentation',
+    # CLI 环境自检里的**纯函数**（版本比较）。模块本身会 lazily import
+    # `core.presentation` / `core.mongo`，但那些都在函数体内，收集时不会跑。
+    'GolemQ.cli.bootstrap',
+    # 服务器池的**纯函数**（回环判据）。模块本身 lazily import pytdx，
+    # 收集时不会碰网络。
+    'GolemQ.markets.StockCN.datasource.tdx_hosts',
 )
 
 
