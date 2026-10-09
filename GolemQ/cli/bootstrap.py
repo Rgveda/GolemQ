@@ -95,7 +95,12 @@ MIN_MONGODB = (8, 3)
 MONGO_TIMEOUT_MS = 3000
 
 #: 自检 banner 的节点，**顺序即屏上顺序**（`DECISIONS.md` D17 的先例：顺序是语义）。
-SELF_CHECK_NODES = ('操作系统', 'python', '依赖包', '线程环境', 'CPU 架构', 'CUDA', '时区')
+SELF_CHECK_NODES = ('操作系统', 'python', '依赖包', '线程环境', 'CPU 架构', 'CUDA',
+                    '时区', '交易日历')
+
+#: 交易日历「**该续下一年了**」的分界（月, 日）—— 用户 2026-10-10 定。
+#: 过了这一天而日历仍只到今年年底 ⇒ 黄点提醒（次年的安排通常那时已经公布）。
+CALENDAR_RENEW_AFTER = (11, 10)
 
 #: 自检 banner 的表头 —— 单阶段**一行平铺**（用户 2026-10-09 定）。
 SELF_CHECK_ROWS = (('环境自检', None, list(SELF_CHECK_NODES)),)
@@ -409,6 +414,56 @@ def check_cuda():
         return PENDING, 'nvidia-smi 探测失败（{}: {}）'.format(type(exc).__name__, exc)
 
 
+def check_calendar(calendar=None, today=None):
+    """``(状态, 说明)``：交易日历（`TRADE_DATE_SSE`）**够不够用**。
+
+    **为什么值得单独摆一个节点**：全树所有「今天是不是交易日 / 上一个交易日是哪天」
+    都读它（`kline_doc.alive_threshold`、`trade_days_between`、`GQ_util_if_trade`…），
+    而它是一张**手维护的静态表** —— 过期了**不会报错**，只会让"今天"被静默判成
+    非交易日（于是短路判据、TTL、调度全按错的日子走）。
+
+    判据（用户 2026-10-10 定，**外加一档见末行**）：
+
+    | 情形 | 状态 |
+    |:--|:--|
+    | 末端 **< 今天** | **红** —— 日历已过期 |
+    | 末端 = **今年年底**，且今天 **<= 11-10** | **绿** —— 正常，明年的还没到公布时候 |
+    | 末端 = **今年年底**，且今天 **> 11-10** | **黄** —— 该续下一年了 |
+    | 末端 **> 今天但 < 今年年底** | **黄** —— ⚠️ **这一档用户没给，是我补的**：还能跑，但覆盖不够长 |
+    | 日历空 / 末端不是 `YYYY-MM-DD` | **红** |
+
+    :param calendar: 交易日列表（``'YYYY-MM-DD'`` 字符串，字典序即时间序）；
+        ``None`` = `TRADE_DATE_SSE`。**可注入**是为了能测（纯函数）
+    :param today: 可注入的"今天"（`date` / `datetime` / 字符串都行），``None`` = 现在
+    """
+    if calendar is None:
+        from GolemQ.markets.StockCN.constants import TRADE_DATE_SSE as calendar
+    today_s = str(today)[:10] if today is not None else datetime.date.today().isoformat()
+    last = calendar[-1] if calendar else None
+    if not last:
+        return FAIL, '交易日历是**空的** —— 全树所有「今天是不是交易日」都会退化'
+    try:
+        year = int(str(last)[:4])
+        int(str(last)[5:7])
+        int(str(last)[8:10])
+    except ValueError:
+        return FAIL, '日历末端 {!r} 不是 YYYY-MM-DD'.format(last)
+
+    if last < today_s:
+        return FAIL, ('末端 {} **早于今天 {}** —— 之后的日期全被判成非交易日，'
+                      '短路判据 / TTL / 调度都会按错的日子走'.format(last, today_s))
+
+    yearend = '{}-12-31'.format(year)
+    renew_at = '{}-{:02d}-{:02d}'.format(year, *CALENDAR_RENEW_AFTER)
+    if last >= yearend:
+        if today_s <= renew_at:
+            return OK, '覆盖到 {}（{} 个交易日）'.format(last, len(calendar))
+        return WARN, ('末端 {} 只到今年年底，而今天已过 {} —— **该续下一年了**'
+                      .format(last, renew_at))
+    return WARN, ('末端 {} **早于今年年底 {}** —— 还能跑，但覆盖不够长'
+                  .format(last, yearend))
+
+
 def check_tz():
     """``(状态, 说明)``：本机时区是不是北京时间（UTC+08:00）。
 
@@ -536,6 +591,7 @@ def run_checks(packages=None):
         ('CPU 架构',) + _as_lines(check_cpu()),
         ('CUDA',) + _as_lines(check_cuda()),
         ('时区',) + _as_lines(check_tz()),
+        ('交易日历',) + _as_lines(check_calendar()),
     ]
 
 

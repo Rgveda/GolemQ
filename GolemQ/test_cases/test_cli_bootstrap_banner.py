@@ -244,3 +244,68 @@ class TestNothingPrintsWhileTheBannerIsAlive(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestTradingCalendarCheck(unittest.TestCase):
+    """交易日历节点（用户 2026-10-10 定）。
+
+    为什么值得单独测：`TRADE_DATE_SSE` 是**手维护的静态表**，过期了**不报错** ——
+    只让"今天"被静默判成非交易日，于是**短路判据 / TTL / 调度全按错的日子走**。
+    四档 + 两个异常都在下面钉住（含**用户没给、我补的那一档**）。
+    """
+
+    CAL = ['2026-12-29', '2026-12-30', '2026-12-31']      # 末端 = 今年年底
+
+    def _state(self, cal, today):
+        return bootstrap.check_calendar(cal, today)[0]
+
+    def test_expired_is_fail(self):
+        """末端 < 今天 ⇒ 红（后面的日期全被判成非交易日）。"""
+        self.assertEqual(self._state(['2025-12-31'], '2026-10-10'), FAIL)
+
+    def test_fresh_before_nov10_is_ok(self):
+        self.assertEqual(self._state(self.CAL, '2026-10-10'), OK)
+
+    def test_after_nov10_should_renew_is_warn(self):
+        self.assertEqual(self._state(self.CAL, '2026-11-11'), WARN)
+
+    def test_nov10_boundary_itself_is_still_ok(self):
+        """边界取**含** 11-10（用户口径「11月10日以前」）。"""
+        self.assertEqual(self._state(self.CAL, '2026-11-10'), OK)
+
+    def test_short_coverage_is_warn(self):
+        """⚠️ **用户没给的第四档**：末端在未来、但没到今年年底 ⇒ 还能跑、覆盖不够长。
+
+        （注意别拿"末端 6-30 + 今天 10-10"测 —— 那是**已过期**，先命中红。）
+        """
+        self.assertEqual(self._state(['2026-06-30'], '2026-05-01'), WARN)
+
+    def test_empty_calendar_is_fail(self):
+        self.assertEqual(self._state([], '2026-10-10'), FAIL)
+
+    def test_malformed_tail_is_fail(self):
+        self.assertEqual(self._state(['2026-12-3x'], '2026-10-10'), FAIL)
+
+    def test_year_rollover_expires(self):
+        """跨年：到了次年 1 月而日历没续 ⇒ 红（这是这条检查最该抓的情形）。"""
+        self.assertEqual(self._state(self.CAL, '2027-01-02'), FAIL)
+
+    def test_it_is_a_node_but_not_a_hard_gate(self):
+        """在 banner 上有节点，但**不进硬拦**（红点也不拦启动）。"""
+        self.assertIn('交易日历', bootstrap.SELF_CHECK_NODES)
+        self.assertNotIn('交易日历', bootstrap.ENV_GATE_NODES)
+
+    def test_real_calendar_is_current(self):
+        """真日历此刻应该是**绿**（覆盖到今年年底）。
+
+        ⚠️ 这条会在**跨年且没续日历**时变红 —— 那是对的（它就该提醒你去续），
+        若那天到了而这条红了，请**更新 `TRADE_DATE_SSE`**，别改这条用例。
+        """
+        import datetime as _dt
+        state, detail = bootstrap.check_calendar()
+        year = _dt.date.today().year
+        if state == WARN:
+            self.skipTest('已过 11-10 且日历未续下一年 —— 这正是黄点要提示的：{}'
+                          .format(detail))
+        self.assertEqual(state, OK)
+        self.assertIn('{}-12-31'.format(year), detail)

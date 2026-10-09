@@ -63,6 +63,7 @@ CLI 环境自检 —— 版权页 + 机器 / 配置 / 服务三道闸。
 | f | `check_os()` | (状态, 说明)：操作系统 + 位数。 |
 | f | `check_cpu()` | (状态, 说明)：厂商 · 物理核/逻辑线程 · 有无超线程 · 是否混合大小核。 |
 | f | `check_cuda()` | (状态, 说明)：有 N 卡就报卡型 + 驱动 + 驱动支持的 CUDA 版本。 |
+| f | `check_calendar(calendar, today)` | (状态, 说明)：交易日历（TRADE_DATE_SSE）够不够用。 |
 | f | `check_tz()` | (状态, 说明)：本机时区是不是北京时间（UTC+08:00）。 |
 | f | `check_config()` | (ok, 说明)。查 ~/.GolemQ/settings/config.ini 在不在、能不能解析、 |
 | f | `check_mongodb(uri)` | (ok, 说明)。连上并取 server_info() 判版本 —— 本项目只用 8.3。 |
@@ -1207,6 +1208,17 @@ cli/bootstrap.py —— 环境自检的口径。
 | C | `TestNothingPrintsWhileTheBannerIsAlive` | PITFALLS.md P22：banner 活跃期间一个 print 都不许有。 |
 | f | `TestNothingPrintsWhileTheBannerIsAlive.test_no_print_when_everything_is_fine()` |  |
 | f | `TestNothingPrintsWhileTheBannerIsAlive.test_no_print_even_when_there_is_a_problem()` | 有问题的路径也要走 「关掉 banner → 再 print」，不然屏上会花。 |
+| C | `TestTradingCalendarCheck` | 交易日历节点（用户 2026-10-10 定）。 |
+| f | `TestTradingCalendarCheck.test_expired_is_fail()` | 末端 < 今天 ⇒ 红（后面的日期全被判成非交易日）。 |
+| f | `TestTradingCalendarCheck.test_fresh_before_nov10_is_ok()` |  |
+| f | `TestTradingCalendarCheck.test_after_nov10_should_renew_is_warn()` |  |
+| f | `TestTradingCalendarCheck.test_nov10_boundary_itself_is_still_ok()` | 边界取含 11-10（用户口径「11月10日以前」）。 |
+| f | `TestTradingCalendarCheck.test_short_coverage_is_warn()` | ⚠️ 用户没给的第四档：末端在未来、但没到今年年底 ⇒ 还能跑、覆盖不够长。 |
+| f | `TestTradingCalendarCheck.test_empty_calendar_is_fail()` |  |
+| f | `TestTradingCalendarCheck.test_malformed_tail_is_fail()` |  |
+| f | `TestTradingCalendarCheck.test_year_rollover_expires()` | 跨年：到了次年 1 月而日历没续 ⇒ 红（这是这条检查最该抓的情形）。 |
+| f | `TestTradingCalendarCheck.test_it_is_a_node_but_not_a_hard_gate()` | 在 banner 上有节点，但不进硬拦（红点也不拦启动）。 |
+| f | `TestTradingCalendarCheck.test_real_calendar_is_current()` | 真日历此刻应该是绿（覆盖到今年年底）。 |
 
 ### `test_cli_commands`
 cli/commands/ 的注册表契约。
