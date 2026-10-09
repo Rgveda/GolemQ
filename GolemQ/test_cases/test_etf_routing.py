@@ -21,6 +21,7 @@
 import os
 import sys
 import unittest
+import unittest.mock
 
 try:
     import GolemQ  # noqa: F401
@@ -181,3 +182,86 @@ class TestMinContainer(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAdjFactorQueryUsesTheTimefield(unittest.TestCase):
+    """复权因子表（`stock_adj` / `etf_adj`）**必须按 `ts`（timeField）过滤**。
+
+    为什么值得测（2026-10-10 用户问「复权部分有没有按 ts 时序数据集优化的必要性」）：
+    两个集合都是**时序集合**（索引 `code_1_ts_1` = `(metaField=code, timeField=ts)`），
+    而原来的过滤按 **`date`（字符串）** —— 那个字段**没有任何索引**，拿不到分桶剪枝。
+
+    实测（500 只 × 1 年因子）：**按 date 0.704s → 按 ts 0.314s（2.2×）**；
+    端到端 `_v3`：**2.384s → 1.837s（快 23%）**。
+
+    ⚠️ 写错了**不报错、也不改结果**（`date` 与 `ts` 一一对应，实测两集合缺 `ts`
+    的行都是 0），只是**每次都慢** —— 所以只能靠结构钉住。
+    """
+
+    def test_stock_adj_frame_filters_on_ts(self):
+        from GolemQ.markets.StockCN import datastruct as ds
+        seen = []
+
+        class _Coll:
+            def find(self, q, proj=None):
+                seen.append(q)
+                return []
+
+        with unittest.mock.patch.object(ds, '_adj_collection', return_value=_Coll()):
+            ds._adj_frame(['600519'], '2025-10-01', '2026-10-09')
+
+        self.assertTrue(seen)
+        q = seen[0]
+        self.assertIn('ts', q, '因子表必须按 ts（timeField）过滤')
+        self.assertNotIn('date', q, '按 date 过滤拿不到时序索引的分桶剪枝')
+
+    def test_etf_adj_filters_on_ts(self):
+        from GolemQ.markets.StockCN import etf_fq
+        seen = []
+
+        class _Coll:
+            def find(self, q, proj=None, **kw):
+                seen.append(q)
+                return []
+
+        etf_fq.GQ_fetch_etf_adj(['510300'], start='2026-01-01', end='2026-10-09',
+                                adj_collection=_Coll())
+        self.assertTrue(seen)
+        q = seen[0]
+        self.assertIn('ts', q)
+        self.assertNotIn('date', q)
+
+    def test_bounds_cover_the_whole_day(self):
+        """边界必须是**北京口径的当日两端** —— 只给日期时不能塌成零点。
+
+        （`date` 是日期、而 `ts` 是「该日北京零点」，所以上界必须补到 `23:59:59`，
+        否则 `dmin == dmax` 会漏掉那一整天。）
+        """
+        from GolemQ.markets.StockCN import datastruct as ds
+        from GolemQ.markets.StockCN.kline83 import bj_date
+        seen = []
+
+        class _Coll:
+            def find(self, q, proj=None):
+                seen.append(q)
+                return []
+
+        with unittest.mock.patch.object(ds, '_adj_collection', return_value=_Coll()):
+            ds._adj_frame(['600519'], '2026-10-09', '2026-10-09')
+        rng = seen[0]['ts']
+        self.assertEqual(rng['$gte'], bj_date('2026-10-09 00:00:00'))
+        self.assertEqual(rng['$lte'], bj_date('2026-10-09 23:59:59'))
+
+    def test_projection_keeps_the_date_join_key(self):
+        """投影里**保留 `date`** —— 它与 K 线帧的 join 键仍是日期字符串。"""
+        from GolemQ.markets.StockCN import datastruct as ds
+        seen = []
+
+        class _Coll:
+            def find(self, q, proj=None):
+                seen.append(proj)
+                return []
+
+        with unittest.mock.patch.object(ds, '_adj_collection', return_value=_Coll()):
+            ds._adj_frame(['600519'], '2025-10-01', '2026-10-09')
+        self.assertIn('date', seen[0])

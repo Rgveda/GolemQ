@@ -143,14 +143,21 @@ def GQ_fetch_etf_adj(codelist, start=None, end=None,
         return {}
     if adj_collection is None:
         adj_collection = _adj_collection()
+    # ⚠️ **按 `ts`（timeField）过滤，不按 `date`**（2026-10-10 改，与股票侧
+    # `datastruct._adj_frame` 同一处坑）：`etf_adj` 是**时序集合**（索引 `code_1_ts_1`），
+    # 而 `date` 是字符串、**无索引** ⇒ 按它过滤拿不到分桶剪枝。
+    # 实测（股票侧同规模）：**0.704s → 0.314s（2.2×）**，行数一致。
+    # 等价性已验：`etf_adj` **缺 `ts` 的文档为 0**，`ts` 恒为该日北京零点。
+    # 返回的字典**仍以 `date` 为键**（调用方的 join 键没变）。
+    from .kline83 import bj_date          # 函数内导入：顶层会与 kline83 成环
     query = {'code': {'$in': codes}}
     rng = {}
     if start is not None:
-        rng['$gte'] = str(start)[:10]
+        rng['$gte'] = bj_date('{} 00:00:00'.format(str(start)[:10]))
     if end is not None:
-        rng['$lte'] = str(end)[:10]
+        rng['$lte'] = bj_date('{} 23:59:59'.format(str(end)[:10]))
     if rng:
-        query['date'] = rng
+        query['ts'] = rng
     out: Dict[str, Dict[str, float]] = {}
     for doc in adj_collection.find(
             query, {'_id': 0, 'code': 1, 'date': 1, 'adj': 1}, batch_size=10000):

@@ -129,11 +129,24 @@ def _row_codes(data):
 def _adj_frame(codes, dmin, dmax):
     """`stock_adj` 在 `[dmin, dmax]` 内的 `(date, code) -> adj` 因子表。
 
-    `date` 在这个集合里是**字符串** `'YYYY-MM-DD'`，所以范围查询必须传字符串
-    —— 传 `datetime` 会静默返回空集（不抛异常）。见 `PITFALLS.md`。
+    ⚠️ **按 `ts`（timeField）过滤，不按 `date`**（2026-10-10 改）：
+    `stock_adj` 是**时序集合**（索引 `code_1_ts_1` = `(metaField=code, timeField=ts)`），
+    而 `date` 是字符串、**没有任何索引** ⇒ 按它过滤拿不到**分桶剪枝**。
+    实测 500 只 × 1 年因子：**0.704s → 0.314s（2.2×）**，**行数一致**。
+    （`code` 有索引前缀，所以这不是全表扫 —— 全表扫那种是 `PITFALLS.md` P25 的 8800×。）
+
+    **等价性已验**（改之前查的）：两集合**缺 `ts` 的文档都是 0**，且 `ts` 恒为
+    该日**北京零点**（`date=1990-12-19` → `ts=1990-12-18 16:00`），所以
+    `ts ∈ [dmin 00:00, dmax 23:59:59]` 与 `date ∈ [dmin, dmax]` 是**同一个集合**。
+
+    投影里**保留 `date`** —— 它与 K 线帧的 join 键仍是日期字符串（`fq.row_dates`）。
     """
+    # 函数内导入：`kline83` → `datastruct`，顶层反过来会成环（本项目既有先例）
+    from .kline83 import bj_date
+    lo = bj_date('{} 00:00:00'.format(str(dmin)[:10]))
+    hi = bj_date('{} 23:59:59'.format(str(dmax)[:10]))
     cur = _adj_collection().find(
-        {'code': {'$in': list(codes)}, 'date': {'$gte': dmin, '$lte': dmax}},
+        {'code': {'$in': list(codes)}, 'ts': {'$gte': lo, '$lte': hi}},
         {'_id': 0, 'code': 1, 'date': 1, 'adj': 1},
     )
     df = pd.DataFrame(list(cur))

@@ -1284,6 +1284,11 @@ ETF 独立成 ETF_CN / etf_* 之后的路由测试。
 | f | `TestGQIsEtfAgreesWithClassifier.test_tolerates_tagged_forms()` | 带交易所标记的写法也要能判 —— is_stock_cn 负责归一。 |
 | C | `TestMinContainer` | fetch._min_container 的三分支 —— 少了 etf 会静默拿错容器。 |
 | f | `TestMinContainer.test_container_choice()` |  |
+| C | `TestAdjFactorQueryUsesTheTimefield` | 复权因子表（stock_adj / etf_adj）必须按 ts（timeField）过滤。 |
+| f | `TestAdjFactorQueryUsesTheTimefield.test_stock_adj_frame_filters_on_ts()` |  |
+| f | `TestAdjFactorQueryUsesTheTimefield.test_etf_adj_filters_on_ts()` |  |
+| f | `TestAdjFactorQueryUsesTheTimefield.test_bounds_cover_the_whole_day()` | 边界必须是北京口径的当日两端 —— 只给日期时不能塌成零点。 |
+| f | `TestAdjFactorQueryUsesTheTimefield.test_projection_keeps_the_date_join_key()` | 投影里保留 date —— 它与 K 线帧的 join 键仍是日期字符串。 |
 
 ### `test_export_positions`
 测试导出持仓数据功能
