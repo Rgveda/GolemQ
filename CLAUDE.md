@@ -128,9 +128,7 @@ default to the legacy ANSI code page (cp936/GBK on a zh-CN system), which
 mangles Chinese output and breaks comparisons against UTF-8 source. Always
 work in UTF-8.
 
-**⭐ 你需要自己配**（2026-10-10 起 `.claude/` **不再入库** —— 它是 ruflo 生成的
-（238 个文件 / 2MB），且 `ruflo init` 每次都会**覆盖** `settings.json`，留在仓库里没有意义。
-所以克隆本仓库的人**拿不到**下面这几个变量，得自己设一次）：
+**Already configured** — `.claude/settings.json` pins these for every session:
 
 | Variable | Value | Purpose |
 |:---|:---|:---|
@@ -138,8 +136,7 @@ work in UTF-8.
 | `PYTHONIOENCODING` | `utf-8` | Belt-and-braces for stdout/stderr |
 | `LANG` / `LC_ALL` | `en_US.UTF-8` | Git Bash locale |
 
-**Bash (Git Bash)** —— 用下面这行；或把它们写进你自己的 `.claude/settings.json` 的 `env` 段
-（**那份不入库**，各人一份）：
+**Bash (Git Bash)** — if you need it manually, or the vars above are absent:
 
 ```bash
 export PYTHONUTF8=1 PYTHONIOENCODING=utf-8 LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
