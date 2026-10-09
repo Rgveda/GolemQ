@@ -305,6 +305,7 @@ GolemQ Constants Module
 | f | `aligned_row(label, body, width)` | 阶段名 + 值 的一行，与 :func:render_pipeline_banner 的阶段列同宽。 `[dt]` |
 | f | `stamp_text(when)` | 裸的时刻戳：[2026-10-09 15:34:43]。 `[dt]` |
 | f | `stamp(text, when)` | 给静态头行盖时刻戳：[2026-10-09 15:34:43]: source: pytdx。 `[dt]` |
+| f | `stamp_done(caption, when, color)` | 收尾行：[2026-10-10 00:33:22]: bootstrap done.（color=True 时压暗）。 `[dt]` |
 | f | `identity(app, contact, when, color)` | 身份块 —— 每次运行开头那一小块，末尾带一个空行。 |
 | f | `render_pipeline_banner(rows, states, color)` | 把「各阶段」渲染成多行表头（纯函数）。 `[dt]` |
 | C | `Banner` | 整条流水线的固定表头 + 表头之下的一块滚动状态窗，自己管光标行数原地重画。 |
@@ -1245,6 +1246,11 @@ cli/bootstrap.py —— 环境自检的口径。
 | f | `TestServerchanAndQmtChecks.test_qmt_unreadable_config_is_warn()` |  |
 | f | `TestServerchanAndQmtChecks.test_qmt_green_still_reports_the_shutdown()` | ⚠️ 绿点不表示这条路可用 —— 「已停服」必须留在 detail 里。 |
 | f | `TestServerchanAndQmtChecks.test_qmt_is_not_an_adapter_source()` | 它查的是配置段，不该混进"适配器可用吗"那张表。 |
+| C | `TestBootstrapStartDoneLines` | 阶段起止各一行（用户 2026-10-10）： |
+| f | `TestBootstrapStartDoneLines.test_start_line_and_done_line_both_appear_in_order()` |  |
+| f | `TestBootstrapStartDoneLines.test_no_escape_codes_when_not_a_tty()` | 非 TTY 里一个转义码都不许有（颜色规则第一条）—— 收尾行也一样。 |
+| f | `TestBootstrapStartDoneLines.test_done_line_is_printed_only_after_close()` | ⚠️ 收尾行必须在 Banner.close() 之后 —— banner 活着时 print 会 |
+| f | `TestBootstrapStartDoneLines.test_stamp_done_format_and_gray()` |  |
 
 ### `test_cli_commands`
 cli/commands/ 的注册表契约。
@@ -1283,6 +1289,12 @@ cli/commands/ 的注册表契约。
 | f | `TestAdjNodeMarking.test_adj_lights_white_when_there_is_nothing_to_do()` |  |
 | f | `TestAdjNodeMarking.test_adj_stays_gray_when_events_changed_but_recompute_skipped()` | ⚠️ 反向那条：事件变了却 --save-no-adj ⇒ _adj 是过期的。 |
 | f | `TestAdjNodeMarking.test_adj_lights_white_after_recomputing()` |  |
+| C | `TestSaveStageStartDoneLines` | --save 阶段的起止两行（用户 2026-10-10，与 bootstrap 同构）： |
+| f | `TestSaveStageStartDoneLines.test_start_line_is_before_the_source_row()` |  |
+| f | `TestSaveStageStartDoneLines.test_done_line_comes_last()` |  |
+| f | `TestSaveStageStartDoneLines.test_caption_matches_what_actually_runs()` | ⚠️ --save qmt 不取 K 线（只做参考数据）—— 给它打 "klines" 就是假话。 |
+| f | `TestSaveStageStartDoneLines.test_no_done_line_when_it_crashes()` | ⚠️ 中途炸了不许打 done. —— 那一段没 done。 |
+| f | `TestSaveStageStartDoneLines.test_no_escape_codes_when_not_a_tty()` |  |
 
 ### `test_cli_tools`
 测试 CLI 工具功能

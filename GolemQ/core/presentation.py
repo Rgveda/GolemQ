@@ -301,6 +301,25 @@ def stamp(text, when=None):
     return '{}: {}'.format(stamp_text(when), text)
 
 
+def stamp_done(caption, when=None, color=False):
+    """**收尾行**：``[2026-10-10 00:33:22]: bootstrap done.``（``color=True`` 时压暗）。
+
+    与 :func:`stamp` 是**一对**：阶段开头打 ``[t]: bootstrap``，结束打这一行 ——
+    于是日志里这个阶段**可检索**（起止各一行），而不是只有一堆状态行。
+
+    ⚠️ **打它的那一刻 banner 必须已经 `close()`** —— 否则会被算进它的行数记账、
+    下一次重画整块写花（`PITFALLS.md` P22）。
+
+    >>> import datetime as _dt
+    >>> stamp_done('bootstrap', _dt.datetime(2026, 10, 10, 0, 33, 22))
+    '[2026-10-10 00:33:22]: bootstrap done.'
+    """
+    text = stamp('{} done.'.format(caption), when)
+    if not color:
+        return text
+    return '{}{}{}'.format(_ANSI_GRAY, text, _ANSI_RESET)
+
+
 def identity(app='GolemQ', contact='', when=None, color=False):
     """**身份块** —— 每次运行开头那一小块，末尾带一个空行。
 

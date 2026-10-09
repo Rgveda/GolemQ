@@ -473,3 +473,70 @@ class TestServerchanAndQmtChecks(unittest.TestCase):
         """它查的是**配置段**，不该混进"适配器可用吗"那张表。"""
         self.assertNotIn('讯投QMT', bootstrap.OPTIONAL_SOURCES)
         self.assertEqual(bootstrap.XTQUANT_KEYS, ('account', 'min_path'))
+
+
+class TestBootstrapStartDoneLines(unittest.TestCase):
+    """阶段**起止各一行**（用户 2026-10-10）：
+
+    起 ``[t]: bootstrap``（banner 自己的静态头行），止 ``[t]: bootstrap done.``（**灰色**）。
+    于是日志里这个阶段**可检索**（起止都能 grep），不是只有一堆状态行。
+    """
+
+    def test_start_line_and_done_line_both_appear_in_order(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            bootstrap.check_environment(verbose=False)
+        lines = [ln for ln in buf.getvalue().splitlines() if 'bootstrap' in ln]
+        self.assertEqual(len(lines), 2, '起止应各一行：{}'.format(lines))
+        self.assertRegex(lines[0], r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]: bootstrap$')
+        self.assertRegex(lines[1], r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]: bootstrap done\.$')
+
+    def test_no_escape_codes_when_not_a_tty(self):
+        """非 TTY 里**一个转义码都不许有**（颜色规则第一条）—— 收尾行也一样。"""
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            bootstrap.check_environment(verbose=False)
+        self.assertNotIn('\033', buf.getvalue())
+
+    def test_done_line_is_printed_only_after_close(self):
+        """⚠️ **收尾行必须在 `Banner.close()` 之后** —— banner 活着时 `print` 会
+        打乱它的行数记账、整块写花（`PITFALLS.md` P22）。
+
+        钉法：给 Banner 装个 spy 记 live 与否，再按"打印时的 live 状态"筛出收尾行。
+        """
+        sealed = {'live': False, 'after_close': 0, 'seen': []}
+        from GolemQ.core import presentation
+        real = presentation.Banner
+
+        class _Spy(real):
+            def render(self):
+                super().render()
+                sealed['live'] = True
+
+            def close(self):
+                super().close()
+                sealed['live'] = False
+
+        real_print = print
+
+        def _spy_print(*a, **kw):
+            text = ' '.join(str(x) for x in a)
+            if 'bootstrap done.' in text:
+                sealed['seen'].append(sealed['live'])
+            return real_print(*a, **kw)
+
+        with unittest.mock.patch.object(presentation, 'Banner', _Spy), \
+                unittest.mock.patch('builtins.print', _spy_print), \
+                contextlib.redirect_stdout(io.StringIO()):
+            bootstrap.check_environment(verbose=False)
+
+        self.assertTrue(sealed['seen'], '收尾行没打出来，用例失去意义')
+        self.assertEqual(sealed['seen'], [False],
+                         '收尾行是在 banner 活着时打的 —— 那会把行数记账搞错（P22）')
+
+    def test_stamp_done_format_and_gray(self):
+        from GolemQ.core.presentation import stamp_done
+        self.assertEqual(stamp_done('bootstrap', FIXED),
+                         '[2026-10-09 15:12:57]: bootstrap done.')
+        self.assertNotIn('\033', stamp_done('bootstrap', FIXED))
+        self.assertIn('\033[90m', stamp_done('bootstrap', FIXED, color=True))

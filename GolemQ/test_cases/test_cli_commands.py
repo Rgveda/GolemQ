@@ -395,3 +395,80 @@ class TestAdjNodeMarking(unittest.TestCase):
         marked = self._marks(['600519'])               # 事件变了、正常重算
         self.assertIn(('stock_adj', DONE), marked)
         self.assertIn(('etf_adj', DONE), marked)
+
+
+class TestSaveStageStartDoneLines(unittest.TestCase):
+    """`--save` 阶段的**起止两行**（用户 2026-10-10，与 bootstrap 同构）：
+
+    起 ``[t]: saving stock_cn klines``（**在 `数据源` 那一行之前**），
+    止 ``[t]: … done.``（灰色仅 TTY，**在 `banner.close()` 之后**）。
+
+    这样日志里 `--save` 这一段**可检索**（起止都能 grep），不是只有一堆状态行。
+    """
+
+    def _run(self, argv, *, boom=False):
+        args = build_parser().parse_args(argv)
+        from GolemQ.core import presentation
+        from GolemQ.markets.StockCN import kline_save as ks
+        from GolemQ.markets.StockCN import refdata_save as rs
+        from GolemQ.cli.commands import save as save_cmd
+
+        side = RuntimeError('模拟中途炸了') if boom else None
+        kw = {'side_effect': side} if boom else {'return_value': {}}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), \
+                unittest.mock.patch.object(presentation, 'ansi_enabled', return_value=False), \
+                unittest.mock.patch.object(rs, 'save_refdata', **kw), \
+                unittest.mock.patch.object(ks, 'save_kline_tdx',
+                                           return_value={'kline': {}, 'universe': {}}), \
+                unittest.mock.patch.object(ks, 'kline_sweep_age_hours', return_value=1.0):
+            try:
+                save_cmd.run_save(args)
+            except SystemExit:
+                pass
+        return buf.getvalue()
+
+    @staticmethod
+    def _stamped(out, caption):
+        """``caption`` 那一行的索引（**整行匹配** —— 起行是止行的前缀，子串会撞）。"""
+        import re
+        want = re.compile(r'\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]: ' + caption + r'$')
+        return [i for i, ln in enumerate(out.splitlines()) if want.match(ln)]
+
+    def _row(self, out, prefix):
+        return [i for i, ln in enumerate(out.splitlines()) if ln.startswith(prefix)]
+
+    def test_start_line_is_before_the_source_row(self):
+        out = self._run(['--save', 'tdx'])
+        start = self._stamped(out, 'saving stock_cn klines')
+        self.assertEqual(len(start), 1,
+                         '起行应恰好一行（整行匹配）：{}'.format(out.splitlines()[:6]))
+        self.assertLess(start[0], self._row(out, '数据源')[0],
+                        '起行必须在 `数据源` **之前**（用户明确）')
+
+    def test_done_line_comes_last(self):
+        out = self._run(['--save', 'tdx'])
+        done = self._stamped(out, r'saving stock_cn klines done\.')
+        self.assertEqual(len(done), 1, '止行应恰好一行')
+        self.assertGreater(done[0], self._row(out, '数据源')[0],
+                           '止行应在 `数据源` 那一段**之后**')
+
+    def test_caption_matches_what_actually_runs(self):
+        """⚠️ `--save qmt` **不取 K 线**（只做参考数据）—— 给它打 "klines" 就是假话。"""
+        out = self._run(['--save', 'qmt'])
+        self.assertEqual(len(self._stamped(out, 'saving stock_cn refdata')), 1)
+        self.assertEqual(self._stamped(out, 'saving stock_cn klines'), [])
+
+    def test_no_done_line_when_it_crashes(self):
+        """⚠️ 中途炸了**不许打 `done.`** —— 那一段没 done。
+
+        且报错必须是「**意外终止**」而不是「被用户终止」（`PITFALLS.md` P28）。
+        """
+        out = self._run(['--save', 'tdx'], boom=True)
+        self.assertNotIn('done.', out, '崩了还打 done. 就是谎报')
+        self.assertIn('意外终止', out)
+        self.assertNotIn('被用户终止', out)
+
+    def test_no_escape_codes_when_not_a_tty(self):
+        out = self._run(['--save', 'tdx'])
+        self.assertNotIn('\033', out)

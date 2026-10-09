@@ -761,15 +761,21 @@ def check_environment(verbose=False, strict=False):
     那块区域**下方**，`require_mongodb` 与 `cmd.run` 的打印才落得干净。
     否则两个 banner 的光标记账会打架（`PITFALLS.md` P22）。
     """
+    from GolemQ.core.presentation import ansi_enabled, stamp_done
     from GolemQ.core.presentation import Banner
 
     packages = check_packages()
     results = run_checks(packages=packages)
     notes = _notes()
 
-    # `header=False`：身份块（产品名 + 戳 + 版权）已由 `print_identity` 打过了，
-    # 这里只出行 —— 且这些行要与 `--save` 那块的阶段名**对齐成一列**。
-    banner = Banner('bootstrap', SELF_CHECK_ROWS, header=False)
+    # **阶段起止各一行**（用户 2026-10-10）：
+    #   起 → `[t]: bootstrap`（banner 自己的静态头行，打一次、不进重画块）
+    #   止 → `[t]: bootstrap done.`（**灰色**，在 `close()` 之后打 —— 见下）
+    # 于是日志里这个阶段**可检索**（起止可 grep），不是只有一堆状态行。
+    # ⚠️ 头行**恢复了**（2026-10-09 的 `header=False` 撤掉）：用户明确要「开始照旧打
+    # `[t]: bootstrap`」。代价是它与身份行上的戳**时间相同、紧挨着**（那正是 2026-10-09
+    # 想消除的"两个戳"）—— 但两者语义不同（身份戳 = 进程开始；这行 = 自检开始）。
+    banner = Banner('bootstrap', SELF_CHECK_ROWS, caption='bootstrap')
     banner.render()
     for node, state, lines in results:
         banner.mark(node, state)
@@ -780,6 +786,9 @@ def check_environment(verbose=False, strict=False):
         if verbose:
             banner.echo('{}: {}'.format(label, detail))
     banner.close()          # ← 之后才允许 print（光标已在 banner 区域之下）
+    # 收尾行**必须在 close() 之后** —— banner 活着时 print 会打乱它的行数记账（P22）。
+    # 灰色只在真 TTY 上（非 TTY 里掺转义码是本项目颜色规则的第一条禁忌）。
+    print(stamp_done('bootstrap', color=ansi_enabled()), flush=True)
 
     failed = [node for node, state, _ in results
               if state == FAIL and node in ENV_GATE_NODES]

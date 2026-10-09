@@ -967,3 +967,11 @@ T-1 17:30 扫过 → T 08:30 开盘前那一跑只隔 15h < 24h ⇒ **被跳** �
 
 **顺带收口**：`settings.py` 的「只走 INI 的段」收成 `INI_ONLY_SECTIONS`（原在两处各写一遍），
 并补进 `TDXAIDATA`/`TUSHARE` —— 否则「读得到、写却写进 Mongo」。自检全量耗时 **0.53s**。
+
+### ✅ 阶段起止各一行（2026-10-10，`DECISIONS.md` D32）
+
+`[t]: bootstrap` … `[t]: bootstrap done.`（灰）；`--save` 段 `[t]: saving stock_cn klines`
+（在 `数据源` 行前）… `… done.`。`presentation.stamp_done()` + `stamp()` 配对。
+两条硬约束：**止行必须在 `close()` 之后**（P22）、**必须在 `try` 之内**（崩了不许打 done.）。
+⚠️ bootstrap 头行**恢复了**（D27 的 `header=False` 撤掉）⇒ 它与身份行的戳同刻紧挨着；
+⚠️ `--save qmt` 的文案是 `saving stock_cn refdata`（它不取 K 线，照打 klines 是假话）。

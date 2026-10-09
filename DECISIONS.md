@@ -1274,3 +1274,35 @@ tushare（判断配置 tushare）、iwencai（判断配置东方财富问财）�
 `INI_ONLY_SECTIONS` 一处，并**把 `'TDXAIDATA'` / `'TUSHARE'` 一起加进去** ——
 `tushare_source` 的 docstring 里早就写着这条待办（`TDXAIDATA` 原先漏在外面，
 它"能用"只是因为 `get_config` 先试 INI 命中了的巧合）。
+
+---
+
+## D32. 阶段**起止各一行**：`[t]: bootstrap` … `[t]: bootstrap done.`
+
+**用户 2026-10-10 定**：「bootstrap 开始照旧打 `[t]: bootstrap`，banner 更新结束后，
+打一行**灰色的** `[t]: bootstrap done.`」；随后追加「加入 `[t]: saving stock_cn klines`
+**在 `数据源    pytdx` 前面**」。
+
+**为什么**：banner 重画的是**一块状态区**，日志里翻起来只有一堆状态行、**没有阶段边界**。
+起止各一行之后，这一段**可检索**（`grep bootstrap` / `grep 'done\.'` 即得区间）。
+
+| 阶段 | 起 | 止 |
+|:--|:--|:--|
+| 环境自检 | `[t]: bootstrap` | `[t]: bootstrap done.` |
+| `--save` 取数 | `[t]: saving stock_cn klines`（在 `数据源` 行**之前**）| `[t]: saving stock_cn klines done.` |
+
+**实现**：`core/presentation.stamp_done(caption, when, color)` 与既有的 `stamp()` 配对；
+灰色用 `_ANSI_GRAY` 且**仅真 TTY**（非 TTY 里掺转义码是颜色规则第一条）。
+
+⚠️ **两条硬约束**（都在 `PITFALLS.md` P22 名下）：
+1. 止行必须在 **`banner.close()` 之后** —— banner 活着时 `print` 会把它的行数记账搞乱；
+2. 止行必须在 **`try` 之内** —— 中途异常时它不该出现（那一段没 done，而兜底的
+   「意外终止」已经报了）。
+
+⚠️ **`bootstrap` 的头行恢复了**（2026-10-09 的 `header=False` 撤掉）：用户要「开始**照旧**打」。
+代价是它与身份行上的戳**时间相同、紧挨着**（那正是 D27 想消除的「两个戳」）——
+但两者语义不同（身份戳 = **进程**开始；这行 = **自检**开始）。**要合并说一声。**
+
+⚠️ **`--save` 那句的文案按实际做的东西取**：`--save qmt` **不取 K 线**（只做参考数据），
+给它打 `saving stock_cn klines` 就是假话。故 `tdx`/`pytdx` → `saving stock_cn klines`，
+`qmt` → `saving stock_cn refdata`。**用户给的那串正是 tdx 路径的。**

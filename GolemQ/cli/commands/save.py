@@ -93,7 +93,8 @@ def run_save(args) -> None:
     # 必须单独捕获 —— 否则 Ctrl-C 照样打一堆 traceback。
     try:
         from GolemQ.core.presentation import (Banner, DONE, PENDING, RUNNING,
-                                              aligned_row)
+                                              aligned_row, ansi_enabled, stamp,
+                                              stamp_done)
         from GolemQ.markets.StockCN.kline_save import (
             FREQUENCIES as KLINE_FREQS,
             TARGETS as KLINE_TARGETS,
@@ -169,6 +170,12 @@ def run_save(args) -> None:
         # ⚠️ 必须打印在 `Banner` **建立之前** —— banner 一旦活着，`print` 就会把它的
         # 行数记账搞错（`PITFALLS.md` P22）。
         source_label = 'pytdx' if tdx_like else value
+        # **阶段起止两行**（用户 2026-10-10，与 bootstrap 同构）：起 `[t]: …`、
+        # 止 `[t]: … done.`（灰色，仅 TTY）。于是日志里 `--save` 这一段**可检索**。
+        # ⚠️ 文案**按实际做的东西**取：`--save qmt` 只做参考数据、**不取 K 线**，
+        # 给它打 "saving stock_cn klines" 就是假话（用户给的正是 tdx 路径那句）。
+        stage = 'saving stock_cn klines' if tdx_like else 'saving stock_cn refdata'
+        print(stamp(stage), flush=True)
         print(aligned_row('数据源', source_label), flush=True)
 
         # `header=False`：时刻戳只在开头的**身份块**出现一次，这里只出阶段行。
@@ -297,6 +304,11 @@ def run_save(args) -> None:
 
         if banner is not None:
             banner.close()
+        # 阶段**收尾行**：与起行配对（用户 2026-10-10）。
+        # ⚠️ **必须在 `close()` 之后** —— banner 活着时 `print` 会打乱它的行数记账（P22）；
+        # 也**必须放在 `try` 里**：中途异常时这一行不该出现（那一段没 done，而兜底的
+        # 「意外终止」已经报了）。
+        print(stamp_done(stage, color=ansi_enabled()), flush=True)
         # 逐集合状态表：`-v` 下总是打；否则**只在有异常时**打 ——
         # 全是 ok / 命中刷新闸时，banner 上已经看得出来了，再铺一张表就是噪声。
         if refdata and (args.verbose or not all(
