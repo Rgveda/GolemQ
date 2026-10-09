@@ -43,6 +43,10 @@ def _bar(**kw):
     return base
 
 
+#: 一个固定的 UTC-aware 时刻 —— 当「数据前沿 / 水位」用（冷启动用例）
+D_TS = datetime(2026, 10, 9, 7, 0, tzinfo=UTC)
+FRONTIER = int(D_TS.timestamp())
+
 class TestSaveBarChunk(unittest.TestCase):
     """时序集合的写口：**先删后插**（不能 upsert，见 PITFALLS P14）。"""
 
@@ -493,3 +497,72 @@ class TestFastPathIntegration(unittest.TestCase):
         with unittest.mock.patch.object(ks, 'fast_skip_reason') as f:
             self._run(dry_run=True)
         self.assertFalse(f.called, 'dry_run 要与库内对拍 ⇒ 必须真取数')
+
+
+class TestColdStartVerifiesInsteadOfFetching(unittest.TestCase):
+    """**冷启动**：集合从没有过签到记录 ⇒ 核水位（零连接），不是全量真取。
+
+    为什么改（2026-10-09，用户实报）：删掉签到记录后，`stock_1min` 之类**没有记录的
+    集合**会**各跑一遍全量真取** —— 而数据其实早就到 15:00 了，那是**纯粹重复劳动**
+    （约 8 分钟/集合、15 个集合）。改成：无记录时走 ④ —— **对全宇宙每只 code 核一次
+    水位**（~5,575 次 `last_bar`，零连接，约 8 秒），核过之后**记账**。
+
+    安全性靠三条：**没数据的 code（`ts is None`）永不跳** ⇒ 全新集合照旧全量真取；
+    探针探不到前沿 ⇒ 退成全量；有记录之后 TTL 照旧到期强制真取（兜底网晚一个 TTL）。
+    """
+
+    def _run(self, *, frontier, cold=True, last_bar_ts='default'):
+        """⚠️ `last_bar_ts` 的默认值**不能是 `None`** —— 我第一版写 `last_bar_ts or D_TS`，
+        于是传 `None` 时被 `or` 换成了 `D_TS`，「无水位」那条**根本没被模拟**，
+        用例却看着像在测它（实测：`skipped_fresh` 断言失败才发现）。"""
+        from GolemQ.markets.StockCN import kline_save as ks
+        src = MagicMock()
+        db = MagicMock()
+        ts = D_TS if last_bar_ts == 'default' else last_bar_ts
+        coll = MagicMock(name='coll')
+        coll.find_one.return_value = {'ts': ts, 'date': '2026-10-09'} if ts else None
+        db.__getitem__.side_effect = lambda name: coll
+        swept = []
+        with unittest.mock.patch.object(ks, 'TdxSource', return_value=src), \
+                unittest.mock.patch.object(ks, '_db', return_value=db), \
+                unittest.mock.patch.object(ks, 'universe', return_value=['600519']), \
+                unittest.mock.patch.object(ks, '_resolve_bj_market', return_value=None), \
+                unittest.mock.patch.object(ks, 'fast_skip_reason', return_value=None), \
+                unittest.mock.patch.object(ks, 'kline_sweep_age_hours',
+                                           return_value=None if cold else 0.5), \
+                unittest.mock.patch.object(ks, 'alive_threshold', return_value=D_TS), \
+                unittest.mock.patch.object(ks, 'collection_frontier',
+                                           return_value=frontier), \
+                unittest.mock.patch.object(ks, 'mark_kline_sweep',
+                                           side_effect=lambda n: swept.append(n)), \
+                contextlib.redirect_stdout(io.StringIO()):
+            report = ks.save_kline_tdx(targets=('stock',), frequencies=('1min',),
+                                       verbose=False, progress_every=0)
+        return report['kline']['stock_1min'], src, swept
+
+    def test_cold_start_verifies_and_records_without_connecting(self):
+        stats, src, swept = self._run(frontier=FRONTIER)
+        self.assertEqual(stats['skipped_fresh'], 1)      # 核出来了：已到前沿
+        self.assertEqual(stats['inserted'], 0)
+        self.assertFalse(src.new_api.called, '冷启动却还是建了连接')
+        self.assertEqual(swept, ['stock_1min'], '核完要记账 —— 否则下次又白跑')
+
+    def test_stalled_collection_still_fetches_for_real(self):
+        """⚠️ 探针探不到前沿（集合停在水位之前 / 空集合）⇒ **必须全量真取**。"""
+        stats, src, swept = self._run(frontier=None)
+        self.assertTrue(src.new_api.called, '停滞的集合竟然没去取数')
+        self.assertEqual(swept, ['stock_1min'], '真取过 ⇒ 记账')
+
+    def test_code_without_data_is_never_skipped_on_cold_start(self):
+        """⚠️ 最要紧的那条：**没数据的 code 永远不跳** —— 否则全新集合会被判成"已齐"。"""
+        stats, src, _ = self._run(frontier=FRONTIER, last_bar_ts=None)
+        self.assertEqual(stats['skipped_fresh'], 0)
+        self.assertTrue(src.new_api.called, '无数据的 code 竟然被跳过了')
+
+    def test_warm_ttl_pass_does_not_renew_the_record(self):
+        """回归闸：**TTL 新鲜 + 按水位跳**那一次**不许**记账 ——
+        记了就会把 TTL 无限推后，兜底网永远不触发。"""
+        stats, src, swept = self._run(frontier=FRONTIER, cold=False)
+        self.assertEqual(stats['skipped_fresh'], 1)
+        self.assertFalse(src.new_api.called)
+        self.assertEqual(swept, [], 'TTL 新鲜的按水位跳**不许**记账')

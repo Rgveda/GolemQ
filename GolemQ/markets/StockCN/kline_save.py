@@ -705,9 +705,17 @@ def save_kline_tdx(targets=None, frequencies=None, codes=None, start_min=MIN_STA
                         say('[kline] {} {}'.format(name, reason))
                     continue
 
+            # **冷启动**：该集合**从没有过签到记录**（首次部署 / 记录被清过）。
+            # ⚠️ 这时**不再直接判「必须全量真取」**（2026-10-09 改，见 `DECISIONS.md` D25 追加）——
+            # 本轮本来就会走 ④：**对全宇宙每只 code 都核一次水位**（~5,575 次 `last_bar`，
+            # 零连接，约 8 秒），那本身就是「**每只 code 都到前沿了**」的**证据**，
+            # 与"全查过一遍"等价（真取一遍的结果也是各票水位停在原处）。
+            # 安全性：**没数据的 code（`ts is None`）永远不会被跳** ⇒ 全新集合照旧全量真取；
+            # 探针探不到前沿时也会退成全量（下面那两支）。兜底网只是**晚一个 TTL** 触发。
+            cold_start = kline_sweep_age_hours(name, now=_now) is None
             allow_skip = (not dry_run) and (not force_refresh) \
                 and (not intraday_blocks_shortcircuit(frequency, _now)) \
-                and allow_shortcircuit(name, now=_now)
+                and (allow_shortcircuit(name, now=_now) or cold_start)
             frontier = None
             if allow_skip:
                 threshold = alive_threshold(frequency, _now)
@@ -791,15 +799,15 @@ def save_kline_tdx(targets=None, frequencies=None, codes=None, start_min=MIN_STA
                 say('[kline] {} 完成：{}'.format(
                     name, ' | '.join(progress_summary(
                         stats, _time.time() - prog['t0']))))
-            # ⚠️ **只有「真完整扫过一遍」才记账** —— 记账的口径是「这个集合上次**全查**
-            # 于何时」。两条都排除：
-            #   ① 短路过的那一遍**不算**（它只探了前沿、按水位跳了一批 code）——
-            #      给它记账会把 TTL 无限推后，那道兜底网**永远不触发**；
-            #   ② **限定 universe 的跑法**（`--save-codes`）**不算** —— 「全查」的字面意思
-            #      就是**查了全部**。K 线这边其实有逐 code 水位兜底（没数据的 code
-            #      `ts is None`，绝不跳），但复权的闸是**集合级**的、没有这层兜底，
-            #      所以这条规则两边必须一致：**别让一次小范围试跑把闸打开**。
-            if total and not allow_skip and not dry_run and codes is None:
+            # 记账的口径 = 「这个集合刚刚被**完整核对过**」。三种情形都算：
+            #   ① 真取过（TTL 过期 / 探针说停滞）；② **冷启动**（无记录，靠 ④ 核完全宇宙）。
+            # ⚠️ **唯独「TTL 新鲜 + 按水位跳」那一次不算** —— 给它记账会把 TTL 无限推后，
+            # 兜底网**永远不触发**（这正是 `not allow_skip or cold_start` 这一支的由来）。
+            # ⚠️ 还有 **限定 universe 的跑法**（`--save-codes`）不算 —— 「全查」的字面意思
+            # 就是**查了全部**。K 线这边有逐 code 水位兜底（没数据的 code `ts is None`，
+            # 绝不跳），但复权的闸是**集合级**的、没有这层兜底，所以这条规则两边必须一致：
+            # **别让一次小范围试跑把闸打开**。
+            if total and not dry_run and codes is None and (not allow_skip or cold_start):
                 mark_kline_sweep(name)
             if on_progress is not None:
                 on_progress(name, 'done', stats)

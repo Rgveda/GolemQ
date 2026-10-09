@@ -1351,6 +1351,11 @@ ETF 独立成 ETF_CN / etf_* 之后的路由测试。
 | f | `TestFastPathIntegration.test_fast_path_completes_without_touching_tdx()` |  |
 | f | `TestFastPathIntegration.test_force_refresh_disables_the_fast_path()` | --save-refresh 必须把快路径也关掉（一旗两用）。 |
 | f | `TestFastPathIntegration.test_dry_run_disables_the_fast_path()` |  |
+| C | `TestColdStartVerifiesInsteadOfFetching` | 冷启动：集合从没有过签到记录 ⇒ 核水位（零连接），不是全量真取。 |
+| f | `TestColdStartVerifiesInsteadOfFetching.test_cold_start_verifies_and_records_without_connecting()` |  |
+| f | `TestColdStartVerifiesInsteadOfFetching.test_stalled_collection_still_fetches_for_real()` | ⚠️ 探针探不到前沿（集合停在水位之前 / 空集合）⇒ 必须全量真取。 |
+| f | `TestColdStartVerifiesInsteadOfFetching.test_code_without_data_is_never_skipped_on_cold_start()` | ⚠️ 最要紧的那条：没数据的 code 永远不跳 —— 否则全新集合会被判成"已齐"。 |
+| f | `TestColdStartVerifiesInsteadOfFetching.test_warm_ttl_pass_does_not_renew_the_record()` | 回归闸：TTL 新鲜 + 按水位跳那一次不许记账 —— |
 
 ### `test_kline_shortcircuit`
 K 线保存的本地水位短路（DECISIONS.md D25）。
