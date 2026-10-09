@@ -96,15 +96,20 @@ MONGO_TIMEOUT_MS = 3000
 
 #: 自检 banner 的节点，**顺序即屏上顺序**（`DECISIONS.md` D17 的先例：顺序是语义）。
 SELF_CHECK_NODES = ('操作系统', 'python', '依赖包', '线程环境', 'CPU 架构', 'CUDA',
-                    '时区', '交易日历', 'tdxidata', 'tushare', 'iwencai')
+                    '时区', '交易日历', 'tdxidata', 'tushare', 'iwencai',
+                    'serverchan', '讯投QMT')
 
 #: 交易日历「**该续下一年了**」的分界（月, 日）—— 用户 2026-10-10 定。
 #: 过了这一天而日历仍只到今年年底 ⇒ 黄点提醒（次年的安排通常那时已经公布）。
 CALENDAR_RENEW_AFTER = (11, 10)
 
-#: 三个**可选数据源**节点 → 适配器名（`markets/StockCN/datasource/` 的注册键）。
+#: **可选源**节点 → 适配器名（`markets/StockCN/datasource/` 的注册键）。
 #: ⚠️ `iwencai` **不在**这张表里 —— 它不是 `datasource/` 的适配器（见 `check_iwencai`）。
-OPTIONAL_SOURCES = {'tdxidata': 'tdxaidata', 'tushare': 'tushare'}
+#: ⚠️ `讯投QMT` 的适配器**恒不可用**（`QMT_SOURCE_ENABLED = False`，MiniQMT 自
+#: 2026-10-01 停服，`DECISIONS.md` D13）—— 但**照样走这张表**：它的
+#: `unavailable_reason()` 写得比这里能编的更准确，且 `available()` **故意不 import
+#: xtquant**（那个包一 import 就打印一行），所以探测很便宜。
+OPTIONAL_SOURCES = {'tdxidata': 'tdxaidata', 'tushare': 'tushare', '讯投QMT': 'qmt'}
 
 #: 自检 banner 的表头 —— **两栏**（用户 2026-10-10 定）。
 #:
@@ -114,7 +119,8 @@ OPTIONAL_SOURCES = {'tdxidata': 'tdxaidata', 'tushare': 'tushare'}
 #: 第二行留白对齐 —— 看起来仍是**一块**，只是折了两行。
 SELF_CHECK_ROWS = (
     ('环境自检', None, ['操作系统', 'python', '依赖包', '线程环境', 'CPU 架构', 'CUDA']),
-    ('环境自检', None, ['时区', '交易日历', 'tdxidata', 'tushare', 'iwencai']),
+    ('环境自检', None, ['时区', '交易日历', 'tdxidata', 'tushare', 'iwencai',
+                        'serverchan', '讯投QMT']),
 )
 
 #: `nvidia-smi` 两次调用的超时（秒）。实测本机 `--query-gpu` 47ms + 全量 126ms，
@@ -456,6 +462,25 @@ def check_source(name):
         return PENDING, '探测失败（{}: {}）'.format(type(exc).__name__, exc)
 
 
+def check_serverchan():
+    """``(状态, 说明)``：Server酱（推送告警渠道）配了没。
+
+    **判据复用** :func:`agents.messenger.check_serverchan_config`（它读
+    `[SERVERCHAN] sendkey` 并排除空值/默认值）—— 不在 CLI 里重读一遍配置：
+    那是第二处真相，改了 key 名两边就会不同步。
+
+    **未配置 ⇒ 灰**：推送是**可选**渠道（不配就是不发通知，不影响任何命令）——
+    与 `tushare` / `tdxidata` 那几个可选源同一口径。
+    """
+    try:
+        from GolemQ.agents.messenger import check_serverchan_config
+        if check_serverchan_config():
+            return OK, '已配置（[SERVERCHAN] sendkey）'
+        return PENDING, '未配置 [SERVERCHAN] sendkey —— 配了才会推送告警'
+    except Exception as exc:      # noqa: BLE001 探测失败不该拦启动
+        return PENDING, '探测失败（{}: {}）'.format(type(exc).__name__, exc)
+
+
 def check_iwencai():
     """``(状态, 说明)``：东方财富**问财**的配置。
 
@@ -652,6 +677,8 @@ def run_checks(packages=None):
         ('tdxidata',) + _as_lines(check_source(OPTIONAL_SOURCES['tdxidata'])),
         ('tushare',) + _as_lines(check_source(OPTIONAL_SOURCES['tushare'])),
         ('iwencai',) + _as_lines(check_iwencai()),
+        ('serverchan',) + _as_lines(check_serverchan()),
+        ('讯投QMT',) + _as_lines(check_source(OPTIONAL_SOURCES['讯投QMT'])),
     ]
 
 

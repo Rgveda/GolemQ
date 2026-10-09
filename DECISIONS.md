@@ -1231,6 +1231,17 @@ tushare（判断配置 tushare）、iwencai（判断配置东方财富问财）�
 上栏「机器 / 解释器」、下栏「环境 / 数据源」；两行**同阶段名** ⇒ 第二行留白对齐
 （`render_pipeline_banner` 对连续同名阶段的行为），看起来仍是**一块**。
 
+**同批再加两个**（用户 2026-10-10 追加）：`serverchan`、`讯投QMT`。
+
+* `serverchan` → **复用 `agents.messenger.check_serverchan_config()`**（它读
+  `[SERVERCHAN] sendkey` 并排除空值/默认值）。未配 ⇒ 灰（推送是可选渠道）。
+* `讯投QMT` → **复用 `QmtSource.available()` / `unavailable_reason()`**。
+  ⚠️ **这一条特别值得记**：`[XTQUANT] account` / `min_path` **两项都配着**，
+  所以"按配置判"会给出**绿点** —— 而那是**骗人**的：MiniQMT 自 2026-10-01 停服
+  （D13），这条路用不了。走适配器自己的判据，才会把「**已停用**」显示出来。
+  （顺带：它的 `available()` **故意不 import xtquant** —— 那个包一 import 就打印
+  一行，所以这条探测很便宜。）
+
 **三个节点的判据：一律复用数据层自己的 `available()` / `unavailable_reason()`**
 （`markets/StockCN/datasource/` 的适配器都实现了这两个）。**不在 CLI 里重写
 「配置了没」** —— 那是平行实现，而且配置键名会散成两处真相。

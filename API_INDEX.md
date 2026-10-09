@@ -64,6 +64,7 @@ CLI 环境自检 —— 版权页 + 机器 / 配置 / 服务三道闸。
 | f | `check_cpu()` | (状态, 说明)：厂商 · 物理核/逻辑线程 · 有无超线程 · 是否混合大小核。 |
 | f | `check_cuda()` | (状态, 说明)：有 N 卡就报卡型 + 驱动 + 驱动支持的 CUDA 版本。 |
 | f | `check_source(name)` | (状态, 说明)：某个可选数据源能不能用（配了 token / 包在不在）。 |
+| f | `check_serverchan()` | (状态, 说明)：Server酱（推送告警渠道）配了没。 |
 | f | `check_iwencai()` | (状态, 说明)：东方财富问财的配置。 |
 | f | `check_calendar(calendar, today)` | (状态, 说明)：交易日历（TRADE_DATE_SSE）够不够用。 |
 | f | `check_tz()` | (状态, 说明)：本机时区是不是北京时间（UTC+08:00）。 |
@@ -1234,6 +1235,11 @@ cli/bootstrap.py —— 环境自检的口径。
 | f | `TestOptionalSourceChecks.test_iwencai_is_pending_and_says_unimplemented()` | ⚠️ 问财在新树尚未实现 —— 节点如实说，且不发明没人读的配置键。 |
 | f | `TestOptionalSourceChecks.test_three_nodes_are_present_but_not_hard_gates()` |  |
 | f | `TestOptionalSourceChecks.test_optional_source_map_covers_the_two_adapters()` | 节点名 → 适配器名的映射必须与 datasource/ 的注册键一致。 |
+| C | `TestServerchanAndQmtChecks` | serverchan 与 讯投QMT 两个节点。 |
+| f | `TestServerchanAndQmtChecks.test_serverchan_configured_is_ok()` |  |
+| f | `TestServerchanAndQmtChecks.test_serverchan_unconfigured_is_pending()` | 未配 ⇒ 灰：推送是可选渠道，不配不影响任何命令。 |
+| f | `TestServerchanAndQmtChecks.test_serverchan_probe_failure_does_not_raise()` |  |
+| f | `TestServerchanAndQmtChecks.test_qmt_reports_the_shutdown_not_the_config()` | ⚠️ 这条是防"顺手修绿"的钉子。 |
 
 ### `test_cli_commands`
 cli/commands/ 的注册表契约。

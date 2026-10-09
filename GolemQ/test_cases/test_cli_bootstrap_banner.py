@@ -332,7 +332,8 @@ class TestBannerTwoColumns(unittest.TestCase):
         lower = bootstrap.SELF_CHECK_ROWS[1][2]
         for node in ('操作系统', 'python', '依赖包', '线程环境', 'CPU 架构', 'CUDA'):
             self.assertIn(node, upper, '机器/解释器该在上栏')
-        for node in ('时区', '交易日历', 'tdxidata', 'tushare', 'iwencai'):
+        for node in ('时区', '交易日历', 'tdxidata', 'tushare', 'iwencai',
+                     'serverchan', '讯投QMT'):
             self.assertIn(node, lower, '环境/数据源该在下栏')
 
     def test_second_row_shares_the_phase_name(self):
@@ -405,3 +406,40 @@ class TestOptionalSourceChecks(unittest.TestCase):
         for node, adapter in bootstrap.OPTIONAL_SOURCES.items():
             with self.subTest(node=node):
                 self.assertIsNotNone(get_source(adapter))
+
+
+class TestServerchanAndQmtChecks(unittest.TestCase):
+    """`serverchan` 与 `讯投QMT` 两个节点。"""
+
+    def test_serverchan_configured_is_ok(self):
+        with unittest.mock.patch('GolemQ.agents.messenger.check_serverchan_config',
+                                 return_value=True):
+            self.assertEqual(bootstrap.check_serverchan()[0], OK)
+
+    def test_serverchan_unconfigured_is_pending(self):
+        """未配 ⇒ **灰**：推送是可选渠道，不配不影响任何命令。"""
+        with unittest.mock.patch('GolemQ.agents.messenger.check_serverchan_config',
+                                 return_value=False):
+            state, detail = bootstrap.check_serverchan()
+        self.assertEqual(state, PENDING)
+        self.assertIn('sendkey', detail)
+
+    def test_serverchan_probe_failure_does_not_raise(self):
+        with unittest.mock.patch('GolemQ.agents.messenger.check_serverchan_config',
+                                 side_effect=RuntimeError('读配置炸了')):
+            state, detail = bootstrap.check_serverchan()
+        self.assertEqual(state, PENDING)
+        self.assertIn('RuntimeError', detail)
+
+    def test_qmt_reports_the_shutdown_not_the_config(self):
+        """⚠️ **这条是防"顺手修绿"的钉子。**
+
+        `[XTQUANT] account/min_path` **两项都配着**，所以"按配置判"会给出**绿点** ——
+        而那是**骗人**的：MiniQMT 自 2026-10-01 停服（`DECISIONS.md` D13），这条路用不了。
+        所以判据必须走适配器自己的 `available()`/`unavailable_reason()`，
+        让「停用」这个事实**显示出来**。
+        """
+        state, detail = bootstrap.check_source('qmt')
+        self.assertEqual(state, PENDING, 'QMT 已停用 —— 不许判绿')
+        self.assertIn('停用', detail)
+        self.assertIn('D13', detail)
