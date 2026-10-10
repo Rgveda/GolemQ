@@ -142,6 +142,14 @@ CLI 命令注册表 —— 机制层，不认识任何具体命令。
 | f | `run_watchdog(args)` |  |
 | f | `run_stop(args)` |  |
 
+### `migrate`
+一次性搬运入口：从 4.4 取材落进 8.3。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `add_turnover_arguments(parser)` |  |
+| f | `run_migrate_turnover(args)` | --migrate-turnover 的处理体：只做参数校验，干活在 metadata_save。 |
+
 ### `purge`
 --purge-l1 / --purge：清理 MongoDB 数据库。破坏性，故有确认闸。
 
@@ -261,6 +269,15 @@ GolemQ Constants Module
 | f | `get_market(name)` | 按名取市场实例（不影响激活状态）。 |
 | f | `get_default_market()` | 返回系统默认市场实例（:data:DEFAULT_MARKET 指的那个）。 `[dt]` |
 | f | `resolve_market(market)` | 把 market 参数解析成市场实例。 `[dt]` |
+
+### `migrate44`
+一次性搬运用的 4.4 只读通道。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `mongo44_uri(uri, port)` | 8.3 的 uri → 4.4 的 uri（同主机，端口换成 port）。 `[dt]` |
+| f | `client44(uri, port)` | 4.4 的 MongoClient。kwargs 直通 pymongo.MongoClient。 |
+| f | `db44(name, uri, port)` | 4.4 上名为 name 的库句柄（如 'golemq' / 'quantaxis'）。 |
 
 ### `mongo`
 
@@ -386,12 +403,13 @@ GolemQ Constants Module
 | f | `from_settings(section)` | 从配置构造节流器。 |
 
 ### `writer`
-落库的机制层：两种写策略，按集合类型选用。
+落库的机制层：三种写策略，按集合类型与文档语义选用。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `ensure_indexes(coll, unique_keys)` | 建唯一索引。已存在同键索引时不报错。 |
 | f | `save_collection(coll, rows, unique_keys, delete_delta_key, batch, verbose)` | 把 rows upsert 进 coll，可选删 delta。 |
+| f | `upsert_fields(coll, rows, keys, payload_keys, batch, verbose)` | 只覆盖指定字段的 upsert（$set）—— 给「多列共用一个文档」的表用。 `[dt]` |
 | f | `save_block_collection(coll, rows, batch, verbose)` | stock_block 专用：键是 (blockname, code)，删除分两层。 |
 | f | `save_bar_chunk(coll, docs)` | 时间序列集合专用写口：只 drop 掉本次要写的那几根，再插。 |
 | f | `replace_code_rows(coll, docs)` | 按 code 整体替换：delete_many({'code': code}) → 插。 |
@@ -661,6 +679,16 @@ pytdx bar / xdxr → 8.3 时序文档的纯函数核心（写侧契约）。
 | f | `GQ_suspension_dates(daily_collection, verbose)` | {(code, date)} —— 当日日线 vol < 1，即停牌日。 |
 | f | `GQ_purge_suspended(dry_run, limit, targets, verbose)` | 把停牌日的 bar 移出主集合到 <集合名>_removed。默认只统计不移动。 |
 | f | `GQ_restore_suspended(targets, removed_by, verbose)` | 回迁：把 <集合名>_removed 里由清理移走的内容搬回主集合，幂等。 |
+
+### `metadata_save`
+stock_metadata_day —— 日频元数据的统一落点。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `day_date(date_str)` | 源端日期 → '%Y-%m-%d'。 `[dt]` |
+| f | `metadata_day_doc(code, date_stamp, day, field, rate, created_at)` | 一行元数据 → stock_metadata_day 文档（只带一列载荷）。 `[dt]` |
+| f | `turnover_rows(rows, src_field, dst_field, created_at)` | 某个源的源行 → stock_metadata_day 文档列表。 `[dt]` |
+| f | `save_turnover(since, until, batch, verbose, echo, created_at, dry_run)` | 把 4.4 两源的换手率搬进 8.3 stock_metadata_day（两列，各写各的）。 |
 
 ### `quotes`
 
@@ -1523,6 +1551,35 @@ K 线保存的本地水位短路（DECISIONS.md D25）。
 | f | `TestDingReminder.test_send_message(mock_config, mock_client, mock_token)` |  |
 | f | `TestDingReminder.test_send_message_markdown_content(mock_config, mock_token)` |  |
 | f | `TestDingReminder.test_send_message_no_token(mock_config, mock_token)` |  |
+
+### `test_metadata_save`
+stock_metadata_day 的落库契约。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestDayStampConvention` | date_stamp 的口径 —— 差 8 小时就静默查空，所以拿库里实测值钉住。 |
+| f | `TestDayStampConvention.test_matches_stored_values()` |  |
+| f | `TestDayStampConvention.test_is_not_the_real_instant()` | 反证：不能用 bj_date().timestamp() —— 那差 8 小时。 |
+| f | `TestDayStampConvention.test_accepts_datetime_string()` | 源端两种格式都收（stock_ranking 带时分秒、stock_valuation 不带）。 |
+| C | `TestMetadataDayDoc` |  |
+| f | `TestMetadataDayDoc.test_field_set_and_types()` |  |
+| f | `TestMetadataDayDoc.test_float_stamp_is_coerced_to_int()` | 源端 float 的 stamp 会被 int() —— 否则与存量的 int32 不相等，唯一键插重复。 |
+| f | `TestMetadataDayDoc.test_payload_column_is_parameterised()` | 同一行可以带东财列、也可以带 baostock 列 —— 载荷字段名由调用方给。 |
+| C | `TestTurnoverRows` |  |
+| f | `TestTurnoverRows.test_missing_values_are_skipped_not_zeroed()` | 缺值丢掉，不写 0 —— 0 是「当天真的零换手」的意思。 |
+| f | `TestTurnoverRows.test_above_max_ratio_is_rejected()` | > 1.08 判为「百分比没换算就落库」，丢并计数（用户 2026-10-10 的判据）。 |
+| f | `TestTurnoverRows.test_boundary_is_inclusive()` |  |
+| f | `TestTurnoverRows.test_negative_and_non_numeric_are_skipped()` |  |
+| f | `TestTurnoverRows.test_writes_only_the_named_source_field()` | 两个源各自只认自己的字段 —— 免得 stock_valuation 的行被当东财的写进去。 |
+| C | `TestSourceTable` | 两个源的声明本身是契约：集合名 / 源字段 / 目标列。 |
+| f | `TestSourceTable.test_two_sources_two_columns()` |  |
+| f | `TestSourceTable.test_unique_key_has_no_revision()` | revision 是旧库的历史包袱，明确丢弃（用户 2026-10-10）。 |
+| f | `TestSourceTable.test_collection_name()` |  |
+| C | `TestUpsertFieldsDoesNotClobber` | 多列共存：这是「用 $set 而不是 ReplaceOne」的唯一证明。 |
+| f | `TestUpsertFieldsDoesNotClobber.setUp()` |  |
+| f | `TestUpsertFieldsDoesNotClobber.test_second_column_does_not_wipe_the_first()` |  |
+| f | `TestUpsertFieldsDoesNotClobber.test_unique_index_is_created()` |  |
+| f | `TestUpsertFieldsDoesNotClobber.test_save_collection_would_wipe_it()` | 反证：证明「用 $set」不是洁癖 —— ReplaceOne 真会抹掉别列。 |
 
 ### `test_no_quantaxis`
 

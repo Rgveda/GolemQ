@@ -77,6 +77,8 @@ DOCTEST_MODULES = (
     # ⚠️ czsc 是在函数体内 lazily import 的（`bi_confirm_map` / `attach_pivot_features`），
     # 所以收集本模块**不需要** czsc 在场 —— 上面那三条 doctest 也确实是 czsc-free 的。
     'GolemQ.analysis.pivot',
+    # `stock_metadata_day` 的**日频元数据契约**：`date_stamp` 口径（墙上时间当 UTC，差 8 小时也查得出来）、单位换算、行构造都是纯函数；`upsert_fields` 的语义也在这里有 doctest（多列共用文档时只 $set 自己的列）。
+    'GolemQ.markets.StockCN.metadata_save',
 )
 
 

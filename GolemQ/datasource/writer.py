@@ -1,18 +1,25 @@
 # coding:utf-8
-"""落库的**机制层**：两种写策略，按集合类型选用。
+"""落库的**机制层**：三种写策略，按集合类型与**文档语义**选用。
 
-策略一（**普通集合**）：`save_collection` / `save_block_collection` —— upsert + 删 delta。
+策略一（**普通集合，整文档**）：`save_collection` / `save_block_collection` —— upsert + 删 delta。
 移植自 `GolemQ_old/gateway/xtquant/save_qa.py` 三个 writer 的写语义，抽成一处。
 旧实现的行为在实盘跑过，照搬比重新设计安全。
 
 策略二（**时间序列集合**）：`save_bar_chunk` —— **先删后插**。
 时间序列既**不支持唯一索引**也**不能 upsert**（实测 `PITFALLS.md` P14），
 所以策略一那两个函数在这里**一律用不了**；而 8.3 的 K 线/xdxr/adj/实时集合
-**全部**是时间序列。两者放在同一个模块里，是为了让「同一层有两种写策略」这件事
+**全部**是时间序列。
+
+策略三（**普通集合，只覆盖自己的列**）：`upsert_fields` —— `$set` 指定字段。
+给「**多列共用一个文档**」的表用（`stock_metadata` 是第一个）。它与策略一的
+区别不在集合类型，而在**文档归谁**：策略一假设「一行 = 本次任务的完整结果」，
+策略三假设「一行被多个任务共同维护，各写各的列」。**用错策略一就是静默抹数据。**
+
+三种放在同一个模块里，是为了让「同一层有几种写策略、各自的前提是什么」
 一眼可见，而不是散在两个文件里各写一半。
 
-两条**都**必须保留的语义
-========================
+**都**必须保留的语义
+====================
 1. **空结果绝不删数据。** 旧实现的守卫（`save_qa.py:674-727`）是：取到空就
    直接返回，绝不执行 delta 删除。这条是**承重**的 —— 上游一次抽风返回空，
    若照常做 delta 删除，会把整个集合清空。取数失败与「确实没有标的退市」在
@@ -23,10 +30,11 @@
    L1/L2 互删）。
 3. 策略一 **upsert 而非 insert**（重复跑不产生重复文档）；
    策略二做不到 upsert，靠「删同窗口再插」达到同样的幂等。
+4. 策略三 **只 `$set`、不删、不 replace** —— 见其 docstring。
 """
 from __future__ import annotations
 
-from pymongo import ReplaceOne
+from pymongo import ReplaceOne, UpdateOne
 
 #: 策略一：一次 bulk_write 的批大小。与旧实现一致。
 BATCH = 1000
@@ -83,6 +91,88 @@ def save_collection(coll, rows, unique_keys, delete_delta_key=None,
         seen = {r[delete_delta_key] for r in rows if delete_delta_key in r}
         res = coll.delete_many({delete_delta_key: {'$nin': sorted(seen)}})
         stats['deleted'] = res.deleted_count
+
+    if verbose:
+        print(f'[writer] {coll.name}: {stats}')
+    return stats
+
+
+def upsert_fields(coll, rows, keys, payload_keys=None,
+                  batch: int = BATCH, verbose: bool = False) -> dict:
+    """**只覆盖指定字段**的 upsert（``$set``）—— 给「多列共用一个文档」的表用。
+
+    ⚠️ 为什么不能复用 :func:`save_collection`
+    =======================================
+    那个走 ``ReplaceOne(upsert=True)``，语义是**整文档替换**。用在多列共用的表上，
+    后跑的任务会把同一文档里**别的任务写的列整片抹掉** —— 且**不报错**。
+    `stock_metadata` 就是这么一张表：换手率、复权基准、各种派生列都往
+    `(code, date_stamp)` 这同一个文档上叠。
+
+    ⚠️ 本函数**故意不提供** ``delete_delta_key``
+    ==========================================
+    策略一的 delta 删除是「本次没取到的就删」。在这张表上，那不叫 delta 删除，
+    叫**把别人的列连行一起删掉** —— 换手率任务跑一次就会清掉复权任务的成果。
+    所以这里没有这个参数，将来也别加。
+
+    :param coll: pymongo Collection
+    :param rows: list[dict]，每行**至少**含全部 `keys`；行里有什么字段就 set 什么
+    :param keys: 唯一键，如 ``['code', 'time_stamp']``。**必须已有唯一索引**，
+        否则并发 upsert 会插出重复行（本函数会尝试建，建不上不报错）
+    :param payload_keys: 只写这些字段（白名单）。``None`` = 行里除 ``_id`` 外的全部。
+        传它是**防御性**的：万一调用方拿着「从库里读回来的整行」来写，
+        白名单能挡住「把自己的读结果当更新」这种意外。
+    :returns: ``{'upserted': n, 'modified': n, 'matched': n, 'skipped': bool}``
+
+    >>> # 语义演示（用内存假集合，不碰 DB）：同一 (code, date_stamp) 上叠两列
+    >>> class FakeResult:
+    ...     upserted_count, modified_count, matched_count = 1, 0, 0
+    >>> class FakeColl:
+    ...     name = 'stock_metadata'
+    ...     def __init__(self): self.ops = []
+    ...     def create_index(self, *a, **k): pass
+    ...     def bulk_write(self, ops, ordered=False):
+    ...         self.ops.extend(ops); return FakeResult()
+    >>> c = FakeColl()
+    >>> upsert_fields(c, [{'code': '600519', 'date_stamp': 1791388800,
+    ...                    'TurnoverRate': 0.0123}], ['code', 'date_stamp'])['upserted']
+    1
+    >>> op = c.ops[0]
+    >>> op._filter
+    {'code': '600519', 'date_stamp': 1791388800}
+    >>> sorted(op._doc['$set'])
+    ['TurnoverRate', 'code', 'date_stamp']
+    """
+    stats = {'upserted': 0, 'modified': 0, 'matched': 0, 'skipped': False}
+
+    if not rows:
+        # 同策略一的空守卫：这里没有删除可做，但保持返回值形状一致
+        stats['skipped'] = True
+        if verbose:
+            print(f'[writer] {coll.name}: 取到 0 行，跳过写入')
+        return stats
+
+    ensure_indexes(coll, keys)
+
+    for i in range(0, len(rows), batch):
+        chunk = rows[i:i + batch]
+        ops = []
+        for r in chunk:
+            if not all(k in r for k in keys):
+                continue          # 缺键的行跳过：upsert 出去会插出无键文档
+            if payload_keys is None:
+                payload = {k: v for k, v in r.items() if k != '_id'}
+            else:
+                payload = {k: r[k] for k in payload_keys if k in r}
+            if not payload:
+                continue
+            ops.append(UpdateOne({k: r[k] for k in keys}, {'$set': payload},
+                                 upsert=True))
+        if not ops:
+            continue
+        res = coll.bulk_write(ops, ordered=False)
+        stats['upserted'] += res.upserted_count
+        stats['modified'] += res.modified_count
+        stats['matched'] += res.matched_count
 
     if verbose:
         print(f'[writer] {coll.name}: {stats}')
