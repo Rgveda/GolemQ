@@ -216,7 +216,7 @@ each_day = sorted(kline.index.get_level_values(level=0).unique())
 | ~~**日线未迁移**~~ **已作废**（2026-10-08） | 先前那条是**错的**：`stock_day` **17,893,343** 行、`index_day` 4,564,152 行、`etf_day` 3,220,050 行 —— 日线**迁全了**。当时据以判断的计数来自时序集合上不可靠的 `$collStats count`，见 `PITFALLS.md` P15。⚠️ **实测真有洞的是 ETF**：`etf_day` 抽查 1,689 只里 **739 只有缺日**（`--save-coverage` 可复现）|
 | **指数集合数据不全** | ~~先前的说法~~ 实测 `index_day` 有 8,733 个 code、`index_1min` 亦然（2026-10-08）。⚠️ 但**指数分钟与 pytdx 不同源**：`vol` 比值 14–18 非常数、`close` 精度也不同 → `--save tdx` 里指数分钟**按 pytdx 原值写**（`INDEX_MIN_VOL_SCALE`），边界处会与存量跳变 |
 | **概念 K 线仍未实现** | 真实版本只在 `GolemQ_old/fetch/concept.py:865`（读 4.4）。⚠️ 2026-10-10 补记：原先那个空壳 `GolemQ/fetch/concept.py` **已随 `fetch/` 整包删除**，现在该方法是 `markets/StockCN/__init__.py` 里一个直接抛 `NotImplementedError` 的实现（`base_market.py` 的契约本就要求如此） |
-| **下游 stub 未解** | `load_massive_reviews` / `attach_reality_features` / `align_kline_timeline` 仍是 stub，端到端检查会停在这些点 —— 与 kline 通路无关 |
+| **下游 stub 未解** | `load_massive_reviews` / `attach_reality_features` 仍是 stub，端到端检查会停在这些点 —— 与 kline 通路无关。⚠️ 2026-10-10 更正：`align_kline_timeline` **已不是 stub，而是不存在**（调用方随 `services/persistence/` 删除）；`Timeline_duration` 反倒**回来了**，真实现在 `analysis/timing.py` |
 
 ### 附：本次发现的既有缺陷（非本次引入）
 

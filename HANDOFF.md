@@ -1431,3 +1431,68 @@ stock_valuation.turnover 最后日期 = 2026-09-29
 
 **测试**：`test_metadata_save` 17 → **23 条**，新增「与 `stock_day` 逐秒相同」
 「反证不是墙上口径」「裸日期不能补时分秒」等钉子。
+
+---
+
+### ✅ 筹码分布搬进 `analysis/`（2026-10-10）—— 换手率那一步的下游
+
+**为什么现在能搬**：`ChipDistribution_jit` 的一大输入就是**换手率**；换手率落库（本文件上面那节）
+之前，它连数据都取不到。
+
+#### ① 搬运不是照抄，是**改接**
+
+`golemq_old/analysis/ChipDistribution_jit.py`（1477 行）→ `GolemQ/analysis/ChipDistribution_jit.py`，
+**逐字保留**算法与 jit 核，只改 import 与数据来源：
+
+| 老树 | 新树 | 说明 |
+|:--|:--|:--|
+| `utils.parameter.{AKA, INDICATOR_FIELD}` | `core.constants.{AKA, FIELD}` | 类名变了 |
+| `fetch.kline.get_kline_price_v3` | `get_active_market().get_kline_price_v3(...)` | 门面层同日已删 |
+| `fetch.StockCN.GQ_fetch_stock_ranking`（读 4.4）| **`refdata.GQ_fetch_stock_metadata_day`** | **改读本树的新表**；两个调用点分别取 `turnover`（baostock）与 `TurnoverRate`（东财）—— 正好对上旧树的两级优先 |
+| `features.base.calc_feature_event_timing_lag` | `analysis.timing.…` | 随本次搬回 |
+| `analysis.timeseries.{Timeline_duration, resample_…}` | `analysis.timing.…` | 同上 |
+| `utils.base.GQ_util_get_last_day` | `markets/StockCN/date_utils.…` | 真实现一直在那儿 |
+| `markets.StockCN.{GQ_stock_a_spot_em, GQ_fetch_stock_info}` | 只留 `GQ_fetch_stock_info` | `GQ_stock_a_spot_em`（当日全市场快照）**新树没有** ⇒ 那条分支删掉，直接走它的兜底（`vol / liutongguben`）|
+| `import QUANTAXIS as QA` | **删** | 实测 `QA.` 在本文件**零命中** —— 死 import |
+
+⚠️ **顺带修掉一处只会在 `-v` 下炸的 NameError**：删掉 `GQ_stock_a_spot_em` 后，
+`if verbose:` 里还留着一句 `print(stock_cn_snapshot...item())` —— 引用已不存在的变量。
+
+⚠️ **PE 没搬**：老树在站点 A 顺手把 `peTTM` 也填进 `FLD.PE_RATION`，但那个列在本模块里
+**只被写、从不被读**（实测 `PE_RATION` 零处读取），故去掉不影响本模块；
+下游要用 PE 得另行落库。
+
+#### ② 三个搬回来的依赖落进 `analysis/timing.py`
+
+`Timeline_Integral` / `Timeline_duration` / `calc_event_timing_lag` /
+`calc_feature_event_timing_lag` / `calc_energy(_f8/_f4)` /
+`resample_multi_frequency_indices_func`。**与老树对拍：6 函数 × 500 随机样本逐值一致**
+（`test_timing.TestMatchesOldTree`，老树不在场时跳过）。
+
+⚠️ **两条搬运动作**：① 丢掉 `@nb.jit` 装饰器（老树给 `calc_energy_f8` 挂的是
+`f4[:](f4[:])` 签名而函数体返回 float64 —— **签名与实体不符**；新树 `analysis/` 不用 numba、
+`numba` 也不在 `MIN_PACKAGES`）；② **函数名保留旧树原名**（含 CamelCase 的 `Timeline_*`），
+改名会让两边无法对拍。
+
+⚠️ **`Timeline_duration` 是「stub 复活」**：它曾以 stub 形式待在 `analysis/timeseries.py`，
+因「唯一调用方在 `services/persistence/`」被当死代码删掉；现在真消费方来了，
+**带着真实现**回来（不在 `timeseries.py` 而在 `timing.py` —— 那边做重采样、这边做逐 bar 累积）。
+连带改了 3 处文档（`timeseries.py` 的 docstring、`MIGRATION_STATUS.md`、`MONGODB83.md`），
+并在 `GLOSSARY.md` 新增「**`stub` vs `dummy`**」一节（用户问起 —— 两者不是一回事：
+stub = 还没写，dummy = 故意是假的）。
+
+#### ③ 新读取器：`refdata.GQ_fetch_stock_metadata_day`
+
+⚠️ **索引第 0 层是 `datetime64`，不是库里那个字符串 `date`** —— 消费方要拿它和
+`kline83` 读出的 `(ts, code)` 帧做 `index.intersection`，字符串索引会让交集**静默为空**。
+层名仍叫 `date`（**不能叫 `datetime`**：库里那个 `datetime` 是字符串列，重名撞车）。
+
+⚠️ **`columns=` 必须连带取 `date`/`code`**：否则建不出索引、静默返回未设索引的帧。
+
+#### ④ 验收
+
+* 那个**永远跳过**的用例 `test_chip_distribution` 现在**真的跑**：
+  `calcuChip / winner / cost(90)` 全过（第二次 0.08s —— numba `cache=True` 生效）。
+* 它原来**一条断言都没有**（是个打印脚本），已补不变量：`ChipList` 非空、
+  获利盘比例**长度等于输入、非负、≤1**、成本分布等长 —— 否则"通过"没有意义。
+* **全量 448 → 469 通过 / 0 失败；skipped 2 → 1**（少的就是它）。

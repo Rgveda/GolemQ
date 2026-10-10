@@ -33,6 +33,19 @@
 
 ## GolemQ.analysis
 
+### `ChipDistribution_jit`
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `ChipDistribution` | ChipDistribution class with Numba JIT optimized core functions |
+| f | `ChipDistribution.get_data(code, data, offset, verbose)` |  |
+| f | `ChipDistribution.calcuChip(flag, AC)` |  |
+| f | `ChipDistribution.winner(p)` | 计算获利盘比例 - JIT优化版本 |
+| f | `ChipDistribution.lwinner(N, p)` | 滑动窗口获利盘计算 - JIT优化版本 |
+| f | `ChipDistribution.cost(N)` | 返回百分比的筹码价位 - JIT优化版本 |
+| f | `ChipDistribution.calc_cost5_bootstrap(features, verbose)` | 计算筹码变化起终点 |
+| f | `calc_stock_chip_distribution_jit(features, ohlc_data, annual, verbose)` | 使用 Numba JIT 优化的筹码分布计算函数 |
+
 ### `_zs`
 缠论中枢识别的算法核心（find_zs）。
 
@@ -63,6 +76,20 @@
 |:--|:--|:--|
 | f | `GQ_data_min_resample(min_data, type_)` | 分钟线 → 更大周期的分钟线（5min / 15min / 30min / 60min / 1D）。 |
 | f | `GQ_data_min_to_day(min_data, type_)` | 分钟线 → 日线。QUANTAXIS QA_data_min_to_day 的忠实回迁。 |
+
+### `timing`
+时域累积器与金叉/死叉时间间隔。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `Timeline_Integral(Tm)` | 时域金叉/死叉信号的累积和（死叉 1→0 时清零）。 `[dt]` |
+| f | `Timeline_duration(Tm)` | 时域累积和（金叉 0→1 时清零，与 :func:Timeline_Integral 相反）。 `[dt]` |
+| f | `calc_event_timing_lag(vhma_directions)` | 事件的时间间隔：金叉取正、死叉取负。 `[dt]` |
+| f | `calc_feature_event_timing_lag(features, column)` | 技术指标特征的金叉/死叉时序。 `[dt]` |
+| f | `calc_energy_f8(signal)` | calc_energy 的 float64 内核：同号累加、异号重启。 `[dt]` |
+| f | `calc_energy_f4(signal)` | calc_energy 的 float32 内核（逻辑同 :func:calc_energy_f8，只差 dtype）。 |
+| f | `calc_energy(signal)` | 信号的绝对能量（同号连续累加、异号重启），按 dtype 选内核。 `[dt]` |
+| f | `resample_multi_frequency_indices_func(data)` | 把另一个频率算好的指标对齐到 data 的时间轴上（单标的）。 |
 
 ## GolemQ.cli
 
@@ -685,8 +712,9 @@ stock_metadata_day —— 日频元数据的统一落点。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
+| f | `day_stamp(day)` | 'YYYY-MM-DD'（或带时分秒）→ 本表 date_stamp（秒，int）。 `[dt]` |
 | f | `day_date(date_str)` | 源端日期 → '%Y-%m-%d'。 `[dt]` |
-| f | `metadata_day_doc(code, date_stamp, day, field, rate, created_at)` | 一行元数据 → stock_metadata_day 文档（只带一列载荷）。 `[dt]` |
+| f | `metadata_day_doc(code, day, field, rate, created_at)` | 一行元数据 → stock_metadata_day 文档（只带一列载荷）。 `[dt]` |
 | f | `turnover_rows(rows, src_field, dst_field, created_at)` | 某个源的源行 → stock_metadata_day 文档列表。 `[dt]` |
 | f | `save_turnover(since, until, batch, verbose, echo, created_at, dry_run)` | 把 4.4 两源的换手率搬进 8.3 stock_metadata_day（两列，各写各的）。 |
 
@@ -728,6 +756,7 @@ A 股参考数据的读取层 —— 一律走 MongoDB 8.3 的 golemq_stock_cn�
 | f | `GQ_fetch_etf_list(codes, database)` | ETF 列表。sec 恒为 'etf_cn'。 |
 | f | `GQ_fetch_stock_block(blocknames, codes, database)` | 板块成分。 |
 | f | `GQ_fetch_financial(codes, report_date, database)` | 季频财务。一行 = 一个 (code, report_date)。 |
+| f | `GQ_fetch_stock_metadata_day(code, start, end, columns, database)` | stock_metadata_day（日频元数据，一行 = 一标的 × 一交易日）的读取口。 |
 
 ### `refdata_save`
 A 股参考集合的取数与落库编排 —— 对应 CLI 的 --save <SOURCE> 的参考数据段。
@@ -1557,22 +1586,29 @@ stock_metadata_day 的落库契约。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
-| C | `TestDayStampConvention` | date_stamp 的口径 —— 差 8 小时就静默查空，所以拿库里实测值钉住。 |
-| f | `TestDayStampConvention.test_matches_stored_values()` |  |
-| f | `TestDayStampConvention.test_is_not_the_real_instant()` | 反证：不能用 bj_date().timestamp() —— 那差 8 小时。 |
-| f | `TestDayStampConvention.test_accepts_datetime_string()` | 源端两种格式都收（stock_ranking 带时分秒、stock_valuation 不带）。 |
+| C | `TestDayStampConvention` | date_stamp 必须与 8.3 的邻居一致（差 8h 就静默 join 错）。 |
+| f | `TestDayStampConvention.test_matches_stock_day()` | 锚点取自 8.3 实测：stock_day/stock_adj 里 date='2026-10-08' |
+| f | `TestDayStampConvention.test_is_not_the_wall_clock_convention()` | 反证：不是「墙上时间当 UTC」那套（4.4 stock_ranking 用的是它）。 |
+| f | `TestDayStampConvention.test_accepts_both_source_date_formats()` | 源端两种格式都收（stock_ranking 带时分秒、stock_valuation 裸日期）。 |
+| f | `TestDayStampConvention.test_ts_is_the_real_instant()` | ts 是 UTC-aware 的真实时刻；与同为真实时刻的 date_stamp 差 8h |
+| C | `TestDateRange` | 范围过滤按源端 date 格式造 —— 不能一刀切补 ' 00:00:00'。 |
+| f | `TestDateRange.test_datetime_format_gets_time_part()` |  |
+| f | `TestDateRange.test_bare_date_format_gets_none()` | ⚠️ 裸日期源不能补时分秒：字符串比较下 '2026-09-30' 小于 |
+| f | `TestDateRange.test_no_bounds_is_empty()` |  |
+| f | `TestDateRange.test_each_source_declares_its_date_format()` |  |
 | C | `TestMetadataDayDoc` |  |
 | f | `TestMetadataDayDoc.test_field_set_and_types()` |  |
-| f | `TestMetadataDayDoc.test_float_stamp_is_coerced_to_int()` | 源端 float 的 stamp 会被 int() —— 否则与存量的 int32 不相等，唯一键插重复。 |
 | f | `TestMetadataDayDoc.test_payload_column_is_parameterised()` | 同一行可以带东财列、也可以带 baostock 列 —— 载荷字段名由调用方给。 |
 | C | `TestTurnoverRows` |  |
 | f | `TestTurnoverRows.test_missing_values_are_skipped_not_zeroed()` | 缺值丢掉，不写 0 —— 0 是「当天真的零换手」的意思。 |
+| f | `TestTurnoverRows.test_row_without_date_is_skipped()` | 没有 date 就推不出 date_stamp ⇒ 丢（源端 stamp 不再被信任）。 |
 | f | `TestTurnoverRows.test_above_max_ratio_is_rejected()` | > 1.08 判为「百分比没换算就落库」，丢并计数（用户 2026-10-10 的判据）。 |
 | f | `TestTurnoverRows.test_boundary_is_inclusive()` |  |
 | f | `TestTurnoverRows.test_negative_and_non_numeric_are_skipped()` |  |
 | f | `TestTurnoverRows.test_writes_only_the_named_source_field()` | 两个源各自只认自己的字段 —— 免得 stock_valuation 的行被当东财的写进去。 |
-| C | `TestSourceTable` | 两个源的声明本身是契约：集合名 / 源字段 / 目标列。 |
+| C | `TestSourceTable` | 源的声明本身是契约：集合名 / 源字段 / 目标列 / date 格式。 |
 | f | `TestSourceTable.test_two_sources_two_columns()` |  |
+| f | `TestSourceTable.test_columns_keep_the_source_names()` | 列名保留源端原名（用户 2026-10-10）—— 好让 calcuChip 读 |
 | f | `TestSourceTable.test_unique_key_has_no_revision()` | revision 是旧库的历史包袱，明确丢弃（用户 2026-10-10）。 |
 | f | `TestSourceTable.test_collection_name()` |  |
 | C | `TestUpsertFieldsDoesNotClobber` | 多列共存：这是「用 $set 而不是 ReplaceOne」的唯一证明。 |
@@ -1819,6 +1855,33 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `test_timestamp_format()` | 测试时间戳格式转换 |
+
+### `test_timing`
+analysis/timing.py —— 从旧树搬回的时序累积器与金叉/死叉间隔。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestAccumulators` | 两个累积器的清零条件相反 —— 这是最容易抄错的一处。 |
+| f | `TestAccumulators.test_integral_clears_on_zero()` | Timeline_Integral：Tm[i]==0 清零（死叉 1→0）。 |
+| f | `TestAccumulators.test_duration_clears_on_one()` | Timeline_duration：Tm[i]==1 清零（金叉 0→1）。 |
+| f | `TestAccumulators.test_first_element_uses_numpy_negative_index()` | i=0 时 T[-1] 取到数组最后一个元素（新数组全 0）—— 依赖 numpy 负索引。 |
+| f | `TestAccumulators.test_integral_only_meaningful_for_binary_input()` | ⚠️ Timeline_Integral 只对 0/1 输入有意义 —— 它是给二值信号的。 |
+| C | `TestEventTimingLag` |  |
+| f | `TestEventTimingLag.test_sign_convention()` | 金叉取正、死叉取负；<=0 一律走负分支。 |
+| f | `TestEventTimingLag.test_feature_lag_first_element_is_minus_one()` | ⚠️ 第一个元素是 -1，不是 +1 —— shift(1) 给 NaN ⇒ 两个比较都是 False |
+| f | `TestEventTimingLag.test_returns_int32()` |  |
+| C | `TestEnergy` |  |
+| f | `TestEnergy.test_same_sign_accumulates_and_flips_restart()` | 同号累加、异号重启。 |
+| f | `TestEnergy.test_dtype_dispatch()` | float64 → f8 内核；float32 → f4 内核（返回值 dtype 随之不同）。 |
+| f | `TestEnergy.test_accepts_series_and_ndarray()` |  |
+| f | `TestEnergy.test_other_dtype_falls_back_to_float32()` | int 输入走 astype(float32) 那条兜底路（不是 f8）。 |
+| f | `TestEnergy.test_all_zeros_is_all_zeros()` |  |
+| f | `TestEnergy.test_length_one_and_empty()` |  |
+| C | `TestResampleIsImportable` | 对齐函数要能用（细节由筹码分布那条链覆盖；这里只钉「在且可调」）。 |
+| f | `TestResampleIsImportable.test_importable()` |  |
+| C | `TestMatchesOldTree` | 对拍：同一批随机输入，与旧树的同名实现逐值比。 |
+| f | `TestMatchesOldTree.setUpClass()` |  |
+| f | `TestMatchesOldTree.test_all_six_match()` |  |
 
 ### `test_xtquant_sync`
 

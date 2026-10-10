@@ -22,9 +22,8 @@ except ImportError as _import_error:
 
 @unittest.skipIf(
     ChipDistribution is None,
-    "ChipDistribution_jit 无法导入：它依赖已被移除的 GolemQ.features.base "
-    "(calc_feature_event_timing_lag)。模块本身存在于 analysis/ChipDistribution_jit.py。"
-    f"（{_IMPORT_ERROR}）",
+    "ChipDistribution_jit 无法导入 —— 2026-10-10 搬运后本应能导入。"
+    f"若这条又亮起来，先看依赖是否又被删了。（{_IMPORT_ERROR}）",
 )
 class TestChipDistributionPerformance(unittest.TestCase):
     """性能基准（原为命令行脚本，已纳入 unittest 以便记录依赖缺口）"""
@@ -61,6 +60,11 @@ class TestChipDistributionPerformance(unittest.TestCase):
 
         print(f"calcuChip 执行时间: {end_time - start_time:.4f} 秒")
 
+        # ⚠️ 2026-10-10：原来这个用例**一条断言都没有**（它是个打印脚本）。
+        # 搬运之后补上**不变量**，让它真的能失败 —— 否则「用例通过」无意义。
+        # 首次调用的大头是 **numba 的一次性编译**，故不断言耗时（那是环境噪音）。
+        self.assertGreater(len(chip_dist.ChipList), 0, 'calcuChip 应产出筹码分布序列')
+
         # 测试 winner 性能
         start_time = time.time()
         profit = chip_dist.winner()
@@ -69,6 +73,11 @@ class TestChipDistributionPerformance(unittest.TestCase):
         print(f"winner 执行时间: {end_time - start_time:.4f} 秒")
         print(f"获利盘比例结果长度: {len(profit)}")
 
+        self.assertEqual(len(profit), len(test_df), '获利盘比例应与输入等长')
+        profit = np.asarray(profit, dtype=float)
+        self.assertTrue(np.all(profit >= 0), '获利盘比例不该为负')
+        self.assertTrue(np.all(profit <= 1), '获利盘比例是比例，不该超过 1')
+
         # 测试 cost 性能
         start_time = time.time()
         cost_result = chip_dist.cost(90)
@@ -76,6 +85,8 @@ class TestChipDistributionPerformance(unittest.TestCase):
 
         print(f"cost 执行时间: {end_time - start_time:.4f} 秒")
         print(f"成本分布结果长度: {len(cost_result)}")
+
+        self.assertEqual(len(cost_result), len(test_df), '成本分布应与输入等长')
 
         print("性能测试完成！")
 

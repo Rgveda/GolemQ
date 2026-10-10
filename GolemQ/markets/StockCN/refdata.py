@@ -53,6 +53,7 @@ __all__ = [
     'GQ_fetch_etf_list',
     'GQ_fetch_stock_block',
     'GQ_fetch_financial',
+    'GQ_fetch_stock_metadata_day',
     'GQ_ref_collection',
 ]
 
@@ -147,4 +148,62 @@ def GQ_fetch_financial(codes=None, report_date=None, database=None) -> pd.DataFr
     df = pd.DataFrame(rows)
     if 'report_date' in df.columns and 'code' in df.columns:
         df = df.set_index(['code', 'report_date']).sort_index()
+    return df
+
+
+def GQ_fetch_stock_metadata_day(code, start=None, end=None, columns=None,
+                                database=None) -> pd.DataFrame:
+    """`stock_metadata_day`（**日频元数据**，一行 = 一标的 × 一交易日）的读取口。
+
+    ⚠️ **不走 `GQ_ref_collection`** —— 那个只认 5 个**参考集合**
+    （`REF_COLLECTIONS`），而本表是**派生元数据**表、不在其中。给 `REF_COLLECTIONS`
+    加第 6 项会和 `refdata_save.ALL_REF_COLLECTIONS` 那份平行清单分叉。
+
+    :param code: 6 位代码（**必填** —— 本表按 code 分区，不传会全表扫）
+    :param start/end: ``'YYYY-MM-DD'``，闭区间，按 `date` 过滤
+    :param columns: 只要这些列（``None`` = 全部）。常用的两列是
+        ``'TurnoverRate'``（东财口径）与 ``'turnover'``（baostock 口径）——
+        **它们不是同一个量**（相对差中位 25%），见 `metadata_save` 的模块文档
+    :return: 索引第 0 层是**时间轴（`datetime64`）**、第 1 层是 `code` 的 DataFrame；
+        空集返回空 DataFrame（不是 None）
+
+    ⚠️ **索引第 0 层的值类型是 `datetime64`，不是库里那个字符串 `date`** ——
+    消费方（筹码分布）要拿它和 `kline83` 读出来的 `(ts, code)` 帧做
+    `index.intersection`；若这里是字符串，交集**静默为空**、整段换手率填不进去。
+    层名保留了 `date`（**不能叫 `datetime`**：库里那个 `datetime` 是字符串列，
+    重名会撞车）。
+
+    ⚠️ **列是按行来的，不代表每次都齐** —— 两个源各写一列（东财 `TurnoverRate`
+    覆盖 2021+、baostock `turnover` 覆盖 1999+），**只在两边都有的日子上两列并存**。
+    实测 `600519` 的 2026-09 现在只有 `TurnoverRate`。
+    所以消费方要用 `df.get('turnover')` 而不是 `df['turnover']` —— 后者会 KeyError。
+
+    列里除载荷外还带 `date_stamp` / `datetime`（字符串）/ `ts` / `created_at`。
+    """
+    q: dict = {'code': code}
+    if start is not None or end is not None:
+        rng = {}
+        if start is not None:
+            rng['$gte'] = str(start)[:10]
+        if end is not None:
+            rng['$lte'] = str(end)[:10]
+        q['date'] = rng
+    proj = {'_id': 0}
+    if columns is not None:
+        # ⚠️ **`date` / `code` 必须一起取** —— 下面要靠它们建 `(时间, code)` 索引，
+        # 缺了就会静默返回一个**未设索引**的帧（消费方的 `index.intersection`
+        # 于是永远为空）。
+        for c in ('date', 'code'):
+            proj[c] = 1
+        for c in columns:
+            proj[c] = 1
+    coll = (database or _stock_cn_db())['stock_metadata_day']
+    rows = list(coll.find(q, proj))
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    if 'date' in df.columns and 'code' in df.columns:
+        # 见上：第 0 层要 datetime64（与 `self.data` 的轴可比），层名仍是 `date`
+        axis = pd.Index(pd.to_datetime(df['date']), name='date')
+        df = df.set_index([axis, 'code']).sort_index()
     return df

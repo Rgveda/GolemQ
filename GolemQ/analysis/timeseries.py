@@ -4,9 +4,17 @@
 **本模块的定位（两层模型）**：重采样是「所有交易系统共性」的能力，属**第一层**，
 放根目录下的 `analysis/`，而不是 `markets/<Market>/`。
 
-本文件只保留两个重采样器（`GQ_data_min_resample` / `GQ_data_min_to_day`）——
-原先的两个 stub（`Timeline_duration` / `align_kline_timeline`）已随
-`services/persistence/` 的删除一并移除（它们的唯一调用方在那个包里）。
+本文件只保留两个重采样器（`GQ_data_min_resample` / `GQ_data_min_to_day`）。
+
+⚠️ **2026-10-10 更正**：原先这里还有两个 stub（`Timeline_duration` /
+`align_kline_timeline`），因「唯一调用方在 `services/persistence/`」被当死代码删掉。
+**其中 `Timeline_duration` 已经回来了** —— 筹码分布模块要用，真消费方到了。
+但它**不在本文件**，而在同级的 `analysis/timing.py`（连同 `Timeline_Integral` /
+`calc_event_timing_lag` / `calc_energy` 那一族，都是旧树 `analysis/timeseries.py`
+搬回来的**真实现**，非 stub）。分开是因为那边做「逐 bar 累积」、这边做「重采样」，
+两个关注点；并进来会立刻超过 300 行。
+`align_kline_timeline` **仍然不存在**（它的调用方随 `services/persistence/` 一起没了，
+也没有新消费方）—— 要用就得先有调用方。
 本文件新增的两个重采样器是从 QUANTAXIS **逐行回迁**的（原先
 `markets/StockCN/realtime.py` 直接调 QUANTAXIS 的 `QA_data_min_resample` /
 `QA_data_min_to_day`）。回迁而非重写是为了保行为：它们内含 A 股**分段交易时段**

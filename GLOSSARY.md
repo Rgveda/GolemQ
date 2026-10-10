@@ -47,6 +47,20 @@
 
 ---
 
+## 三点五、`stub` vs `dummy` —— **别混用**（2026-10-10 用户问起）
+
+| 词 | 层面 | 含义 | 本项目实例 |
+|:--|:--|:--|:--|
+| **`stub`**（存根）| **实现层** | 存在但**没实现**：签名对、行为空或假（`pass` / 返回空表 / `raise NotImplementedError`）。它存在的意义是**让调用方先接得上**，实现后补 | `core/base.py::set_cpu_affinity_even`（空实现）；`constants.py` 的 `... (stub — to be populated)`；`analysis/timeseries.py` 里曾有的两个 stub |
+| **`dummy`**（哑 / 虚拟）| **数据层** | 占位的**值或列**：① 特征表里**刻意的虚拟列**（列名后缀 `D`，与 `..._REAL` 成对）② `features_dummy` 那个特征矩阵的规范名 | `QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY = 'QLevMACDLagD'`；`SAMPLE_ENTROPY_DUMMY = 'SED'` |
+
+**一句话：`stub` = 还没写；`dummy` = 故意是假的。**
+
+⚠️ 把 `..._DUMMY` 列当成 stub 会让人去「补实现」一个**本来就该是假**的列 ——
+那些列与 `..._REAL` 成对（`ZPLagMajR` / `zPLagMajD`），喂回测 / XGB 是**设计**。
+
+---
+
 ## 四、项目专有词汇（**几乎全是老代码继承，勿当拼写错误改**）
 
 | 词 | 实际含义 | 易被误认为 |

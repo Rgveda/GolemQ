@@ -79,6 +79,10 @@ DOCTEST_MODULES = (
     'GolemQ.analysis.pivot',
     # `stock_metadata_day` 的**日频元数据契约**：`date_stamp` 口径（墙上时间当 UTC，差 8 小时也查得出来）、单位换算、行构造都是纯函数；`upsert_fields` 的语义也在这里有 doctest（多列共用文档时只 $set 自己的列）。
     'GolemQ.markets.StockCN.metadata_save',
+    # 时序累积器与金叉/死叉间隔：纯函数（numpy/pandas），从旧树 `analysis/timeseries.py`
+    # 搬回的真实现。⚠️ 其中 `Timeline_duration` 曾是本树 stub 并被当死代码删过 ——
+    # 复活的东西必须有测试，否则下次还会被删。见 GLOSSARY「stub vs dummy」。
+    'GolemQ.analysis.timing',
 )
 
 
