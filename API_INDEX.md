@@ -255,6 +255,8 @@ CLI 命令注册表 —— 机制层，不认识任何具体命令。
 |:--|:--|:--|
 | f | `add_turnover_arguments(parser)` |  |
 | f | `run_migrate_turnover(args)` | --migrate-turnover 的处理体：只做参数校验，干活在 metadata_save。 |
+| f | `add_index_list_arguments(parser)` |  |
+| f | `run_migrate_index_list(args)` | --migrate-index-list 的处理体：只做参数校验，干活在 refdata_save。 |
 
 ### `purge`
 --purge-l1 / --purge：清理 MongoDB 数据库。破坏性，故有确认闸。
@@ -834,6 +836,7 @@ A 股参考数据的读取层 —— 一律走 MongoDB 8.3 的 golemq_stock_cn�
 | f | `GQ_fetch_stock_list(codes, database)` | 股票列表。code 为 6 位，另有 name/pre_close/sse/sec |
 | f | `GQ_fetch_stock_info(codes, database)` | 股本与上市信息。真实被消费的是 liutongguben 与 ipo_date/IPODate。 |
 | f | `GQ_fetch_etf_list(codes, database)` | ETF 列表。sec 恒为 'etf_cn'。 |
+| f | `GQ_fetch_index_list(codes, database)` | 指数名单（code 6 位，另有 name/pre_close/sse/volunit/ |
 | f | `GQ_fetch_stock_block(blocknames, codes, database)` | 板块成分。 |
 | f | `GQ_fetch_financial(codes, report_date, database)` | 季频财务。一行 = 一个 (code, report_date)。 |
 | f | `GQ_fetch_stock_metadata_day(code, start, end, columns, database)` | stock_metadata_day（日频元数据，一行 = 一标的 × 一交易日）的读取口。 |
@@ -846,6 +849,7 @@ A 股参考集合的取数与落库编排 —— 对应 CLI 的 --save <SOURCE> 
 | f | `refdata_ttl_hours(collection, now)` | 该集合此刻该用的刷新间隔（小时）—— 查 :data:TTL_HOURS 的 (盘中, 盘后)。 `[dt]` |
 | f | `mark_refdata_success(collection, echo)` | 把「该集合刚刚成功完成」记进 supervisor 的签到表。只该在真写完之后调。 |
 | f | `refdata_age_hours(collection, now)` | 该集合距上次成功完成过去了多少小时；从没成功过 → None（调用方按「该取」处理）。 |
+| f | `save_index_list_from44(dry_run, verbose, echo)` | 把 4.4 的 quantaxis.index_list 补进 8.3 的 index_list（只补缺）。 |
 | f | `save_refdata(collections, source, codelist, exclude_sources, verbose, on_progress, echo, ttl_hours)` | 把参考集合取回并落库到 8.3 的 golemq_stock_cn。 |
 | f | `refdata_status()` | 各集合当前的源可用性与库存量 —— 排障用。 |
 | f | `format_status(report)` | 把 save_refdata 的结果或 refdata_status() 渲染成可读文本。 |
@@ -924,6 +928,7 @@ pytdx 数据源适配器 —— 通达信协议的社区实现。
 | f | `TdxSource.close()` |  |
 | f | `TdxSource.fetch(collection)` |  |
 | f | `TdxSource.fetch_stock_list(markets, verbose)` | 全市场股票列表，已过滤为真实股票（排除基金/债券/指数）。 |
+| f | `TdxSource.fetch_index_list(markets, verbose)` | 全市场指数名单（码 + 名字）—— 供参考集合 index_list。 |
 | f | `TdxSource.fetch_stock_info(codelist, verbose)` | 股本与上市信息。字段名与目标 schema 逐字对齐。 |
 | f | `TdxSource.fetch_stock_block(verbose)` | 板块成分。四个文件分别对应概念/行业/指数/风格。 |
 
@@ -1471,6 +1476,29 @@ markets/StockCN/fq.py 的复权因子 —— 重点是分段常数这条不变�
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `test_timeout_instance_cleanup()` | 测试超时实例清理功能 |
+
+### `test_kline83`
+markets/StockCN/kline83.py 的展示名解析（_display_name）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestDisplayNameChain` | 不带数据地验证回落链 —— 见模块 docstring。 |
+| f | `TestDisplayNameChain.test_stock_prefers_stock_info()` |  |
+| f | `TestDisplayNameChain.test_stock_falls_back_to_stock_list()` | stock_info 空 ⇒ 查 stock_list（用户 2026-10-11 明确要求的那一跳）。 |
+| f | `TestDisplayNameChain.test_null_or_blank_name_falls_through()` | name 为 None / 空串 / 纯空白 —— 都算"取不到"，继续往下走。 |
+| f | `TestDisplayNameChain.test_name_is_stripped()` |  |
+| f | `TestDisplayNameChain.test_unknown_code_returns_the_code()` | 两条链都取不到 ⇒ 回落成代码本身（真指数、未知代码都走这条）。 |
+| f | `TestDisplayNameChain.test_null_name_column_absent_is_tolerated()` | 返回帧里没有 name 列（读取器改过列）时不能崩。 |
+| f | `TestDisplayNameChain.test_never_raises_when_the_lookup_blows_up()` | ⚠️ 名字是展示用品 —— 查询抛异常绝不能让取数失败。 |
+| f | `TestDisplayNameChain.test_index_prefers_index_list()` | index 分支先查 index_list（真指数只在那里）。 |
+| f | `TestDisplayNameChain.test_index_falls_back_to_etf_list()` | index_list 里没有 ⇒ 查 etf_list（ETF 只在那里）。 |
+| f | `TestDisplayNameChain.test_index_without_name_returns_the_code()` |  |
+| C | `TestDisplayNameOnRealData` | 真实数据上的冒烟 —— 链路逻辑已由上面覆盖，这里只确认接得上 8.3。 |
+| f | `TestDisplayNameOnRealData.setUpClass()` |  |
+| f | `TestDisplayNameOnRealData.test_known_stock()` |  |
+| f | `TestDisplayNameOnRealData.test_known_real_index()` | 真指数走 index_list（2026-10-11 新建的表）—— 这条钉住"表还在"。 |
+| f | `TestDisplayNameOnRealData.test_known_etf()` |  |
+| f | `TestDisplayNameOnRealData.test_unknown_code_falls_back()` |  |
 
 ### `test_kline_save`
 

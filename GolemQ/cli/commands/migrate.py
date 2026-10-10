@@ -6,7 +6,7 @@
 元数据类集合（`stock_ranking` / `stock_valuation`）从没搬过。现在按需恢复，
 用途限定为「一次性搬运」，见 `DECISIONS.md` 的 D33 修正条。
 
-目前只有一条：`--migrate-turnover`。
+两条：`--migrate-turnover`（换手率）与 `--migrate-index-list`（指数名单）。
 """
 from __future__ import annotations
 
@@ -73,4 +73,36 @@ MIGRATE_TURNOVER = Command(
     flags=('migrate_turnover',),
     add_arguments=add_turnover_arguments,
     run=run_migrate_turnover,
+)
+
+
+def add_index_list_arguments(parser) -> None:
+    parser.add_argument('--migrate-index-list',
+                        help="把 4.4 的 quantaxis.index_list **补**进 8.3 的 index_list"
+                             "（**只补缺、不覆盖** —— 4.4 的 pre_close 早已过期，"
+                             "盖掉 pytdx 刚取的新值是净损失）。"
+                             "配合 --migrate-dry-run 干跑。",
+                        action='store_true',
+                        default=False)
+
+
+def run_migrate_index_list(args) -> None:
+    """`--migrate-index-list` 的处理体：只做参数校验，干活在 `refdata_save`。"""
+    from GolemQ.markets.StockCN.refdata_save import save_index_list_from44
+
+    try:
+        save_index_list_from44(dry_run=args.migrate_dry_run)
+    except Exception as exc:                     # noqa: BLE001
+        from GolemQ.core.migrate44 import mongo44_uri
+        print('[migrate] 失败：{}: {}'.format(type(exc).__name__, exc), file=sys.stderr)
+        print('[migrate] 4.4 地址由 8.3 的 uri 推导得到：{}'.format(mongo44_uri()),
+              file=sys.stderr)
+        sys.exit(1)
+
+
+MIGRATE_INDEX_LIST = Command(
+    name='migrate-index-list',
+    flags=('migrate_index_list',),
+    add_arguments=add_index_list_arguments,
+    run=run_migrate_index_list,
 )

@@ -51,14 +51,20 @@ __all__ = [
     'GQ_fetch_stock_list',
     'GQ_fetch_stock_info',
     'GQ_fetch_etf_list',
+    'GQ_fetch_index_list',
     'GQ_fetch_stock_block',
     'GQ_fetch_financial',
     'GQ_fetch_stock_metadata_day',
     'GQ_ref_collection',
 ]
 
-#: 5 个参考集合的规范名
-REF_COLLECTIONS = ('stock_list', 'stock_info', 'etf_list', 'stock_block', 'financial')
+#: **6 个**参考集合的规范名。
+#: ⚠️ 与 `refdata_save.ALL_REF_COLLECTIONS` 是**两份平行清单**（这里管「读」、
+#: 那里管「写」），两边必须同步 —— `index_list` 是 2026-10-11 一起加的第 6 个。
+#: 另注：`GQ_fetch_stock_metadata_day` **刻意不在其中**（它是派生元数据表，
+#: 不是参考集合），所以清单长度不等于 `__all__` 里的读取函数个数。
+REF_COLLECTIONS = ('stock_list', 'stock_info', 'etf_list', 'index_list',
+                   'stock_block', 'financial')
 
 
 def GQ_ref_collection(name: str, database=None):
@@ -108,6 +114,23 @@ def GQ_fetch_etf_list(codes=None, database=None) -> pd.DataFrame:
     """
     q = {'code': {'$in': list(codes)}} if codes is not None else None
     return _read('etf_list', q, database=database)
+
+
+def GQ_fetch_index_list(codes=None, database=None) -> pd.DataFrame:
+    """**指数**名单（`code` 6 位，另有 `name`/`pre_close`/`sse`/`volunit`/
+    `decimal_point`/`source`）。`sec` 恒为 `index_cn`。
+
+    ⚠️ **与 :func:`GQ_fetch_etf_list` 是两张表，别合并**：ETF 与真指数虽然
+    **共用** `index_*` 行情集合，但名单分开（`etf_list` 1694 行 / `index_list`
+    1221+ 行，码段不重叠）。合成一张会丢 `sec` 语义，而 `sse` 也答不出来
+    （同一 6 位码在 `stock`/`index` 两族可能分属不同交易所，见 `PITFALLS.md` P2）。
+
+    ⚠️ 这张表是 **2026-10-11 才有的**：4.4 时代指数名单在 `quantaxis.index_list`
+    （1291 行），迁移时**漏了**，于是 `kline83._display_name` 对真指数一直回落成
+    代码。现由 `--save tdx` 的 `pytdx.fetch_index_list` 维护（1221 条、零误选）。
+    """
+    q = {'code': {'$in': list(codes)}} if codes is not None else None
+    return _read('index_list', q, database=database)
 
 
 def GQ_fetch_stock_block(blocknames=None, codes=None, database=None) -> pd.DataFrame:

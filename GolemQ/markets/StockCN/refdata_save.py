@@ -46,12 +46,16 @@ __all__ = [
     'UNIQUE_KEYS',
     'DELTA_DELETE',
     'save_refdata',
+    'save_index_list_from44',
     'refdata_status',
     'format_status',
 ]
 
-#: 5 个参考集合
-ALL_REF_COLLECTIONS = ('stock_list', 'stock_info', 'etf_list', 'stock_block', 'financial')
+#: **6 个**参考集合
+#: ⚠️ 这份清单与 `refdata.REF_COLLECTIONS` 是**两份平行清单**（那里管「读」、这里管「写」）——
+#: 两边必须同步。`index_list` 是 2026-10-11 一起加进去的第 6 个。
+ALL_REF_COLLECTIONS = ('stock_list', 'stock_info', 'etf_list', 'index_list',
+                       'stock_block', 'financial')
 
 #: `--save <SOURCE>` 里各源**真正能供**的集合。**按源不同** —— 别硬凑成一个元组：
 #: `qmt` 适配器压根没声明 `etf_list`，列进去只会每次报一遍 `UnsupportedCollection`。
@@ -64,7 +68,7 @@ ALL_REF_COLLECTIONS = ('stock_list', 'stock_info', 'etf_list', 'stock_block', 'f
 #: 另注：akshare 只出现在 `etf_list` / `financial` 两个集合的优先级里，所以
 #: `--save` **不传** `exclude_sources` —— 对另外三个集合那本就是个空操作。
 REFDATA_BY_SOURCE = {
-    'pytdx': ('stock_list', 'stock_info', 'stock_block', 'etf_list'),
+    'pytdx': ('stock_list', 'stock_info', 'stock_block', 'etf_list', 'index_list'),
     'qmt': ('stock_list', 'stock_info', 'stock_block'),
 }
 
@@ -79,6 +83,7 @@ TTL_HOURS = {
     'stock_list': (5, 24),
     'stock_block': (5, 24),
     'etf_list': (5, 24),
+    'index_list': (5, 24),          # 同属**名单**类（盘中会调样/新发）
     'stock_info': (24, 24),
     'financial': (24, 24),          # 季频；`--save` 不做它，留在这里只是表完整
 }
@@ -184,6 +189,7 @@ UNIQUE_KEYS = {
     'stock_list': ['code'],
     'stock_info': ['code'],
     'etf_list': ['code'],
+    'index_list': ['code'],
     'financial': ['code', 'report_date'],
 }
 
@@ -197,6 +203,8 @@ UNIQUE_KEYS = {
 #: 那 351 只 `92xxxx`，见 `datasource/__init__.py` 的优先级说明），而差量删除会把
 #: "没取到"当成"已退市"**删掉**。实测踩过：切成 pytdx 主源的那一次，`deleted=351`。
 #: 失去的只是"自动清退市代码"这一点便利，换来的是"取数不全也不会静默删数据"。
+#: ⚠️ **`index_list` 同理不入列**（同 `stock_list` 的理由）：pytdx 枚举不全
+#: （1221 条 vs 4.4 的 1291 条），差量删除会把"没取到"当成"已下架"删掉。
 DELTA_DELETE = {'stock_info'}
 
 
@@ -333,6 +341,63 @@ def _authoritative_codes(verbose: bool = False, echo=None) -> list:
     if verbose:
         (echo or print)(f'[refdata] 以 stock_list 为准的标的宇宙: {len(codes)} 只')
     return codes
+
+
+def save_index_list_from44(dry_run: bool = False, verbose: bool = True,
+                          echo=None) -> dict:
+    """把 4.4 的 `quantaxis.index_list` **补**进 8.3 的 `index_list`（**只补缺**）。
+
+    **为什么需要这一步**：`index_list` 在 4.4 里是 1291 行，迁移时**整张漏了**
+    （8.3 此前根本没有这张表），于是 `kline83._display_name` 对真指数一直回落成
+    代码 —— 用户 2026-10-11 实报「标的：301308（301308）」时顺带发现的。
+
+    现在 `--save tdx` 能从 pytdx 取到 **1221** 条（见
+    `pytdx_source.fetch_index_list`，零误选），但那 70 条**只在 4.4 里**的
+    指数（TDX 已下架）取不回来 —— 本函数就是补那一段。
+
+    ⚠️ **只补缺、不覆盖**（区别于 `save_refdata` 的 upsert）：
+    4.4 的 `pre_close` 是 2026 年那一版、早已过期，拿它盖掉 pytdx 刚取的新值
+    是净损失。只补缺还让本函数的**执行顺序无关** —— `--save tdx` 之前跑、
+    之后跑，结果一样。
+
+    :returns: ``{'read':…, 'written':…, 'exists':…, 'skipped':…}``
+    """
+    from GolemQ.core.migrate44 import db44
+    say = echo or print
+    coll = GOLEMQ_STOCK_CN['index_list']
+    have = {d['code'] for d in coll.find({}, {'_id': 0, 'code': 1})}
+    rows = list(db44('quantaxis').index_list.find({}, {'_id': 0}))
+    out = {'read': len(rows), 'written': 0, 'exists': 0, 'skipped': 0}
+    docs = []
+    for r in rows:
+        code = r.get('code')
+        if not code:
+            out['skipped'] += 1
+            continue
+        if code in have:
+            out['exists'] += 1
+            continue
+        # 键序与 `pytdx_source.TdxSource._row` 对齐；`source` 标明来路
+        docs.append({'code': str(code),
+                     'volunit': r.get('volunit'),
+                     'decimal_point': r.get('decimal_point'),
+                     'name': r.get('name'),
+                     'pre_close': r.get('pre_close'),
+                     'sse': r.get('sse'),
+                     'sec': r.get('sec') or 'index_cn',
+                     'source': 'quantaxis-4.4'})
+    if dry_run:
+        out['written'] = len(docs)
+        say('[index_list] 干跑：读 {} / 可补 {} / 已存在 {} / 丢弃 {}（【没有写库】）'
+            .format(out['read'], len(docs), out['exists'], out['skipped']))
+        return out
+    if docs:
+        coll.insert_many(docs, ordered=False)
+    out['written'] = len(docs)
+    if verbose:
+        say('[index_list] 4.4 补缺：读 {} / 写入 {} / 已存在 {} / 丢弃 {}'.format(
+            out['read'], out['written'], out['exists'], out['skipped']))
+    return out
 
 
 def save_refdata(collections=None, source: str = None, codelist=None,

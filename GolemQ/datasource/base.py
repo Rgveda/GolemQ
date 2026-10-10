@@ -24,14 +24,19 @@ from __future__ import annotations
 
 import abc
 
-# 5 个参考集合的规范名。全项目以此为准，不要用别名。
+# 6 个参考集合的规范名。全项目以此为准，不要用别名。
 STOCK_LIST = 'stock_list'
 STOCK_INFO = 'stock_info'
 ETF_LIST = 'etf_list'
+#: 指数名单（含**名字**）。⚠️ 与 `ETF_LIST` 分开：ETF 与真指数虽然**共用**
+#: `index_*` 行情集合，但名单是两张表（`etf_list` 有 1694 行、`index_list` 有
+#: 1221+ 行，且**码段不重叠**）—— 合成一张会丢 `sec` 语义。
+INDEX_LIST = 'index_list'
 STOCK_BLOCK = 'stock_block'
 FINANCIAL = 'financial'
 
-ALL_COLLECTIONS = (STOCK_LIST, STOCK_INFO, ETF_LIST, STOCK_BLOCK, FINANCIAL)
+ALL_COLLECTIONS = (STOCK_LIST, STOCK_INFO, ETF_LIST, INDEX_LIST, STOCK_BLOCK,
+                   FINANCIAL)
 
 _REGISTRY: dict = {}
 

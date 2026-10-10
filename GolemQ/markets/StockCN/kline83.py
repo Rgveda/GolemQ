@@ -288,9 +288,58 @@ def _to_kline_frame(df):
     return df.set_index(['ts', 'code']).sort_index()
 
 
+def _display_name(code, market):
+    """标的的**展示名**（`'301308'` → `'江波龙'`）—— 查不到就回**代码本身**，绝不抛。
+
+    ⚠️ **这是补一个移植缺口，不是新功能**：旧树这里调的是
+    ``codename = GQ_fetch_stock_name(codelist)``（**真名字**，见
+    ``GolemQ_old/fetch/kline.py:247``），重构时被简化成 ``codelist[0]`` ——
+    于是凡是把第二个返回值当**名字**显示的地方，全印成 ``301308（301308）``。
+    实证：`ChipDistribution_jit.py:695` 的接收变量名就叫 ``stock_name_faked``。
+
+    三个约束：
+
+    1. **不许抛**。名字是**展示用品**，查不到不该让取数失败。
+    2. **逐个回落**，每一步都是按 `code` 索引的小查询 —— 不在全表上找。
+    3. **按 `market` 选链**：``'stock'`` → ``stock_info`` → ``stock_list``；
+       ``'index'``（ETF 与真指数**共用** `index_*` 集合）→ ``etf_list``。
+
+    ⚠️ **实测（2026-10-11）：`stock_list` 这一跳今天一次都不会触发。**
+    两张表都是 **5579 行、351 个 `name` 为空/null**，且「只在 `stock_list` 里有」
+    的代码 **0 个**、「`stock_info` 取不到而 `stock_list` 能取到」的 **0 个** ——
+    覆盖与缺口**完全一致**。留着它是**防两张表将来分叉**（不同源刷新时很容易），
+    代价只在首次落空时多一次查询。
+    ⇒ 那 351 个代码**无论走哪条链都会回落成代码本身**，三个 demo 上仍显示
+    ``代码（代码）``。要根治得先去补**数据源**，不是在这里加分支。
+
+    ⚠️ **`index` 分支是两条**：真指数在 `index_list`（2026-10-11 新建的表，
+    此前 8.3 根本没有 —— 4.4 那张 1291 行的漏迁了），ETF 在 `etf_list`。
+    两者**码段不重叠**，所以查两次是确定的、不是碰运气。
+    """
+    from . import refdata          # 函数级导入 —— 与 `datastruct._adj_coll` 同一手法
+    readers = ([refdata.GQ_fetch_stock_info, refdata.GQ_fetch_stock_list]
+               if market == 'stock'
+               else [refdata.GQ_fetch_index_list, refdata.GQ_fetch_etf_list])
+    for fetch in readers:
+        try:
+            df = fetch(codes=[code])
+            if not df.empty and 'name' in df.columns:
+                name = df['name'].iloc[0]
+                if isinstance(name, str) and name.strip():
+                    return name.strip()
+        except Exception:                   # noqa: BLE001 —— 见上面第 1 条
+            continue
+    return code
+
+
 def get_kline_price_min(codelist, start=None, market_type=None, frequency='60min',
                         verbose=True, end=None, realtime=True):
     """分钟线读取（8.3 时序）。返回 ``(KlineResult, codename)``。
+
+    ⚠️ **`codename` 是标的的展示名**（``'301308'`` → ``'江波龙'``），**不是代码** ——
+    由 :func:`_display_name` 解析，查不到时**回落成代码本身**（真指数与未知代码
+    都走这条）。旧树返回的也是名字（`GQ_fetch_stock_name`），重构时被简化成代码，
+    2026-10-11 补回。
 
     ``realtime=True``（**默认**）→ **带 REALTIME**：读到的历史再与
     ``realtime_YYYY-MM-DD`` 的 L1 tick 合成（见 :func:`_merge_realtime`）。
@@ -309,7 +358,9 @@ def get_kline_price_min(codelist, start=None, market_type=None, frequency='60min
             print(f'GolemQ Error: 读取 {market}_{frequency} 失败，'
                   f'code={codelist} start={start} end={end}')
         raise
-    codename = codelist[0] if isinstance(codelist, (list, tuple, set)) else codelist
+    # 展示名（旧树给的是真名字，见 :func:`_display_name`）
+    codename = _display_name(codelist[0] if isinstance(codelist, (list, tuple, set))
+                             else codelist, market)
     result = KlineResult(_to_kline_frame(df))
     _apply_adjustments(result, market, codelist, verbose=verbose)
     if realtime:
@@ -323,6 +374,9 @@ def get_kline_price_min(codelist, start=None, market_type=None, frequency='60min
 def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
                        end=None, realtime=True):
     """日线读取（8.3 时序）。返回 ``(KlineResult | None, codename)``。
+
+    ⚠️ **`codename` 是标的的展示名**（``'301308'`` → ``'江波龙'``），**不是代码**；
+    查不到时回落成代码本身。详见 :func:`get_kline_price_min` 的同一条说明。
 
     ⚠️ **先前这里写着「尚未就绪 / 日线未迁移」—— 那条已作废**（2026-10-08 实测：
     `stock_day` 有 **17,893,343** 行、`index_day` 4,564,152 行，日线是迁全了的；
@@ -350,7 +404,9 @@ def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
                   f'code={codelist} start={start} end={end}')
         raise
 
-    codename = codelist[0] if isinstance(codelist, (list, tuple, set)) else codelist
+    # 展示名（旧树给的是真名字，见 :func:`_display_name`）
+    codename = _display_name(codelist[0] if isinstance(codelist, (list, tuple, set))
+                             else codelist, market)
     if df.empty:
         if verbose:
             print(f'GolemQ Warning: {market}_{frequency} 在 8.3 无数据，'

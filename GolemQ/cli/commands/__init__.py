@@ -51,6 +51,7 @@ register([
     save_report.SAVE_STATUS,
     # —— 一次性搬运（连 4.4；`core/migrate44.py` 的唯一消费者）——
     migrate.MIGRATE_TURNOVER,
+    migrate.MIGRATE_INDEX_LIST,
 ])
 
 __all__ = ['COMMANDS', 'Command', 'dispatch', 'no_arguments', 'pick',

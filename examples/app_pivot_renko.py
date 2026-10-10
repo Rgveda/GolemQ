@@ -176,7 +176,11 @@ c3.metric("📦 中枢数", len(pivots))
 c4.metric("🧭 走势类型", cls['kind'])
 c5.metric("🧱 RENKO S / L", f"{_dir_word[s_dir]} / {_dir_word[l_dir]}")
 c6.metric("🎯 RENKO_BAR", _dir_word[bar_sig])
-st.caption(f"标的：{name}（{symbol}）· {frequency} · 末个中枢：**{_last_kind}** · "
+# 展示名由读取器解析（`kline83._display_name`：stock_info → stock_list）。
+# 解析不到时它**回落成代码**（真指数、未知代码、`name` 为空的标的）——
+# 那种情况下别再印一次代码：`301308（301308）` 没有信息量。
+_label = symbol if name == symbol else f'{name}（{symbol}）'
+st.caption(f"标的：{_label} · {frequency} · 末个中枢：**{_last_kind}** · "
            f"末根 S={s_dir:+d} L={l_dir:+d} ⇒ RENKO_BAR={bar_sig:+d}"
            "（RENKO_BAR 只在 S、L **同向**时才非零）")
 

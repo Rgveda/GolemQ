@@ -19,7 +19,8 @@
 `financial`       ❌ ``get_finance_info`` 是**当期快照**，不是报告期归档
 ================  ==========================================================
 
-故本适配器声明 ``collections = (STOCK_LIST, STOCK_BLOCK, STOCK_INFO)``。
+故本适配器声明 ``collections = (STOCK_LIST, INDEX_LIST, STOCK_BLOCK, STOCK_INFO)``
+（`INDEX_LIST` 走的是**同一份全量证券表**的另一套码段，见 `INDEX_CODE_PREFIXES`）。
 不支持的集合走 :class:`UnsupportedCollection` 明确报错，**不返回空列表**。
 
 ⚠️ 更正：曾误判 `stock_info` 拿不到股本
@@ -133,6 +134,7 @@ import random
 import threading
 
 from GolemQ.datasource.base import (
+    INDEX_LIST,
     STOCK_BLOCK,
     STOCK_INFO,
     STOCK_LIST,
@@ -185,6 +187,49 @@ MARKET_CODE_PREFIXES = {
 
 #: 兼容旧名：全部市场前缀的并集（仅用于「像不像股票代码」的粗判）
 STOCK_CODE_PREFIXES = ('00', '30', '60', '68', '82', '92')
+
+#: **指数**码段 —— 与上面那套股票前缀**互斥**（同一份 TDX 全量证券表，
+#: 取补集即可）。⚠️ 这套前缀是**拿 4.4 `index_list` 当标准答案定出来的**
+#: （2026-10-11 实测，不是拍脑袋）：
+#:
+#: ==========  ============  ==============  ==========
+#: 前缀        TDX 选出       其中在 4.4      误选
+#: ==========  ============  ==============  ==========
+#: ``000``         200            200            0
+#: ``399``         354            354            0
+#: ``880``         652            652            0
+#: ``395``          15             15            0
+#: **合计**      **1221**      **1221**        **0**
+#: ==========  ============  ==============  ==========
+#:
+#: ⇒ **零误选**（选出来的每一个都在 4.4 的指数名单里），覆盖 4.4 的 **94.6%**；
+#: 差的那 70 个是 TDX 现在已经下架的指数。`950` 试过，一个都不加。
+#:
+#: ⚠️ `000` 是**最危险**的一段：深市主板股票也是 `00`，但那是**两位**前缀
+#: （`00xxxx`），这里是**三位** `000` —— 沪市 `000xxx` 才是指数，深市 `000xxx`
+#: 是股票。所以本表必须**配合 `MARKET_CODE_PREFIXES` 的取补集**使用，
+#: 不能单独拿去判「是不是指数」。
+INDEX_CODE_PREFIXES = ('000', '399', '880', '395')
+
+
+def _keep_stock(code: str, market: int) -> bool:
+    """股票判据 —— **按市场各自的前缀**（见 `MARKET_CODE_PREFIXES` 的说明）。"""
+    return code.startswith(MARKET_CODE_PREFIXES.get(market, ()))
+
+
+def _keep_index(code: str, market: int) -> bool:
+    """指数判据 —— **必须是「非股票」与「指数码段」的交集**，见下。
+
+    ⚠️ **不能只判 `startswith(INDEX_CODE_PREFIXES)`。** 深市主板的 ``000xxx``
+    是**股票**（平安银行 ``000001``），而它同样以 ``000`` 开头 —— 单判前缀会把
+    深市两千多只主板股票一并当指数收进来。实测这个错法让 `fetch_index_list`
+    从 **1221 涨到 1543**（多出的 322 正是深市 ``000xxx`` 股票）。
+
+    所以判据是**取补集**：先排除该市场的股票码段，再看是不是指数码段。
+    这也正是 `INDEX_CODE_PREFIXES` 注释里那句「必须配合 `MARKET_CODE_PREFIXES`
+    取补集使用」的意思 —— 那句话说对了，第一版代码却没照着写。
+    """
+    return (not _keep_stock(code, market)) and code.startswith(INDEX_CODE_PREFIXES)
 
 #: 板块文件 → GolemQ 的 type 取值
 BLOCK_FILES = {
@@ -273,7 +318,7 @@ def _market_of(code: str) -> str:
 @register
 class TdxSource(DataSource):
     name = 'pytdx'
-    collections = (STOCK_LIST, STOCK_BLOCK, STOCK_INFO)
+    collections = (STOCK_LIST, INDEX_LIST, STOCK_BLOCK, STOCK_INFO)
     #: TCP 协议，无 HTTP 频率限制 —— 显式覆盖 30s 默认值，理由见模块文档。
     default_interval = 0.0
 
@@ -388,6 +433,8 @@ class TdxSource(DataSource):
         self.gate()
         if collection == STOCK_LIST:
             return self.fetch_stock_list(**kwargs)
+        if collection == INDEX_LIST:
+            return self.fetch_index_list(**kwargs)
         if collection == STOCK_INFO:
             return self.fetch_stock_info(**kwargs)
         return self.fetch_stock_block(**kwargs)
@@ -399,6 +446,53 @@ class TdxSource(DataSource):
 
         过滤按 4.4 `quantaxis.stock_list` 实测的前缀分布反推，
         保证新库的标的集合与既有数据一致 —— 不是拍脑袋定的范围。
+        """
+        return [self._row(c, r, sse, 'stock_cn', self.name)
+                for c, r, sse in self._iter_security_rows(_keep_stock, markets, verbose)]
+
+    def fetch_index_list(self, markets=None, verbose=False) -> list:
+        """全市场**指数**名单（码 + 名字）—— 供参考集合 `index_list`。
+
+        用的就是 `fetch_stock_list` 那份 TDX 全量证券表，**只换过滤判据**
+        （见 `INDEX_CODE_PREFIXES`；那套前缀是拿 4.4 `index_list` 当**标准答案**
+        定出来的：选出 1221 个、**零误选**、覆盖 4.4 的 94.6%）。
+
+        ⚠️ 这一路是**新树补的**：4.4 时代指数名单来自 `quantaxis.index_list`
+        （1291 行，4.4 停用后没有来源），8.3 **此前根本没有这张表** ——
+        所以 `kline83._display_name` 对真指数一直回落成代码（用户 2026-10-11 实报）。
+        """
+        return [self._row(c, r, sse, 'index_cn', self.name)
+                for c, r, sse in self._iter_security_rows(_keep_index, markets, verbose)]
+
+    # ---- 取数用的共用枚举 ----------------------------------------------
+
+    @staticmethod
+    def _row(code, r, sse, sec, source) -> dict:
+        """TDX 证券行 → 8.3 参考集合文档。两个 fetcher 共用**同一份键序**。"""
+        return {
+            'code': code,
+            'volunit': r.get('volunit'),
+            'decimal_point': r.get('decimal_point'),
+            'name': r.get('name'),
+            'pre_close': r.get('pre_close'),
+            'sse': sse,
+            'sec': sec,
+            'source': source,
+        }
+
+    def _iter_security_rows(self, keep, markets=None, verbose=False):
+        """TDX **全量证券表** → 生成 ``(code, row, sse)``，按 `keep(code, market)` 过滤。
+
+        `fetch_stock_list` 与 `fetch_index_list` **共用这一份枚举** ——
+        两者只差一个过滤判据。
+
+        ⚠️ **连接侧的那些坑只写在这里一遍**（北交所毒化连接、`gate()` 限速、
+        1000 一条分页）。复制到第二个取数函数里就会分叉，而分叉之后的
+        「只在一处修好」没人在查。
+
+        ⚠️ **去重必须在 `keep` 之后。** 同一 6 位码可以跨市场出现，而两个市场的
+        判据不同 —— 先按市场过滤、再去重，才是原来的行为。反过来写会让某只票
+        在过滤阶段被**另一市场**的同名码占位而**整只丢掉**。
         """
         api = self._connect()
         from pytdx.params import TDXParams
@@ -422,10 +516,8 @@ class TdxSource(DataSource):
             (TDXParams.MARKET_SH, 'sh'),
         )
 
-        rows: list = []
         seen: set = set()
         for market, sse in market_enum:
-            allowed = MARKET_CODE_PREFIXES.get(market, ())
             try:
                 total = api.get_security_count(market)
             except Exception:
@@ -444,7 +536,7 @@ class TdxSource(DataSource):
                     # **按市场各自的前缀**过滤，不是统一前缀 —— 见
                     # MARKET_CODE_PREFIXES 的说明：沪市 00xxxx 是指数，
                     # 与深市股票同码，统一前缀会制造重复与张冠李戴。
-                    if not code.startswith(allowed):
+                    if not keep(code, market):
                         continue
                     if code in seen:
                         # 同码跨市场（理论上修好前缀后不该出现）—— 保留先到的
@@ -453,17 +545,7 @@ class TdxSource(DataSource):
                             print(f'[pytdx] 重复 code {code}（{sse}）已跳过')
                         continue
                     seen.add(code)
-                    rows.append({
-                        'code': code,
-                        'volunit': r.get('volunit'),
-                        'decimal_point': r.get('decimal_point'),
-                        'name': r.get('name'),
-                        'pre_close': r.get('pre_close'),
-                        'sse': sse,
-                        'sec': 'stock_cn',
-                        'source': self.name,
-                    })
-        return rows
+                    yield code, r, sse
 
     # ---- stock_info ----------------------------------------------------
 

@@ -172,7 +172,11 @@ c2.metric("🧱 砖块数", f"{len(bricks) - 1:,}" if len(bricks) else "0")
 c3.metric("📏 砖高", "—")
 c4.metric("🅂 S 族", _sig.get(s_dir, s_dir))
 c5.metric("🅻 L 族", _sig.get(l_dir, l_dir))
-st.caption(f"标的：{name}（{symbol}）· {frequency} · 砖高 {brick:.4g}"
+# 展示名由读取器解析（`kline83._display_name`：stock_info → stock_list）。
+# 解析不到时它**回落成代码**（真指数、未知代码、`name` 为空的标的）——
+# 那种情况下别再印一次代码：`301308（301308）` 没有信息量。
+_label = symbol if name == symbol else f'{name}（{symbol}）'
+st.caption(f"标的：{_label} · {frequency} · 砖高 {brick:.4g}"
            f"（{'自动 ATR 中位数' if brick_mode.startswith('自动') else '手动'}）"
            f" · 砖块图 {len(bricks) - 1} 块 / 特征 {len(feats)} 行")
 

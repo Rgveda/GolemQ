@@ -141,7 +141,11 @@ c1.metric("📊 K 线数", f"{len(df):,}")
 c2.metric("✏️ 笔数", bi_count)
 c3.metric("📦 中枢数", len(pivots))
 c4.metric("🧭 走势类型", cls['kind'])
-st.caption(f"标的：{name}（{symbol}）· {frequency} · "
+# 展示名由读取器解析（`kline83._display_name`：stock_info → stock_list）。
+# 解析不到时它**回落成代码**（真指数、未知代码、`name` 为空的标的）——
+# 那种情况下别再印一次代码：`301308（301308）` 没有信息量。
+_label = symbol if name == symbol else f'{name}（{symbol}）'
+st.caption(f"标的：{_label} · {frequency} · "
            f"上涨中枢 {cls['n_up']} 个 / 下跌中枢 {cls['n_down']} 个")
 
 # --------------------------------------------------------------------------- #

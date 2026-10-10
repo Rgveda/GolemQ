@@ -337,3 +337,33 @@ ETF 也进 `index_day`/`index_min`」；`symbol.py` 两处 ETF 分支至今留�
 - 未做运行验证（无 MongoDB / RabbitMQ 实例，且 stub 会让多数路径提前失败）
 - 未审 `cookbooks/`、`.claude/`、构建配置
 - 未逐个核对 Python 3.12 / Pandas 3.0 API 兼容性
+
+---
+
+## 新发现：`880xxx` 等指数读取路由错误（2026-10-11，**未修**）
+
+**症状**：`get_kline_price_v3('880993')` 返回 `None` —— 而它的日线与 60min
+**数据是在的**（在 `index_day` / `index_60min` 里）。
+
+**根因**：`markets/StockCN/symbol.py` 的号段表（`_SH_SEGMENTS` / `_SZ_SEGMENTS` /
+`_BJ_SEGMENTS`）**没有 `880` / `950` / `999`** ⇒ `kline83._market_prefix('880993')`
+返回 `'stock'` ⇒ 读取器去读 `stock_day` / `stock_60min` ⇒ **读空**。
+
+**实测**：
+
+| | |
+|:--|:--|
+| `_market_prefix('880993')` | `'stock'` ← 应为 `'index'` |
+| `880993` 在 `index_day` / `index_60min` | **有数据** |
+| `880993` 在 `stock_day` / `stock_60min` | 无 |
+| `index_list` 里 `880xxx` 的数量 | **689**（占指数名单 **53%**）|
+| 同样错分的 | `950xxx`、`999xxx` |
+
+**为什么没顺手修**：它改的是**读取路由**（读哪张表），影响面比「显示名字」大
+（用户 2026-10-11 的请求是后者）。且 `symbol.py` 有自己的用例
+（`test_symbol_classify.py`），改动要走那套判据。
+
+**修法方向**：给号段表补 `880`/`950`/`999` → `MARKET_TYPE.INDEX_CN`，
+并与 `pytdx_source.INDEX_CODE_PREFIXES`（`000/399/880/395`）**对齐一次** ——
+两处都在描述"哪些码段是指数"，天然会分叉，改的时候要一起看。
+⚠️ `880`/`950`/`999` 的**交易所归属**要先查清（`sse` 字段），别照抄号段。
