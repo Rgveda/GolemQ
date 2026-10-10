@@ -1635,13 +1635,20 @@ stub = 还没写，dummy = 故意是假的）。
   老树里的平行实现，本模块**只留一份**）、`calc_peak_points`（两输入加权 `9 - i` 合成）。
 * ⚠️ `TREND_STATUS.PEAK_POINT` 新树**原先没有**，已按旧树真值补进 `core/constants.py`。
 
-#### ④ ⚠️ 待你决定：`numba` 要不要进 `MIN_PACKAGES`
+#### ④ ✅ 用户已定：`numba` **写进 `MIN_PACKAGES`**（2026-10-10）
 
 `analysis/peak.py` 与 `analysis/regtree_jit.py` 是**新树第一次用 numba**（此前全树 0 import）。
 两个模块的 import 都是**惰性**的：缺 numba 时 `available()` 报 False、`peak.py` 退回纯实现、
 `regtree_jit` 抛 `RuntimeError` —— 所以**不加也能跑**。
 要不要写进 `cli/bootstrap.py` 的 `MIN_PACKAGES`（那份是全树唯一的运行期依赖声明处），
-取决于你想不想让自检**强提示**它缺失。**我没动。**
+**用户 2026-10-10 定：写进去**，门槛取 `'0.61'` —— 那是**实测过**的版本（0.61.0 + numpy 2.1.3；
+jit 与纯实现在 `test_peak` 11 条 + `test_regtree_jit` 6 条上逐值一致）。**不写没验过的更低版本**。
+
+⚠️ **写进去 = 它进了 `ENV_GATE_NODES` 的 `依赖包` 节点 ⇒ 缺 numba 时 CLI 硬拦**（只有四条修配置
+命令放行）。这与它「**可选加速器**、缺了能降级」的性质**相冲突** —— 已在 `bootstrap.py` 那一行的
+注释里写明；若哪天想改成「只提示不拦」，挪到 `OPTIONAL_SOURCES` 那一侧即可（那里是灰点、不拦启动）。
+
+自检实测：`numba 0.61.0（要求 >= 0.61）` ✓；bootstrap 相关用例 67 条全过。
 
 #### ⑤ 验收
 
