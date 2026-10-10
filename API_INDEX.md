@@ -134,6 +134,18 @@ regtree 的 numba 加速版（analysis/regtree.py 的 jit 对照实现）。
 | f | `renko_in_cluster_group(data, indices, maxlength)` | 按 maxlength 分窗，用 ATR 定界 + 布伦特法搜每窗的最优砖高。 |
 | f | `renko_trend_cross_func(data, indices)` | 使用 Renko brick 砖块图进行趋势判断 —— 写 FLD.RENKO_* 一族列。 |
 
+### `renko_jit`
+renko 的 numba 加速版（analysis/renko.py 的 jit 对照实现）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `available()` | numba 在不在。 |
+| f | `renko_jit_status()` | 排障用：numba 版本 + jit 是否真的开了（DISABLE_JIT 环境变量会关掉它）。 |
+| f | `bricks_directions(prices, brick_size)` | :func:_kernels 的公开封装 —— 算容量、跑核、溢出就抛。 `[dt]` |
+| f | `evaluate_renko_jit(brick, history, column_name)` | :func:renko.evaluate_renko 的 jit 版 —— 返回值逐值相同。 `[dt]` |
+| f | `renko_in_cluster_group_jit(data, indices, maxlength)` | :func:renko.renko_in_cluster_group 的 jit 版 —— 只有目标函数不同。 |
+| f | `renko_trend_cross_func_jit(data, indices)` | :func:renko.renko_trend_cross_func 的 jit 版。 |
+
 ### `timeseries`
 时间序列工具 —— 多频重采样与时间轴对齐。
 
@@ -1875,6 +1887,30 @@ analysis/renko.py —— 与旧树 indices/renko.py 的逐值对拍。
 | f | `TestNoQuantaxisLeaked.test_no_quantaxis_import()` |  |
 | f | `TestNoQuantaxisLeaked.test_no_quantaxis_symbol_in_code()` |  |
 | f | `TestNoQuantaxisLeaked.test_no_print_call_in_code()` | 旧树活链有 6 处 print；用户 2026-10-10「不需要打印了」—— 全部已删。 |
+
+### `test_renko_jit`
+analysis/renko_jit.py —— jit 版与 renko.py 的逐值对拍。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestBricksDirectionsMatches` | jit 核 vs class renko.__renko_rule —— 逐字复刻，逐值相同。 |
+| f | `TestBricksDirectionsMatches.test_capacity_estimation_is_not_the_bar_count()` | ⚠️ 回归用例：砖数不是 O(bar 数)。 |
+| f | `TestBricksDirectionsMatches.test_reversal_with_gap_one_pushes_nothing()` | 反向且 |gap| == 1 ⇒ 一块都不推（旧实现 is_new_brick 留 False 的分支）。 |
+| f | `TestBricksDirectionsMatches.test_matches_on_handmade_and_random_cases()` |  |
+| f | `TestBricksDirectionsMatches.test_zero_brick_raises_like_python()` | brick_size == 0 显式抛 ZeroDivisionError —— 与纯 Python 的 float/0.0 对齐。 |
+| C | `TestEvaluateMatches` | 目标函数逐值相同 —— 它差一点，fminbound 就会搜到另一个砖高。 |
+| f | `TestEvaluateMatches.test_bit_identical()` |  |
+| f | `TestEvaluateMatches.test_all_columns_of_the_metric_dict()` | 四个键都要能取（含那个带冒号的 'sign_changes:'）。 |
+| f | `TestEvaluateMatches.test_price_ratio_below_one_gives_minus_one()` | 砖数多于 bar 数 ⇒ price_ratio < 1 ⇒ 恒 -1.0（两种实现都如此）。 |
+| C | `TestEndToEndMatches` | 端到端 14 列逐值相同 —— 这才是那份重复拷贝的唯一验收。 |
+| f | `TestEndToEndMatches.test_all_columns_bit_identical()` |  |
+| f | `TestEndToEndMatches.test_output_is_not_all_empty()` | ⚠️ 防"两边都静默早退"造成的假通过 —— 结果必须真有内容。 |
+| f | `TestEndToEndMatches.test_multiwindow_case_is_covered()` | ⚠️ >1200 bar 才走多窗口分支（fminbound 被调两次）—— 别只测单窗口。 |
+| f | `TestEndToEndMatches.test_short_input_contract_unchanged()` |  |
+| C | `TestSpeedup` | 加速要有数字（用户口径）。这里只做松断言：CI 机器抖动不该让用例红。 |
+| f | `TestSpeedup.test_jit_is_at_least_two_times_faster()` |  |
+| C | `TestStatusWithoutNumba` | renko_jit_status / available 不管 numba 在不在都要能答。 |
+| f | `TestStatusWithoutNumba.test_status_shape()` |  |
 
 ### `test_stock_cn`
 

@@ -1902,3 +1902,68 @@ ATR 中位数砖高；特征列的 S 族用同一套砖高，但 **L 族按 1200
   两者**砖身高度全部 == 砖高** ✓
 * `auto_register_markets()` 默认**零输出**、`verbose=True` 正常打印，**注册本身不受影响** ✓
 * 全量回归 **516 通过 / 0 失败**（见下一条提交）
+
+---
+
+### ✅ `analysis/renko_jit.py` —— RENKO 的 numba 加速版（2026-10-10，用户要求）
+
+用户问「Renko 能用 JIT 优化吗？」→ 给了数字后：「这个模式加一个 `analysis/renko_jit.py`」。
+
+#### ① 先量基线，再决定打哪儿（**结论与直觉相反**）
+
+| 层 | 1200 bar | 2400 bar | 占端到端 |
+|:--|--:|--:|--:|
+| `renko_chart` | 0.03 ms | 0.08 ms | **0.3%** |
+| `evaluate_renko` | 1.46 ms | 4.35 ms | —（被调 **17 / 39** 次）|
+| `renko_in_cluster_group` | 24.2 ms | 47.3 ms | **83.6% / 88.3%** |
+| 端到端 | 29.0 ms | 53.5 ms | 100% |
+
+⚠️ **要打的不是 `renko_chart`** —— 旧树**早就**给它挂上 `@nb.jit` 了（那是已经做过
+的一轮优化），而实测它只占 **0.3%**。真正的大头是 `fminbound` 的**目标函数**：
+每个 1200 bar 窗口跑一次 fminbound，**每次迭代**都在纯 Python 里重建整条砖序列。
+迭代次数是算法固有的（`xtol≈1.5e-8`，实测 17~39 次）—— 省不掉，只能让每次迭代变快。
+
+#### ② 做了什么（照 `regtree_jit` 的模式）
+
+**只把热点搬进 jit，`renko.py` 一个字不动**（它是逐字对拍过的保真搬运，
+给它挂装饰器就是把「对拍基准」本身改掉）。新增：
+
+* `bricks_directions(prices, brick_size)` —— `__renko_rule` 的逐字复刻，只产出方向
+* `evaluate_renko_jit(brick, history, column_name)` —— fminbound 的目标函数
+* `renko_in_cluster_group_jit` / `renko_trend_cross_func_jit` —— 端到端
+
+#### ③ 三处刻意的偏离（都写进模块 docstring）
+
+1. **只算 `directions`**：`evaluate()` 只需要方向数组 + 两个长度，
+   影线/gaps/`source_aligned` 一概不算（那些是另案 `calc_renko_atr_vX` 要的）。
+2. **预分配 + 溢出检测，绝不静默截断**（见下条，这是真踩到的坑）。
+3. **`brick_size == 0` 显式抛 `ZeroDivisionError`** —— 与纯 Python 的 `float/0.0`
+   对齐；numba 里 `int(inf)` 是未定义行为，不拦就分叉。
+
+#### ④ ⚠️ 原型里踩到并修掉的一个**真错误**：容量按 `n+16` 估
+
+**砖数不是 O(bar 数)**：一次 `1 → 100` 的跳空配 `0.01` 的砖高 ⇒ **9901 块砖**，
+而 bar 只有 **2**。原型按 `n+16` 开缓冲区并 `break` —— **静默截断成 18 块**，
+而随机游走的对拍**恰好没触发它**（真正的触发场景是低波动 + 小砖高，可转债/ETF 常见）。
+
+现在容量按**总变差** `Σ|Δp| / 砖高` 估（每推进一块砖至少耗掉一个砖高的价格行程），
+且核内 `m` **照数不误**、越界只不写，由封装层发现后**抛错**，绝不返回不完整序列。
+`test_renko_jit.py::test_capacity_estimation_is_not_the_bar_count` 把这个形状钉死。
+
+#### ⑤ 验收（判据一律 `array_equal`，**不许用容差**）
+
+⚠️ **为什么不能用容差**：`fminbound` 是**迭代收敛**的，目标函数差 1 ulp，
+搜索路径就可能落到另一个 `optimal_brick_sfo` ⇒ L 族整套砖界全变。
+`assert_allclose` 会把「搜到了另一个极值点」当成通过。
+
+* `bricks_directions`：**11/11** 例逐值相同（含跳空 9901 块、反向 `|gap|==1` 一块不推）
+* `evaluate_renko_jit`：**8/8** 逐值相同；四个键（含带冒号的 `'sign_changes:'`）都对
+* **端到端 14 列**：合成 n=200/420/1300 + 真实 600/2059，**5/5 组全部逐值相同** ✓
+* 加速实测：**5.0×（1200 bar）/ 6.8×（2059 bar）**（与推算的 ~6× 吻合）
+* 新增 `test_renko_jit.py` 13 条 + doctest 2 条；全量回归见提交
+
+#### ⏳ 这份收益是**前瞻性**的
+
+单标的 29 ms 对人眼毫无差别。它有意义的场景是**全市场批处理**：
+5579 只 × ~2000 bar，53 ms → ~8 ms，即 **~5 分钟 → ~45 秒**。
+而消费方（`fractal/v0–v7,v9`）**还没搬到新树**。

@@ -94,6 +94,10 @@ DOCTEST_MODULES = (
     # ⚠️ 本模块**模块级**导入 numba/scipy/talib（三者都在 MIN_PACKAGES），
     # 所以收集它比别的条目慢一点点 —— 但不需要 DB 与网络，仍是 hermetic 的。
     'GolemQ.analysis.renko',
+    # RENKO 的 jit 版：`bricks_directions` 与 `evaluate_renko_jit` 是纯 numpy in/out。
+    # ⚠️ numba 是**惰性** import（`_nb()`），但这两条 doctest 真会调它 ——
+    # 收集本模块不需要 numba 在场，**跑这两条**需要（与 `regtree_jit` 同理）。
+    'GolemQ.analysis.renko_jit',
 )
 
 

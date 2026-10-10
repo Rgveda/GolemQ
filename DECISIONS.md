@@ -1544,3 +1544,46 @@ models 线用 `renko` 类的 `source_aligned`。
 它**通常恰好是 0**（新页），只在分配路径变化时露出 `9.2e-312` 这类真实垃圾 ——
 对拍就是这么抓到它的。**保真保留**（消费方是另案的 `calc_renko_atr_vX`），
 已在模块 docstring「已知缺陷」第 4 条记明。
+
+---
+
+## D36. RENKO 加速：**另写一份 jit 对照实现**，`renko.py` 一个字不动 —— 2026-10-10
+
+**背景**：用户问「Renko 能用 JIT 优化吗？」。先量基线（实测 `000711` 60min）：
+
+| 层 | 1200 bar | 占端到端 |
+|:--|--:|--:|
+| `renko_chart` | 0.03 ms | **0.3%** |
+| `evaluate_renko`（fminbound 的目标函数）| 1.46 ms × 17 次 | — |
+| `renko_in_cluster_group` | 24.2 ms | **83.6%** |
+| 端到端 | 29.0 ms | 100% |
+
+⚠️ **要打的不是 `renko_chart`** —— 旧树早已给它挂 `@nb.jit`，那是做过的一轮优化。
+真热点是 `fminbound` 的目标函数（每次迭代纯 Python 重建整条砖序列），
+而迭代次数是算法固有的（`xtol≈1.5e-8`，实测 17~39 次），省不掉。
+
+**决策**：照 `regtree_jit` 的模式，**新增 `analysis/renko_jit.py`，`renko.py` 一个字不动**。
+
+理由：
+1. `renko.py` 是**逐字对拍过**的保真搬运（旧树 `indices/renko.py`，见 D35）。
+   给它挂 `@njit` = 把「对拍基准」本身改掉 —— 之后**再没有东西可以比对**。
+   `class renko` 的状态全在 Python list 里、`build_history` 边走边 `append`，
+   numba 不支持这种结构。
+2. 于是只把热点搬进 jit：`bricks_directions`（`__renko_rule` 的逐字复刻）、
+   `evaluate_renko_jit`（目标函数）、以及端到端两个 `*_jit`。
+
+**代价（用户知情）**：`renko_in_cluster_group_jit` 与 `renko_trend_cross_func_jit`
+是 `renko.py` 同名函数的**近似拷贝**。之所以不共用，是因为那两个函数把
+`evaluate_renko` / `renko_in_cluster_group` 当**模块全局**取用，没有注入口。
+**平行实现不会报错，只会分叉** ⇒ 唯一防线是**逐值对拍**（`test_renko_jit.py`），
+且判据**不许用容差**：`fminbound` 是迭代收敛的，目标函数差 1 ulp 就可能落到另一个
+`optimal_brick_sfo`，L 族整套砖界随之全变。
+
+**实测**：端到端 **5.0×（1200 bar）/ 6.8×（2059 bar）**；
+14 列在合成 n=200/420/1300 与真实 600/2059 上**全部逐值相同**。
+上限就是 ~6×（剩下的是 pandas 特征装配 + `renko_chart` 的 0.3%）。
+
+**顺带记一条**：原型按 `n + 16` 估缓冲区是**错的** —— 砖数不是 O(bar 数)
+（一次 `1→100` 跳空配 `0.01` 砖高 = **9901 块砖**，而 bar 只有 2），
+那会**静默截断**，而随机游走的对拍恰好没触发。现改为按总变差 `Σ|Δp|/砖高` 估容量
++ 核内计数 + 越界**抛错**，并有专门用例钉住。
