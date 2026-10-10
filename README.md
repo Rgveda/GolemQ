@@ -90,7 +90,7 @@ df = res.data        # MultiIndex (ts, code)，已前复权
 | 1 | `PITFALLS.md` | 已知陷阱（看起来像 bug 的刻意设计，**勿“修正”**） |
 | 2 | `DECISIONS.md` | 架构决定与**弃案理由** |
 | 3 | `GLOSSARY.md` | 行话（第四节几乎全是老代码继承） |
-| 4 | `API_INDEX.md` | 110 模块的导航索引 |
+| 4 | `API_INDEX.md` | 模块导航索引（名称 + 一行摘要，由 `tools/gen_api_index.py` 生成）|
 | 5 | `RESTRUCTURE_PLAN.md` / `MIGRATION_STATUS.md` | 重构方案与遗留缺陷 |
 
 ## 测试

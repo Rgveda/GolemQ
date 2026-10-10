@@ -33,6 +33,29 @@
 
 ## GolemQ.analysis
 
+### `_zs`
+缠论中枢识别的算法核心（find_zs）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `find_zs(points)` | 输入笔或线段标记点，输出中枢识别结果。 `[dt]` |
+
+### `pivot`
+缠中说禅 走势中枢（pivot，盘整箱体）识别与绘制
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `bi_confirm_map(bars, max_bi_count, verbose)` | 逐 bar 回放 CZSC，得到每根笔端点（bi.fx_b.dt）首次成为末笔的时间。 |
+| f | `bi_list_to_points(bi_list, conf_map)` | 把 czsc 的笔列表（BI 对象）转成 find_zs 所需的标记点序列。 |
+| f | `calc_pivots(bi_list, points, conf_map, strict)` | 计算缠论走势中枢（盘整中枢 / pivot）。 |
+| f | `classify_pivots_per(pivots)` | 逐中枢判断走势类型——走到每个中枢结束时重新判一次（因果）。 |
+| f | `classify_pivots(pivots)` | 判断中枢序列构成的走势类型：盘整 / 上涨趋势 / 下跌趋势。 `[dt]` |
+| f | `pivots_to_df(pivots, kind)` | 把中枢列表转成 DataFrame，便于检查与导出。 `[dt]` |
+| f | `causal_pivot_series(pivots, dts, strict)` | 把中枢字段展开为与 dts 对齐的因果（无未来函数）特征列。 `[dt]` |
+| f | `plot_pivots(ax, pivots, x_mapper, x_last, box_color, box_alpha, edge_color, line_width, label, fontsize, strict)` | 在 K 线图上绘制中枢箱体（因果口径，无未来函数）。 |
+| f | `plot_pivots_plotly(fig, pivots, x_last, row, col, box_color, edge_color, line_width, label, show_ggdd, strict)` | 在 Plotly K 线图上绘制中枢箱体（矩形 + GG/DD 因果台阶 + ZG/ZD 标注）。 |
+| f | `attach_pivot_features(features, symbol, max_bi_count, strict)` | 把中枢字段（ZD/ZG/GG/DD/direction）作为列附加到特征 DataFrame 上。 |
+
 ### `timeseries`
 时间序列工具 —— 多频重采样与时间轴对齐。
 
@@ -424,7 +447,7 @@ K 线获取的门面 —— 不含任何市场知识，一律调度到市场实�
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `resolve_market(market)` | 把 market 参数解析成市场实例。 `[dt]` |
-| f | `get_kline_price_min(symbol, start, end, verbose, realtime, market)` | 分钟线。market 省略则用当前激活市场。 |
+| f | `get_kline_price_min(symbol, start, end, verbose, realtime, market, frequency)` | 分钟线。market 省略则用当前激活市场。 |
 | f | `get_kline_price_v3(symbol, start, end, verbose, realtime, market)` | 日线。market 省略则用当前激活市场。 |
 
 ## GolemQ.gateway.xtquant
@@ -499,7 +522,7 @@ K 线获取的门面 —— 不含任何市场知识，一律调度到市场实�
 | f | `BaseMarket.get_stock_codes()` | 获取该市场全部股票代码 |
 | f | `BaseMarket.get_kline_quotes(code, start, end, fq)` | 获取单只股票日线历史行情 |
 | f | `BaseMarket.get_kline_quotes_min(code, start, end, frequency, fq)` | 获取单只股票分钟线历史行情 |
-| f | `BaseMarket.get_kline_price_min(codelist, start, end, verbose, realtime)` | 分钟线。返回 (结果对象, codename)。 |
+| f | `BaseMarket.get_kline_price_min(codelist, start, end, verbose, realtime, frequency)` | 分钟线。返回 (结果对象, codename)。 |
 | f | `BaseMarket.get_kline_price_v3(codelist, start, end, verbose, realtime)` | 日线。返回 (结果对象 | None, codename)。 |
 | f | `BaseMarket.get_stock_concept_kline(symbol, start, end, freq)` | 概念 K 线。未实现的市场应抛 NotImplementedError —— |
 | f | `BaseMarket.name()` | 返回市场名称 |
@@ -880,6 +903,7 @@ Model alias constants (stub — to be populated).
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | C | `LTT` | LTT alias constants (stub). |
+| C | `ZEN` | 走势中枢（盘整箱体 / pivot）的字段名。 |
 
 ### `massive`
 Massive model constants (stub — to be populated).
@@ -1544,6 +1568,30 @@ K 线保存的本地水位短路（DECISIONS.md D25）。
 | f | `TestNoQuantaxis.test_no_source_import_of_quantaxis()` | ① 源码守卫：GolemQ//*.py 里不许出现 import QUANTAXIS。 |
 | f | `TestNoQuantaxis.test_quantaxis_not_loaded_at_runtime()` | ② 运行时守卫：把入口与市场包导入一遍，sys.modules 里不许有它。 |
 | f | `TestNoQuantaxis.test_dead_handles_stay_dead()` | ③ 符号守卫：那 5 个句柄不许在 settings / core / GolemQ 上复活。 |
+
+### `test_pivot`
+缠论中枢（盘整箱体）的回归用例。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestPivotConsolidation` |  |
+| f | `TestPivotConsolidation.test_single_consolidation_is_found()` |  |
+| f | `TestPivotConsolidation.test_empty_and_tiny_input_do_not_raise()` | 笔数不足成枢时返回空列表 —— 空结果不是错误。 |
+| f | `TestPivotConsolidation.test_requires_one_of_the_two_inputs()` |  |
+| C | `TestPivotClassify` |  |
+| f | `TestPivotClassify.test_kind_per_case()` |  |
+| f | `TestPivotClassify.test_per_pivot_kinds_are_one_way()` | 逐中枢标签只能 盘整 → 趋势，不来回翻转。 |
+| f | `TestPivotClassify.test_pivots_to_df_takes_per_row_labels()` |  |
+| C | `TestPivotInterface` |  |
+| f | `TestPivotInterface.setUp()` |  |
+| f | `TestPivotInterface.test_points_count_is_bi_count_plus_one()` |  |
+| f | `TestPivotInterface.test_bi_list_and_points_agree()` |  |
+| f | `TestPivotInterface.test_mark_normalisation_covers_czsc_enum()` | czsc 给的是 Mark.G / Mark.D，归一化后必须是 'g' / 'd'。 |
+| C | `TestPivotNoLookahead` | 截断历史重算，已走完的中枢不得改变。 |
+| f | `TestPivotNoLookahead.setUpClass()` |  |
+| f | `TestPivotNoLookahead.test_closed_pivots_survive_truncation()` |  |
+| C | `TestPivotRealData` |  |
+| f | `TestPivotRealData.test_000711_60min_end_to_end()` |  |
 
 ### `test_presentation_banner`
 core/presentation.py 的状态 banner —— 纯渲染、显示宽度、光标行数记账、三态。

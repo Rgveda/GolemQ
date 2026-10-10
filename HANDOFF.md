@@ -669,7 +669,7 @@ QUANTAXIS 的 `.query('volume>1')` 把三者混为一谈，等于**每天都在�
 | 5 | **小时级 metadata 的归属** | 读函数按 `time_stamp` 过滤、写目标集合不存在 —— 先定它住哪 |
 | 6 | **MongoDB 起一下**（当前 27017 超时、无服务、默认路径无 `mongod.exe`）| **阻塞 E 的数据拆分**与三项验证（数值基准、拆分后对照、端到端复权一次）。代码半边已完成 |
 | 7 | **E 的两处路由变更要不要随之搬数据** | `200–209`（`index_*`→`stock_*`）、`161–169`/`184`（`stock_*`→`index_*`）。查库定；若无数据则纯属分类修正 |
-| 8 | **门面要不要暴露 `frequency`**（2026-10-10 新发现，见文末） | **(a)** 把 `frequency` 提到 `base_market` 契约 + `fetch/kline.py` 门面（两市场各一处、默认沿用 `'60min'`，**是 API 变更**）；**(b)** 维持现状，需要细频率的消费方直调 `kline83`；**(c)** 顺手把那个可疑的默认 `'60min'` 一并定掉 |
+| 8 | ~~**门面要不要暴露 `frequency`**~~ | ✅ **已做（2026-10-10，选 (a)）** —— 见文末「门面加 frequency」一节 |
 
 ### ✅ 两处「低垂果实」**已做掉**（2026-09-25）
 
@@ -1117,3 +1117,108 @@ setuptools ≥ 77，本环境是 **69.1.1** ⇒ 旧式才不打 warning。
 **没有擅自加形参**——那是跨「契约 + 两市场 + 门面」的 API 变更，要走「四问」第 4 步的
 三个定位问题。已列入「待你决定」**#8**。
 ⚠️ 顺带记下 `kline83` 的默认是 **`'60min'`**（别的读口默认日线）—— 这个默认值是否合理一并待定。
+
+---
+
+### ✅ czsc 中枢层搬进 `analysis/` + `examples/` 演示（2026-10-10）
+
+**任务**：照旧树 `app_pivot.py` 做一份用 **8.3** 的 streamlit 演示，依赖的分析代码搬进
+`analysis/`，并重构成新树/新库版本。
+
+#### ① 一个决定性的实测：czsc **0.7.x 里没有中枢(ZS)实现**
+
+| 查了什么 | 结果 |
+|:--|:--|
+| `importlib.metadata.version('czsc')` / `czsc.__version__` | **0.7.10**（用户先说 0.7.1，实测后更正为 0.7.10）|
+| `CZSC` 实例公开属性 | `bars_raw / bars_ubi / bi_list / finished_bis / freq / get_signals / last_bi_extend / max_bi_count / signals / symbol / update` —— **无 `zs_list`**、无 `xd_list` |
+| 全包扫 `def|class` 带 `ZS|zhongshu|中枢` | **0 命中**；`czsc.analyze` 只有 `BI / FX / CZSC / FakeBI` |
+| `from czsc.analyze import find_zs` | **ImportError** |
+
+⇒ 旧树那套中枢**从来不是 pip czsc 给的**：分笔来自 pip czsc，中枢来自旧树自带的
+**vendored czsc 0.5.8** 的 `find_zs` + 我们自己的 `czsc/pivot.py`。
+**0.7.10 上这一层是空缺的。**
+
+#### ② 搬了什么（按「只搬 czsc 核心代码」）
+
+| 新落点 | 来自 | 行数 |
+|:--|:--|--:|
+| `GolemQ/analysis/_zs.py` | 旧树 `czsc/analyze.py` 里**只取 `find_zs` 一个函数** | ~155 |
+| `GolemQ/analysis/pivot.py` | 旧树 `czsc/pivot.py` **整层**（识别/分类/明细/因果关系/两种绘图）| ~690 |
+| `GolemQ/models/alias.py::ZEN` | 旧树 `models/alias.py::ZEN`（6 个字段名，值逐字相同）| +13 |
+| `examples/app_pivot.py` + `examples/README.md` | 旧树 `app_pivot.py` 改写（换 8.3、加频率选择）| 新增 |
+| `GolemQ/test_cases/test_pivot.py` | 旧树 `test_pivot.py` + `test_pivot_lookahead.py` 改写成 unittest | 11 用例 |
+
+⚠️ **0.5.8 包里其余一律未搬**：`KlineAnalyze`、`signals.py`、`cobra/`、`data/`、`utils/`
+（`app_pivot_pl.py` 与 `features/base.py` / `fractal/v8*.py` 用的正是那些，故那几条链在新树仍断）。
+
+#### ③ 搬运的验证：**对拍**（不是「看着对」）
+
+新旧两份跑同一批 **8.3 真数据**，逐字段比 `ZD/ZG/GG/DD/G/D/direction/start_dt/end_dt`：
+
+```
+000711: bars=2623 bis= 78 pivots old=6  new=6  差异=0
+600519: bars=2672 bis=111 pivots old=12 new=12 差异=0
+000001: bars=2672 bis=107 pivots old=8  new=8  差异=0
+600000: bars=2668 bis=  2 pivots old=0  new=0  差异=0   ← 0 中枢的边界样本
+300750: bars=2672 bis=124 pivots old=10 new=10 差异=0
+=== 5/5 只逐字段完全一致 ===
+```
+
+doctest：`_zs.py` 7 条 + `pivot.py` 19 条 = **26 条**，已登记进 `test_doctests.DOCTEST_MODULES`。
+（`pivot.py` 的 czsc 是**函数体内** import，收集时不需要 czsc 在场 —— 那三条 doctest 确实 czsc-free。）
+
+#### ④ 门面加 `frequency`（**关掉「待你决定」#8**）
+
+`frequency=None` = **该市场的默认频率**（不在根层契约里写死 60min，否则就是把 A 股口径
+泄漏进共用层）。改动四处：
+
+| 处 | 改动 |
+|:--|:--|
+| `markets/base_market.py` | 抽象声明加 `frequency=None` + 说明（**只有分钟线有**，日线无此参数）|
+| `markets/StockCN/__init__.py` | 转发；**只在给了才传**（`extra = {} if frequency is None else {...}`）—— 默认值只此一处（kline83 的函数签名），这里再写 `or '60min'` 就是第二份定义 |
+| `markets/StockHK/__init__.py` | stub 签名跟上（反正抛 `NotImplementedError`）|
+| `fetch/kline.py` | 门面加形参并转发 |
+
+**实测**（`000711`，2026-09-01 起，`realtime=False`）：`None` 与 `60min` 都是 **92 根**
+（默认未变），`5min` 1104 / `15min` 368 / `30min` 184 / `1min` 5520 —— 全是 92 的整数倍。
+
+#### ⑤ `examples/app_pivot.py` 的验证
+
+用 Streamlit 官方的 `AppTest` **真正执行脚本**（不是 curl 健康检查）：
+
+| 场景 | 结果 |
+|:--|:--|
+| 默认 000711 / 60min | 无异常；2061 根 / 61 笔 / 6 中枢 / 上涨趋势；明细表 (6,10) |
+| 下拉切 5min | 无异常；4096 根 / 109 笔 / 12 中枢 |
+| 坏标的 999999 | **不崩**，给 `st.warning` |
+
+#### ⚠️ 本轮揪出的两个坑（都不是本轮引入）
+
+1. **`CZSC([])` 抛 `IndexError`**（czsc 0.7.10 的 `analyze.py:228` 直接取 `bars[0].symbol`）
+   ⇒ **「这只票没有数据」会被报成程序错**。演示里已在建 `CZSC` **之前**判空，
+   返回空结构让调用方按「无数据」处理（空结果 ≠ 错误，同 `PITFALLS.md` P1 的精神）。
+   ⚠️ 这是一条**消费侧**的护栏；czsc 那边没动（改了就是改第三方行为）。
+2. **`python -m doctest 文件.py` 会破坏相对 import**（`from ._zs import find_zs` →
+   `attempted relative import with no known parent package`）。要用
+   `doctest.testmod(importlib.import_module(...))` 或走项目的收集器。
+
+#### ⑥ 为什么 `zen_pivot.py` 不搬（用户已定「不搬运」）
+
+`app_pivot_pl.py` 用的那份 polars 重流水线**不是一个 1372 行的文件，是一个约 1.5 万行的依赖图**：
+`models/mainstream.py`(2103) / `features/base.py`(5183) / `models/poolcoef.py`(4293，且新树那份里
+**没有**它要的函数) / `scribe/persistence.py`(1074) / `analysis/quad_gear.py`(680) /
+`utils/parameter.py`(2854)；要 `LTT/RAIL/TRD/ZEN` 四个常量类（新树 `alias.py` 原本只有 `LTT`）、
+`MAS` 一批常量（新树是 stub，取用即抛）、`analysis/timeseries.py` 的三个扫描原语（新树只有
+2 个重采样器）；且它读的 4 个集合 + 传递依赖的 6 个集合，**8.3 里一个都没有**。
+
+⚠️ 还有一条实测事实值得记：`app_pivot_pl.py` 里那份 138 列特征**只被用来显示一个字段数**
+（`f_pl = load_features(symbol)` 在 **L89** 赋值，此后**再无任何消费**；L103 那句
+`len(TARGET_COLS)` 用的是**常量**不是 `f_pl`），从没取列画过图。
+
+⇒ 该链若要复活，属**另案**（先定那批集合在 8.3 的落点）。
+
+#### ⑦ 测试与索引
+
+- 全量：**404 → 419 通过 / 0 失败**（`OK (skipped=2)`）。
+- `tools/gen_api_index.py` 重跑：**132 个模块**。⚠️ 顺带发现 README/CLAUDE.md 里写死的
+  **「110 模块」早已过期**（不是本次造成）—— 已把那个数字**删掉**，改指生成器，免得继续腐烂。

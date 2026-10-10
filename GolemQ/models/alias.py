@@ -22,3 +22,18 @@ class LTT:
     MAINSTREAM_LEADIN_BEFORE = 'MsLeadinBf'
     QUADRANT_TRIGGER_CREDIT = 'QuadTrgCred'
     QUADRANT_LEVERAGE_MACD_LEADIN_UB = 'QLevMACDLinUb'
+
+
+class ZEN:
+    """走势中枢（盘整箱体 / pivot）的字段名。
+
+    值与老树 ``GolemQ_old/models/alias.py`` 的 ``ZEN`` **逐字相同** ——
+    它们是数据在 MongoDB 里的实际存储名，改一个字母就是另一个字段。
+    消费方：``GolemQ/analysis/pivot.py`` 的 ``attach_pivot_features``。
+    """
+    PIVOT_ZD = 'ZenPivotZD'              # 中枢下沿（箱底）
+    PIVOT_ZG = 'ZenPivotZG'              # 中枢上沿（箱顶）
+    PIVOT_GG = 'ZenPivotGG'              # 中枢最高点（延伸上界）
+    PIVOT_DD = 'ZenPivotDD'              # 中枢最低点（延伸下界）
+    PIVOT_DIRECTION = 'ZenPivotDir'      # 中枢方向 up/down
+    PIVOT_TIMING_LAG = 'ZenPivotLag'     # 距离开中枢（PIVOT_ZD NaN）以来的 lag

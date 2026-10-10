@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 3 | [`GLOSSARY.md`](GLOSSARY.md) | 行话。第四节的词**几乎全是老代码继承**，别当拼写错误改 |
 | 4 | [`RESTRUCTURE_PLAN.md`](RESTRUCTURE_PLAN.md) | 两层模型、Active Market、portfolio 方案 |
 | 5 | [`MIGRATION_STATUS.md`](MIGRATION_STATUS.md) | 重构遗留缺陷清单（含修复顺序建议）|
-| 6 | [`API_INDEX.md`](API_INDEX.md) | **导航索引**（110 模块 / 名称 + 一行摘要）。找东西先查它，比逐个 `Read` 源文件省一个数量级 |
+| 6 | [`API_INDEX.md`](API_INDEX.md) | **导航索引**（模块 / 名称 + 一行摘要，由 `tools/gen_api_index.py` 生成）。找东西先查它，比逐个 `Read` 源文件省一个数量级 |
 
 **改代码前先查 `PITFALLS.md` 与 `GLOSSARY.md`。**
 **加函数前先走「[新增函数前的思维链](#新增函数前的思维链任何情况下都要走一遍)」。**
@@ -56,7 +56,7 @@ python -m unittest GolemQ.test_cases.test_doctests -v
 
 | # | 问 | 「是」→ 怎么办 |
 |:--|:--|:--|
-| 1 | **已有函数不够用吗？** | **先搜，别先写**：查 `API_INDEX.md`（110 模块 / 名称 + 一行摘要），再 grep 动词与名词，再看**同层相邻模块**。够用就调，**不新增**，也不"顺手包一层" |
+| 1 | **已有函数不够用吗？** | **先搜，别先写**：查 `API_INDEX.md`（模块 / 名称 + 一行摘要），再 grep 动词与名词，再看**同层相邻模块**。够用就调，**不新增**，也不"顺手包一层" |
 | 2 | **是旧函数有 Bug 吗？** | 「差一点」先判**是 Bug 还是设计**（查 `PITFALLS.md`：看起来像 bug 的刻意设计，勿"修正"）。是 Bug 就**就地修**，不要复制一份改好的 |
 | 3 | **修好 Bug 后能满足吗？** | 能 → **就地修**，并在 commit message 写明修了什么、怎么验的。**到此结束，没有新函数** |
 | 4 | **旧函数真的实现不了吗？** | 才允许新增 —— 但**必须先答完下面三个定位问题**再动手 |

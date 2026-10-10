@@ -106,12 +106,17 @@ class BaseMarket(ABC):
 
     @abstractmethod
     def get_kline_price_min(self, codelist, start=None, end=None,
-                            verbose=False, realtime=True):
+                            verbose=False, realtime=True, frequency=None):
         """分钟线。返回 `(结果对象, codename)`。
 
         **无数据时返回空结果对象，不是 None** —— `services/persistence/_stock.py:138`
         直接取 `.data` 且未预初始化目标变量，返回 None 会一路变成
         `UnboundLocalError`。详见 `markets/StockCN/MONGODB83.md`。
+
+        `frequency`：K 线频率，**`None` = 用该市场的默认频率**（不在契约里写死，
+        否则就是把某一市场的口径泄漏进根层）。A 股的默认与可取值见其实现
+        `markets/StockCN/kline83.py`（当前默认 `'60min'`，支持 1/5/15/30/60min）。
+        ⚠️ **只有分钟线有这个形参**：`get_kline_price_v3` 是日线，频率写死为 `'day'`。
         """
         pass
 

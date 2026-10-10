@@ -166,11 +166,17 @@ class StockCN(BaseMarket):
     # `markets/base_market.py` 的声明，两处**必须一致**。
 
     def get_kline_price_min(self, codelist, start=None, end=None,
-                            verbose=False, realtime=True):
-        """分钟线（A 股）。见 `base_market.py` 的契约说明。"""
+                            verbose=False, realtime=True, frequency=None):
+        """分钟线（A 股）。见 `base_market.py` 的契约说明。
+
+        `frequency=None` ⇒ **透传给 kline83 的那个默认**（当前 `'60min'`）。
+        刻意用「只在给了才传」的写法：默认值只此一处（`kline83` 的函数签名），
+        在这里再写一遍 `or '60min'` 就是第二份定义，会分叉。
+        """
         from .kline83 import get_kline_price_min as _impl
+        extra = {} if frequency is None else {'frequency': frequency}
         return _impl(codelist, start=start, end=end,
-                     verbose=verbose, realtime=realtime)
+                     verbose=verbose, realtime=realtime, **extra)
 
     def get_kline_price_v3(self, codelist, start=None, end=None,
                            verbose=False, realtime=True):

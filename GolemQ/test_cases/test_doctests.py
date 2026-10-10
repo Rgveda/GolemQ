@@ -69,6 +69,14 @@ DOCTEST_MODULES = (
     # 服务器池的**纯函数**（回环判据）。模块本身 lazily import pytdx，
     # 收集时不会碰网络。
     'GolemQ.markets.StockCN.datasource.tdx_hosts',
+    # 缠论中枢的**算法核心** `find_zs`：只用 max/min 与入参 dict，
+    # 连 numpy 都不碰，是最纯不过的一段。它的口径错一点，整条中枢链都跟着错。
+    'GolemQ.analysis._zs',
+    # 中枢层的**纯函数部分**：`classify_pivots`（走势分类）/ `pivots_to_df` /
+    # `causal_pivot_series`（逐 bar 因果展开）都不碰 DB 与网络。
+    # ⚠️ czsc 是在函数体内 lazily import 的（`bi_confirm_map` / `attach_pivot_features`），
+    # 所以收集本模块**不需要** czsc 在场 —— 上面那三条 doctest 也确实是 czsc-free 的。
+    'GolemQ.analysis.pivot',
 )
 
 

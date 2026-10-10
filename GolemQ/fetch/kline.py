@@ -116,10 +116,17 @@ def resolve_market(market=None):
 
 
 def get_kline_price_min(symbol, start=None, end=None, verbose=False,
-                        realtime=True, market=None):
-    """分钟线。`market` 省略则用当前激活市场。"""
+                        realtime=True, market=None, frequency=None):
+    """分钟线。`market` 省略则用当前激活市场。
+
+    `frequency`：K 线频率，**`None` = 该市场的默认频率**。A 股当前默认
+    `'60min'`、可取 `1min/5min/15min/30min/60min`（见
+    `markets/StockCN/kline83.py` 的 `FREQUENCY_ALIASES`，别名 `'1m'` 等也收）。
+    ⚠️ 频率是**分钟线独有**的形参 —— 日线走 `get_kline_price_v3`（无此参数）。
+    """
     return resolve_market(market).get_kline_price_min(
-        symbol, start=start, end=end, verbose=verbose, realtime=realtime)
+        symbol, start=start, end=end, verbose=verbose, realtime=realtime,
+        frequency=frequency)
 
 
 def get_kline_price_v3(symbol, start=None, end=None, verbose=False,

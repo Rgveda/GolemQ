@@ -116,7 +116,7 @@ class StockHK(BaseMarket):
     # 前者是开发状态，后者是数据事实，混在一起会让排障找不到方向。
 
     def get_kline_price_min(self, codelist, start=None, end=None,
-                            verbose=False, realtime=True):
+                            verbose=False, realtime=True, frequency=None):
         raise NotImplementedError('港股分钟线尚未实现（StockHK 目前是 stub）')
 
     def get_kline_price_v3(self, codelist, start=None, end=None,
