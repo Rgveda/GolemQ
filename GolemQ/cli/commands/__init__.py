@@ -19,7 +19,6 @@ from ._registry import (      # noqa: F401 再导出，供 __main__ 与测试用
 )
 from . import (      # noqa: F401 导入即注册（见上）
     heartbeat,
-    migrate,
     purge,
     save,
     save_report,
@@ -49,8 +48,6 @@ register([
     save_report.SAVE_COVERAGE,   # ⚠️ 必须在 SAVE 之前
     save.SAVE,
     save_report.SAVE_STATUS,
-    migrate.MIGRATE_ENELOOP,
-    migrate.MIGRATE_FINANCIAL,
 ])
 
 __all__ = ['COMMANDS', 'Command', 'dispatch', 'no_arguments', 'pick',

@@ -132,12 +132,12 @@ def run_save(args) -> None:
             usage_error(
                 'argument --save-collections: 未知集合 {}；可用: {}'.format(
                     unknown, list(ALL_REF_COLLECTIONS)),
-                hint='提示: financial 用 --migrate-financial。')
+                hint='提示: financial 不在本命令范围（4.4 一次性搬入，不随 --save 取数）。')
 
         ignored = [c for c in (ref_collections or []) if c not in refdata_set]
         if ignored:
             print('提示: --save {} 的参考数据只做 {}；{} 不在本命令范围'
-                  '（financial 用 --migrate-financial）'.format(
+                  '（financial 系 4.4 一次性搬入，--save 不提供）'.format(
                       value, '/'.join(refdata_set), '/'.join(ignored)))
 
         requested = [c for c in (ref_collections or refdata_set)

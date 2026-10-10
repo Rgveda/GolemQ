@@ -46,7 +46,6 @@ __all__ = [
     'UNIQUE_KEYS',
     'DELTA_DELETE',
     'save_refdata',
-    'GQ_migrate_financial',
     'refdata_status',
     'format_status',
 ]
@@ -468,83 +467,6 @@ def save_refdata(collections=None, source: str = None, codelist=None,
                 on_progress(coll_name, 'done', entry)
 
     return report
-
-
-def GQ_migrate_financial(source=None, target=None, chunk: int = 20000,
-                         verbose: bool = True) -> dict:
-    """把 4.4 ``quantaxis.financial`` 整体搬到 8.3 的 ``golemq_stock_cn.financial``。
-
-    为什么是搬不是取
-    ----------------
-    取 `financial` 走的是 akshare 的逐只路径，实测**全量 46.5 小时**
-    （5000+ 只 × 30s 间隔，见 `datasource/akshare_source.py` 的说明）；而 4.4 的
-    `quantaxis` 库里**已经有**这份数据，182,751 行 / 3,936 只。取一份已有的数据
-    没有意义。
-
-    ⚠️ 列名是位置编号，源本身如此
-    ----------------------------
-    4.4 里每份文档是 ``{'code','report_date', '001'..'580'}`` —— 580 个指标字段
-    的名字就是 ``'001'``/``'002'``…，**没有指标名**。这不是搬运造成的：QUANTAXIS
-    自己的解析器（`QAFetch/QAfinancial.py`）就是这么生成的::
-
-        col = ['code', 'report_date']
-        for i in range(0, length):
-            col.append('00{}'.format(str(i + 1))[-3:])
-
-    那是通达信 gpcw 财务文件的原生形态，指标顺序由厂商定义，QUANTAXIS 从未映射成
-    名字。所以**搬运是忠实的，列名无意义是源的属性**。要用这些指标，得先拿到
-    通达信的指标目录 —— 那是另一件事。
-
-    其余口径
-    --------
-    * **保 `_id` 不保**：源 `_id` 丢弃、由目标库重新分配，否则重复跑会主键冲突。
-    * **`report_date` 保持 int**（如 ``20150930``）。注意 akshare 那条路径产出的
-      是**字符串** `'20150930'` —— 两个源混用时 `UNIQUE_KEYS` 的
-      `(code, report_date)` 会把 int 与 str 当成两个键。此处不擅自改类型，
-      免得与 4.4 的源对不上。
-    * **绝不删差量**：金融数据是历史累积，本次没搬到不代表没有（同
-      `DELTA_DELETE` 对 `financial` 的排除）。
-    * 幂等：按 `(code, report_date)` 唯一索引 upsert，可反复跑。
-
-    :param source: 源集合，默认 **4.4** ``quantaxis.financial``（经 `core/migrate44.py`
-        这条一次性通道读；运行时代码不连 4.4，见 D12）
-    :param target: 目标集合，默认 ``GOLEMQ_STOCK_CN['financial']``（8.3）
-    :param chunk: 每批从源读多少文档再交给 writer（控制内存；583 列 × 2 万行 ≈ 93MB）
-    :returns: ``{'upserted','modified','deleted','skipped','rows'}``
-    """
-    from GolemQ.core.migrate44 import db44
-    src = source if source is not None else db44('quantaxis')['financial']
-    dst = target if target is not None else GOLEMQ_STOCK_CN['financial']
-
-    total = {'upserted': 0, 'modified': 0, 'deleted': 0, 'skipped': False,
-             'rows': 0}
-    buf: list = []
-
-    def _flush():
-        if not buf:
-            return
-        stats = save_collection(dst, buf, UNIQUE_KEYS['financial'],
-                                delete_delta_key=None, verbose=False)
-        for k in ('upserted', 'modified', 'deleted'):
-            total[k] += stats[k]
-        total['rows'] += len(buf)
-        buf.clear()
-
-    if verbose:
-        print(f'[migrate:financial] {src.full_name} -> {dst.full_name}')
-    # 投影掉 _id：目标库重新分配，避免重复运行时的主键冲突
-    for doc in src.find({}, {'_id': 0}).batch_size(chunk):
-        buf.append(doc)
-        if len(buf) >= chunk:
-            _flush()
-            if verbose:
-                print(f'[migrate:financial] 已搬 {total["rows"]} 行…')
-    _flush()
-
-    if verbose:
-        print(f'[migrate:financial] 完成：{total["rows"]} 行 '
-              f'(upserted {total["upserted"]}, modified {total["modified"]})')
-    return total
 
 
 def refdata_status() -> dict:

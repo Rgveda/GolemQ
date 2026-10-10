@@ -293,6 +293,9 @@ tushare / statsmodels / matplotlib / joblib），"解耦"就成了空话。
 地址用常量 + 环境变量（`GQ_MIGRATE44_URI` / `--migrate-source-uri`），
 **不读 `~/.QUANTAXIS/`** —— 那正是被剔除的耦合。
 
+> ⛔ **本条已于 2026-10-10 作废**：搬运完成，`core/migrate44.py` 与整条 `--migrate-*`
+> **连同 `GQ_MIGRATE44_URI` 一起删除** —— 见 **D33**。下面「一次性搬运」那段同此。
+
 **连功能一起删的（8.3 无落点、且属活路径）**：整条 `--stock-min-aligned` 链
 （`markets/StockCN/align.py`、`crawler.py`、`scribe.py`、`services/align/`、
 `services/features/` 与老 `fetch.py` 上只被它调用的函数）。它读写的是 4.4 `golemq` 的
@@ -303,7 +306,7 @@ tushare / statsmodels / matplotlib / joblib），"解耦"就成了空话。
 `maintenance.GQ_migrate_removed_from_44`、`symbol.py` 的全部 4.4 读取器、`gateway/xtquant`
 与 `scheduler.py` 的三条 CLI 入口（**代码保留**，只删入口 —— 见 D13）。
 
-**一次性搬运**（脚本在 `core/migrate44.py` 之上）：
+**一次性搬运**（脚本在 `core/migrate44.py` 之上）：⛔ **已于 2026-10-10 执行完毕并删除（D33）**
 `--migrate-eneloop`（4.4 → 8.3 的关注列表）、既有 `--migrate-financial` 换到该通道。
 **不搬**：`module_heartbeats*` / `function_checkins*`（8.3 从空开始 —— 搬过期的
 心跳锁反而危险）、`index_list`（唯一消费者已随链删除）。
@@ -1338,3 +1341,45 @@ tushare（判断配置 tushare）、iwencai（判断配置东方财富问财）�
 （`allow_xdxr_shortcircuit → False`），于是永远走不到那条 `continue`。
 **夹具把一条分支关掉了，用例就看不见它。** 已补 `test_adj_lights_white_when_the_gate_skips_xdxr`
 （夹具加 `gate=` 参数），并**真机复验**：四个节点全亮。
+
+---
+
+## D33. **4.4 通道整条退休**（D12 的收尾）—— 2026-10-10
+
+**触发**：用户 2026-10-10「`core/settings.py` 的 'golemq'、`core/migrate44.py` 删掉了，
+目前 4.4 → 8.3 搬迁完成了」。
+
+**先实测「搬完了」是不是真的**（这是决定能不能删的前提，不能凭一句话删）：
+
+| 集合 | 行数 | 含义 |
+|:--|--:|:--|
+| `golemq_stock_cn.financial` | **182,769** | D12 记的是 0 行 —— 搬进来了 |
+| `golemq.StockCN_watchdog_eneloop` | **3** | 与 D12 记的「源 3/31 → 目标 3/31」一致 |
+| `golemq.StockCN_watchdog_eneloop_archive` | **31** | 同上 |
+| `golemq.function_checkins` | **24** | ★ 这张表是**活的**（见下） |
+
+⇒ 搬运确实完成。但**用户点名的两处不是同类东西**，只该删一处：
+
+| 位置 | 到底是哪个库 | 处置 |
+|:--|:--|:--|
+| `core/settings.py` → `GOLEMQ` | **8.3 的 `golemq`**（**框架运维库**）| ⛔ **不删**。它是 D12 专门建的，五个活消费者：`supervisor/heartbeat.py`（心跳）、`supervisor/function_checkin.py`（**TTL 签到表** —— `--save` 的刷新闸读的就是它）、`cli/watchdog_manager.py`（关注列表）、`gateway/xtquant/{helper,xtquant_tools}.py`（自选 / 订单）。上面那 **3 + 31 行关注列表**正是刚搬进来的活数据 |
+| `cli/watchdog_manager.py` 的 `db44('golemq', …)` | **4.4 的 `golemq`**（搬运**源**）| 连函数一起删。⚠️ 它**改不成** 8.3 —— `db44` 只能连 4.4，它读的就是源库 |
+
+**删了什么**（7 处，全树 `migrate44` / `db44` / `GQ_MIGRATE44_URI` 现为 **0 命中**）：
+
+1. `core/migrate44.py`（`MIGRATE44_URI` / `client44` / `db44`）—— 整文件
+2. `cli/commands/migrate.py`（`--migrate-eneloop` + `--migrate-financial` + `--migrate-source-uri`）—— 整文件
+3. `cli/commands/__init__.py` —— 注册表里的两行 + import
+4. `cli/watchdog_manager.py::migrate_eneloop_watchlist` —— 整函数
+5. `markets/StockCN/refdata_save.py::GQ_migrate_financial` —— 整函数（581 → 503 行）+ `__all__` 项
+6. `cli/commands/save.py` 的两处提示（`financial 用 --migrate-financial` → `financial 系 4.4 一次性搬入，--save 不提供`）
+7. `test_cases/test_cli_bootstrap.py` 的期望旗标表
+
+**顺带**：`cli/watchdog_manager.py:28` 的 `from GolemQ.core.settings import GOLEMQ as DATABASE_GolemQ`
+—— 那个别名是**4.4 时代的名字**，而它指的本来就是 8.3 的 `GOLEMQ`。去掉别名（6 处引用）。
+
+**为什么不留一个「再搬一次」的口子**：搬运器引用的是一个**已下线的库**，留着就是一份
+指向不存在服务的活代码；真需要重来，跑旧树（同「已删功能记档」的先例）。
+
+**验收**：全量 **419 通过 / 0 失败**；`--help` 里 migrate 全消失；三个已删旗标走 argparse
+用法错 **exit 2**（D18 口径）；`GOLEMQ` 句柄完好（`golemq` / 6 集合）。

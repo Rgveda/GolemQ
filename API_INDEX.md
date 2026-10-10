@@ -115,7 +115,6 @@ CLI 环境自检 —— 版权页 + 机器 / 配置 / 服务三道闸。
 | f | `add_symbols_to_watchlist(symbols, verbose)` | 添加股票代码到关注列表 |
 | f | `remove_symbols_from_watchlist(symbols, verbose)` | 从关注列表删除股票代码并移动到归档库 |
 | f | `list_watchlist_symbols(verbose)` | 列出当前关注列表中的所有股票代码 |
-| f | `migrate_eneloop_watchlist(verbose, source_uri)` | 把 4.4 的关注列表搬到 8.3 的 GOLEMQ（一次性，见 core/migrate44.py）。 |
 
 ## GolemQ.cli.commands
 
@@ -142,16 +141,6 @@ CLI 命令注册表 —— 机制层，不认识任何具体命令。
 | f | `add_stop_arguments(parser)` |  |
 | f | `run_watchdog(args)` |  |
 | f | `run_stop(args)` |  |
-
-### `migrate`
-4.4 → 8.3 的一次性搬运入口（--migrate-eneloop / --migrate-financial）。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `add_migrate_eneloop_arguments(parser)` |  |
-| f | `add_migrate_financial_arguments(parser)` |  |
-| f | `run_migrate_eneloop(args)` |  |
-| f | `run_migrate_financial(args)` |  |
 
 ### `purge`
 --purge-l1 / --purge：清理 MongoDB 数据库。破坏性，故有确认闸。
@@ -270,14 +259,6 @@ GolemQ Constants Module
 | f | `set_active_market(name)` | 切换激活市场。 `[dt]` |
 | f | `get_active_market()` | 返回当前激活的市场实例。 |
 | f | `get_market(name)` | 按名取市场实例（不影响激活状态）。 |
-
-### `migrate44`
-4.4 搬迁源通道：一次性专用，搬完即弃。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `client44(uri)` | 4.4 的客户端（进程内复用；uri 只在首次生效）。 |
-| f | `db44(name, uri)` | 4.4 上的某个库（'golemq' / 'quantaxis'）。 `[dt]` |
 
 ### `mongo`
 
@@ -745,7 +726,6 @@ A 股参考集合的取数与落库编排 —— 对应 CLI 的 --save <SOURCE> 
 | f | `mark_refdata_success(collection, echo)` | 把「该集合刚刚成功完成」记进 supervisor 的签到表。只该在真写完之后调。 |
 | f | `refdata_age_hours(collection, now)` | 该集合距上次成功完成过去了多少小时；从没成功过 → None（调用方按「该取」处理）。 |
 | f | `save_refdata(collections, source, codelist, exclude_sources, verbose, on_progress, echo, ttl_hours)` | 把参考集合取回并落库到 8.3 的 golemq_stock_cn。 |
-| f | `GQ_migrate_financial(source, target, chunk, verbose)` | 把 4.4 quantaxis.financial 整体搬到 8.3 的 golemq_stock_cn.financial。 |
 | f | `refdata_status()` | 各集合当前的源可用性与库存量 —— 排障用。 |
 | f | `format_status(report)` | 把 save_refdata 的结果或 refdata_status() 渲染成可读文本。 |
 

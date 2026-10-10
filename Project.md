@@ -56,11 +56,11 @@ QUANTAXIS 已从全树剔除（`grep` 零 import、运行时不加载），
 | 数据库实例 | 配置目录 | 版本 | 用途 | 状态 |
 |:---|:---|:---|:---|:---|
 | **GolemQ (目标)** | **`~/.GolemQ/config/`** | **MongoDB 8.3+** | 新数据存储、新策略开发、实盘交易 | ✅ **唯一目标** |
-| **QUANTAXIS (迁移源)** | 不再读配置（地址是常量） | MongoDB 4.4 | **一次性迁移源**，经 `core/migrate44.py` 单一通道（`--migrate-*`）| 🔶 **运行时不连**；搬完可下线 |
+| **QUANTAXIS (迁移源)** | ~~不再读配置（地址是常量）~~ | MongoDB 4.4 | ~~一次性迁移源~~ | ⛔ **已退休（2026-10-10，`DECISIONS.md` D33）** —— 通道已删，全树零 4.4 引用 |
 
 > **重要原则**：
 > 1. GolemQ 运行时**只连接 MongoDB 8.3+**，严禁连接 4.4
-> 2. 旧数据库仅通过 **`core/migrate44.py`** 一次性读取（`--migrate-financial` / `--migrate-eneloop`；地址取 `GQ_MIGRATE44_URI`），禁止新增写入 —— ⚠️ 原文提到的 `scripts/migrate_mongodb.py` **从来不存在**
+> 2. ~~旧数据库仅通过 **`core/migrate44.py`** 一次性读取~~ → ⛔ **已退休（2026-10-10，D33）**：搬运完成，`core/migrate44.py` / 整条 `--migrate-*` / `GQ_MIGRATE44_URI` **均已删除**，全树零 4.4 引用。~~⚠️ 原文提到的 `scripts/migrate_mongodb.py` **从来不存在**~~
 > 3. 所有 A 股数据接口在 `markets/StockCN/` 中**重写实现**，严禁 import QUANTAXIS ✅ **已达成**（`test_no_quantaxis.py` 守）
 > 4. 迁移完成后，`~/.QUANTAXIS/` 配置与 4.4 实例一并移除
 

@@ -122,8 +122,7 @@ class TestNeedsDb(unittest.TestCase):
 
     def test_data_commands_need_db(self):
         for name in ('save', 'save-coverage', 'save-status', 'purge',
-                     'eneloop-list', 'heartbeat-watchdog',
-                     'migrate-eneloop', 'migrate-financial'):
+                     'eneloop-list', 'heartbeat-watchdog'):
             with self.subTest(cmd=name):
                 self.assertTrue(self._cmd(name).needs_db)
 

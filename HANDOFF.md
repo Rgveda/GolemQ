@@ -1222,3 +1222,39 @@ doctest：`_zs.py` 7 条 + `pivot.py` 19 条 = **26 条**，已登记进 `test_d
 - 全量：**404 → 419 通过 / 0 失败**（`OK (skipped=2)`）。
 - `tools/gen_api_index.py` 重跑：**132 个模块**。⚠️ 顺带发现 README/CLAUDE.md 里写死的
   **「110 模块」早已过期**（不是本次造成）—— 已把那个数字**删掉**，改指生成器，免得继续腐烂。
+
+---
+
+### ✅ 4.4 通道整条退休（2026-10-10，`DECISIONS.md` **D33**）
+
+**触发**：用户「`core/settings.py` 的 'golemq'、`core/migrate44.py` 删掉了，目前 4.4 → 8.3
+搬迁完成了」。⚠️ **先实测「搬完了」是不是真的，再动手删** —— 实测确认真搬完了：
+
+```
+golemq_stock_cn.financial                          182769   （D12 记的是 0 行）
+golemq.StockCN_watchdog_eneloop                        3   （与 D12 的「源 3/31 → 目标 3/31」一致）
+golemq.StockCN_watchdog_eneloop_archive               31
+golemq.function_checkins                              24   ★ 这张表是活的
+```
+
+**但用户点名的两处不是同类东西 —— 只该删一处**（已当面说明并留档）：
+
+| 位置 | 是哪个库 | 处置 |
+|:--|:--|:--|
+| `core/settings.py` → `GOLEMQ` | **8.3 的 `golemq`**（框架运维库）| ⛔ **不删**。五个活消费者：心跳 / **TTL 签到表**（`--save` 的刷新闸读它）/ 关注列表 / 自选 / 订单。上面那 3+31 行关注列表正是刚搬进来的 |
+| `cli/watchdog_manager.py` 的 `db44('golemq', …)` | **4.4 的 `golemq`**（搬运**源**）| 连函数一起删。⚠️ **改不成** 8.3 —— `db44` 只能连 4.4 |
+
+**删了 7 处**（全树 `migrate44` / `db44` / `GQ_MIGRATE44_URI` 现 **0 命中**）：
+`core/migrate44.py`、`cli/commands/migrate.py`（含 `--migrate-source-uri`）、
+`cli/commands/__init__.py` 两行、`watchdog_manager.migrate_eneloop_watchlist`、
+`refdata_save.GQ_migrate_financial`（581 → 503 行）、`save.py` 两处提示、
+`test_cli_bootstrap.py` 的期望旗标表。
+
+**顺带**：`watchdog_manager.py:28` 的 `import GOLEMQ as DATABASE_GolemQ` —— 那个别名是
+**4.4 时代的名字**，指的却本来就是 8.3 的 `GOLEMQ`，去掉别名（6 处引用）。
+
+**验收**：全量 **419 通过 / 0 失败**；`--help` 里 migrate 全消失；三个已删旗标走 argparse
+用法错 **exit 2**（D18 口径）；`GOLEMQ` 句柄完好（`golemq` / 6 集合）。
+
+**顺带查清一条陈旧文档**：`MIGRATION_STATUS.md:91` 提到 `maintenance.GQ_migrate_removed_from_44`
+—— 该函数**在新树里根本不存在**（全树 grep 零命中），那条引用已失效。

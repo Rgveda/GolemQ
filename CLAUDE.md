@@ -257,14 +257,15 @@ python -m GolemQ.cli --save-coverage           # 只读：K线覆盖缺口报告
 | `agents/` | External communication. `messenger.py` handles DingTalk bot (alibabacloud_dingtalk SDK) and Server酱 push notifications. |
 | `supervisor/` | Operational monitoring. `heartbeat.py` provides `HeartbeatMonitor` (MongoDB-backed, per-module heartbeat with timeout detection) and `HeartbeatModule` (per-instance mutex/checkin). `scheduler.py` runs `schedule`-based `XtquantSyncScheduler` during A-share trading hours (9:30-11:30, 13:00-15:00 Beijing time). `function_checkin.py` provides rate-limiting for alert functions. `messenger.py` wraps alert dispatch. |
 | `cli/` | CLI entry point (`__main__.py` → `main()`，**只管建 parser → 分发 → help**). `commands/` 每条命令一个模块 + `commands/__init__.py` 的**有序注册表**（顺序即分发顺序，`DECISIONS.md` D17）。`bootstrap.py` 环境自检（版权页 / TTY / 版本 / 配置 / MongoDB 8.3，D20）。`tools.py` auto-discovers and registers market modules. `watchdog_manager.py` manages symbol watchlists. |
-| `core/` | `settings.py` — `GQ_Setting` wraps `~/.GolemQ/settings/config.ini`；三个库句柄 `GOLEMQ` / `GOLEMQ_STOCK_CN` / `GOLEMQ_STOCK_CN_REALTIME`（**名字即库名**）。`migrate44.py` 是**一次性**的 4.4 搬运通道（运行时代码禁用）。 `constants.py` — `AKA` (field aliases), `FIELD`, `MARKET_TYPE`, `STATE` constants. `mongo.py` — MongoDB client helpers. `preprocessing.py` — pandas-to-JSON converters and data masking. |
+| `core/` | `settings.py` — `GQ_Setting` wraps `~/.GolemQ/settings/config.ini`；**框架运维库句柄 `GOLEMQ`（`golemq`）在这里** —— ⚠️ 行情库句柄 `GOLEMQ_STOCK_CN` / `GOLEMQ_STOCK_CN_REALTIME` **在 `markets/StockCN/__init__.py`**，不在这里（见下「库名不外泄」）。`constants.py` — `AKA` (field aliases), `FIELD`, `MARKET_TYPE`, `STATE` constants. `mongo.py` — MongoDB client helpers. `preprocessing.py` — pandas-to-JSON converters and data masking. |
 
 ### Key Design Patterns
 
 - **Market registry**: `GQMARKETS` (dict in `GolemQ.__init__`) holds market instances. `cli/tools.py` auto-discovers and registers them. `GQSUBSCRIBER` maps subscription keys (e.g., `l1_tencent`) to subscriber functions.
 - **StockCN singleton**: `StockCN.__new__` enforces a single instance. Auto-instantiated on module import and registered into `GQMARKETS`.
 - **Configuration**: `GQ_Setting` reads/writes `~/.GolemQ/settings/config.ini`. Sections `DINGTALK`, `SERVERCHAN`, `XTQUANT` are stored in the INI file; other sections fall back to MongoDB.
-- **Single database**: 一律 MongoDB **8.3** —— 行情与参考数据在 `GOLEMQ_STOCK_CN`（`golemq_stock_cn`）、实时在 `GOLEMQ_STOCK_CN_REALTIME`、框架运维（心跳/签到/关注列表）在 `GOLEMQ`（`golemq`）。**QUANTAXIS 已全树剔除**（`DECISIONS.md` D12），4.4 只剩 `core/migrate44.py` 这一条一次性通道。
+- **Single database**: 一律 MongoDB **8.3** —— 行情与参考数据在 `GOLEMQ_STOCK_CN`（`golemq_stock_cn`）、实时在 `GOLEMQ_STOCK_CN_REALTIME`、框架运维（心跳/签到/关注列表）在 `GOLEMQ`（`golemq`）。**QUANTAXIS 已全树剔除**（`DECISIONS.md` D12）；4.4 的搬运通道已于 2026-10-10 **整条退休**（`DECISIONS.md` D33）—— 全树零 4.4 引用。
+- **库名不外泄**（硬规定）：A 股行情库名 `'golemq_stock_cn'` 与两个行情库句柄 `GOLEMQ_STOCK_CN` / `GOLEMQ_STOCK_CN_REALTIME` **只允许出现在 `markets/StockCN/` 之内**。别处一律经市场对象取值，不准自己连库、不准拼库名 —— 判错**不会报错**，只会静默读到另一个库/空集。
 - **Heartbeat/mutex**: `HeartbeatModule.mutex()` checks for conflicting running instances in MongoDB before starting, using a timeout-based lock. `HeartbeatMonitor` runs a daemon thread that detects stale modules and fires alerts.
 - **Data flow**: Free data sources (Tencent, Sina, EastMoney via `easyquotation/`) → `services/` feature extraction → MongoDB → `analysis/` / `pipeline/` consumption. XTQuant gateway provides live position/order data.
 
