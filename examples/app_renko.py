@@ -194,17 +194,25 @@ with tab_brick:
         top = np.where(dr > 0, px, px + brick)
         x = np.arange(1, len(px) + 1)
         fig = go.Figure()
-        fig.add_trace(go.Candlestick(
+        # ⚠️ **用 `Bar` + `base`，不要用 `Candlestick`**。Candlestick 画的是蜡烛：
+        # 它在 `low~high` 之间画一根**居中的细线**（影线）再叠一个实体，
+        # 于是每块砖看起来是「竖线 + 尖角」而不是矩形 —— 砖块图要的是
+        # **轴对齐矩形**（上下沿平直、左右沿竖直），`Bar` 的 `y` 是高度、
+        # `base` 是下沿，出来的就是标准砖块。
+        fig.add_trace(go.Bar(
             x=x,
-            # 开收按**砖的方向**摆，颜色才跟着方向走（否则下跌砖也会画成红的）
-            open=np.where(dr > 0, bottom, top),
-            close=np.where(dr > 0, top, bottom),
-            high=top, low=bottom,
-            increasing_line_color='red', increasing_fillcolor='red',
-            decreasing_line_color='green', decreasing_fillcolor='green',
-            name='砖块'))
-        fig.update_layout(height=620, xaxis_rangeslider_visible=False,
-                          hovermode='x unified', showlegend=False,
+            y=top - bottom,          # 高度 = 砖高（实测恒等于 brick）
+            base=bottom,             # 下沿
+            width=1.0,               # 相邻砖左右相接 —— 同向连砖就是一根实心柱
+            marker=dict(color=np.where(dr > 0, 'red', 'green'),
+                        # 白色描边把相接的砖分开，砖界一眼可见
+                        line=dict(color='white', width=1)),
+            name='砖块',
+            customdata=np.stack([bottom, top, dr], axis=-1),
+            hovertemplate=('砖 %{x}<br>下沿 %{customdata[0]:.2f}'
+                           '<br>上沿 %{customdata[1]:.2f}'
+                           '<br>方向 %{customdata[2]:.0f}<extra></extra>')))
+        fig.update_layout(height=620, showlegend=False, bargap=0,
                           margin=dict(l=10, r=10, t=30, b=10),
                           xaxis_title='砖序号（与时间无关）', yaxis_title='价格')
         st.plotly_chart(fig, width='stretch')
