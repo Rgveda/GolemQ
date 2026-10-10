@@ -1841,3 +1841,58 @@ stock_metadata_day  17,112,141 行 / 5,515 只 / 1999-01-04 → 2026-10-09
   走 `renko` 类的 `source_aligned`。搬它时记着上面那条"第 0 行作废"。
 * `RENKO_OPTIMAL` / `RENKO_PRICE_L` **写后无人读**、`RENKO_PRICE_S` 被下游统一 drop ——
   三个都**照写不删**（`len(data) < 30` 的早退分支靠这批列名保形状）。
+
+---
+
+### ✅ `examples/app_renko.py` 砖块图演示 + 市场注册改为静默（2026-10-10，用户要求）
+
+用户：「streamlit 增加一个 examples，app_renko」→「也用 ploty」。「用 plotly」
+与 `app_pivot.py` 一致。
+
+#### ① 两个页签 = 同一份数据的两个面
+
+| 页签 | 画什么 | 数据来源 |
+|:--|:--|:--|
+| **砖块图（按砖序）** | 真 Renko 砖块，横轴是**第几块砖**（与时间无关） | `class renko` 的 `renko_prices` + `renko_directions` |
+| **特征叠加（按时间轴）** | K 线 + S/L 两族上下界台阶线 + `RENKO_BAR` 信号 | `renko_trend_cross_func` 的 14 列 |
+
+⚠️ **两个页签的「砖」不是同一批数**，这是刻意的：砖块图用 `class renko` 的全段
+ATR 中位数砖高；特征列的 S 族用同一套砖高，但 **L 族按 1200 bar 分窗、每窗自己
+搜最优砖高** —— 这正是 small / large 的由来。README 与 demo 顶部都写明了，
+免得看图画不出对应关系时以为实现错了。
+
+#### ② 写 demo 时**实测**出来的两件事（都没写进代码之前先量了）
+
+1. **砖身怎么摆**：`renko_prices` + `renko_directions` 直接给出真实砖序 ——
+   方向 `+1` 时砖身是 `[p - 砖高, p]`，`-1` 时是 `[p, p + 砖高]`。
+   实测 7 点序列 `100→95→99→103`（砖高 2）得 `[98,100] [96,98] [98,100] [100,102]`，
+   **砖身高度全部等于砖高** ✓。Plotly 用 `Candlestick` 摆（`high=top, low=bottom`，
+   开收按方向置），比逐块 `add_shape` 轻且可交互。
+2. **`source_aligned` 的两列在下跌砖上反序**：实测 `lb=96, ub=94`（**lb > ub**）。
+   这是旧树的口径，**保真保留**。demo 走的是 `renko_chart`，其 lb/ub **有序** ——
+   实测 S/L 两族全部满足 `lb <= ub` ✓。⚠️ 走 `source_aligned` 的那条线
+   （另案的 `calc_renko_atr_vX`）必须自己 `min/max`。
+
+#### ③ 顺带：市场自动注册改为**默认静默**
+
+用户：「`[ok] 自动注册市场: StockCN` 这两行 需要加参数 `verbose=True`，才显示」
+→「默认为 `verbose=False`」。
+
+`cli/tools.py::auto_register_markets(verbose: bool = False)` —— **四条消息
+（含三条 `[warn]`）一起**受 `verbose` 控制，不是只关 `[ok]`。取舍写在函数 docstring：
+注册失败**不会因此静默** —— `market_registry` 对「市场不在注册表」有明确报错
+（`KeyError: 激活市场 'X' 不在注册表内`），症状会带原因重新浮上来。
+`purge_mongodb_database` 里改成 `auto_register_markets(verbose=verbose)`，
+所以 `--purge -v` 仍能看到注册过程。
+
+⚠️ 这条影响面不小：本函数在 `get_active_market()` 的兜底路径上，
+**任何一次取数**都可能跑到它 —— 之前每个调用方开屏都多两行。
+
+#### ④ 验收
+
+* demo 以 `python examples/app_renko.py`（bare 模式）跑通，**退出码 0**，
+  且**不再出现** `[ok] 自动注册市场` 那两行 ✓
+* 计算链实测：`000711`/60min 砖高 0.0432 / 755 块；`600519`/day 砖高 24.62 / 103 块；
+  两者**砖身高度全部 == 砖高** ✓
+* `auto_register_markets()` 默认**零输出**、`verbose=True` 正常打印，**注册本身不受影响** ✓
+* 全量回归 **516 通过 / 0 失败**（见下一条提交）

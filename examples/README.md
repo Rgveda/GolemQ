@@ -44,3 +44,45 @@ GG-DD 延伸边界 / 是否加长历史。
 
 旧树还有一份 `app_pivot_pl.py`（polars 重特征流水线版），**未搬** ——
 它依赖约 1.5 万行的上游模块与 8.3 里不存在的集合。详见 `HANDOFF.md`。
+
+## `app_renko.py` —— 砖块图（RENKO）演示
+
+```bash
+streamlit run examples/app_renko.py
+```
+
+侧边栏可选：股票代码 / **K 线频率（日线 + 1、5、15、30、60min）** / 砖高（自动 ATR 中位数
+或手动）/ 最多用多少根 K 线。
+
+### 这条链上有什么
+
+| 环节 | 落点 | 说明 |
+|:--|:--|:--|
+| 取数 | `get_active_market()` | 日线 `get_kline_price_v3`、分钟 `get_kline_price_min`（**两者签名不同**，日线无数据返回 `None`）|
+| ↓ | `markets/StockCN/kline83.py` | MongoDB **8.3** 时序集合，**已前复权** |
+| 砖块序列 | `analysis/renko.renko` | `set_brick_size(auto=True)` → `talib.ATR(14)` 中位数定砖高 |
+| 特征列 | `analysis/renko.renko_trend_cross_func` | S 族（numba 压缩砖）/ L 族（1200 bar 分窗搜砖高）/ `RENKO_BAR` 合成 |
+
+### 两个页签看的是同一份数据的两个面
+
+1. **砖块图（按砖序）** —— 横轴是**第几块砖**，与时间无关。一根 K 线可能产生多块砖，
+   也可能连续多根都不产生（横盘）。这才是 Renko 剔噪的方式。
+   砖身按 `renko_prices` + `renko_directions` 摆（方向 +1 → `[p-砖高, p]`）。
+2. **特征叠加（按时间轴）** —— K 线 + S/L 两族的上下界台阶线 + `RENKO_BAR` 信号标记。
+
+### 三条刻意设计，别当 bug「修」
+
+1. **砖块图的「砖」与特征列的「砖」不是同一批数。** 砖块图用 `class renko` 的**真实砖序**；
+   特征列的 S 族用同一套砖高，但 **L 族另起一套**（按 1200 bar 分窗、每窗自己搜最优砖高）。
+   这正是 small / large 的由来 —— 把两者画在一条轴上会以为实现错了。
+2. **S 族是 `float16`。** `renko_trend_cross_func` 末尾对 `RENKO_TREND_S` / `_LB` / `_UB`
+   做 `astype(np.float16)`（旧树如此）。看图无碍，但拿这几列做算术要知情。
+3. **`RENKO_PRICE_S/L` 是砖位价，不是收盘价**；`RENKO_OPTIMAL` 只在每个 1200 bar 窗口
+   首行有值、其余为 **0**；这三列旧树也**写后无人读**（`RENKO_PRICE_S` 被下游统一 drop）。
+
+### ⚠️ `source_aligned` 的两列在下跌砖上是**反序**的
+
+`class renko` 的 `source_aligned[idx]` 在下跌砖上返回 `[上一砖位, 上一砖位 - 砖高]`
+（即 **lb > ub**）。本 demo 走的是 `renko_chart`，它的 lb/ub **有序** —— 实测两族
+都满足 `lb <= ub`。要走 `source_aligned` 的那条线（另案的 `calc_renko_atr_vX`）
+必须自己 `min/max`。详见 `analysis/renko.py` 的模块 docstring。

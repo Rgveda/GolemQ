@@ -198,7 +198,7 @@ CLI 环境自检 —— 版权页 + 机器 / 配置 / 服务三道闸。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
-| f | `auto_register_markets()` | 自动注册所有市场模块到 GQMARKETS（只注册尚未注册的市场） |
+| f | `auto_register_markets(verbose)` | 自动注册所有市场模块到 GQMARKETS（只注册尚未注册的市场） |
 | f | `purge_mongodb_database(verbose)` | 清理MongoDB数据库 - 通过各个市场实例的清理方法 |
 
 ### `watchdog_manager`
