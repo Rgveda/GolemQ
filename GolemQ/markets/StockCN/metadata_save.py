@@ -68,7 +68,6 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
 
 from GolemQ.core.constants import AKA, FIELD
 
@@ -94,40 +93,73 @@ UNIQUE_KEYS = ('code', 'date_stamp')
 #: 真触发时**丢该行并计数报出**，而不是写进去：写进去就是静默污染分布。
 MAX_TURNOVER_RATIO = 1.08
 
-#: 源清单：``(4.4 的集合名, 源字段名, 本表字段名)``。
+#: 源清单：``(4.4 的集合名, 源字段名, 本表字段名, 源 date 的格式)``。
 #: 顺序**不代表优先级** —— 两列互不覆盖，各写各的。
+#:
+#: 第 4 项（``'datetime'`` / ``'date'``）必须显式声明：两个源的 `date` 字符串
+#: **格式不同**（`stock_ranking` 带时分秒、`stock_valuation` 是裸日期），
+#: 而范围过滤是**字符串比较** —— 给裸日期补 `' 00:00:00'` 会把当天整段排掉。
 SOURCES = (
-    ('stock_ranking', 'TurnoverRate', TURNOVER_DC),
-    ('stock_valuation', 'turnover', TURNOVER_BS),
+    ('stock_ranking', 'TurnoverRate', TURNOVER_DC, 'datetime'),
+    ('stock_valuation', 'turnover', TURNOVER_BS, 'date'),
 )
 
 
-def _day_stamp(day) -> int:
-    """``'YYYY-MM-DD'``（或带时分秒）→ 与库里 `date_stamp` **同口径**的 unix 秒。
+def _date_range(fmt: str, since=None, until=None) -> dict:
+    """按**源端 date 的格式**造范围条件。
 
-    ⚠️ **口径是「把北京日历日的零点当作 UTC」**，不是真实时刻。实测对照：
+    ⚠️ **不用 `date_stamp` 过滤** —— 实测 `stock_valuation` 里两套口径混着
+    （2026-09-01：5131 行真实 UTC / 61 行墙上时间），按 stamp 划边界会**静默漏掉**
+    边界那天的另一套。`date` 字段两种口径下都是同一个日历日，没有这个问题。
 
-    ==========================  ============
-    库里 `date_stamp` 实测       1545264000   （``'2018-12-20'``）
-    ``bj_date(...).timestamp()``  1545181200   ← **差 -8 小时，是错的**
-    ==========================  ============
-
-    走 `bj_date` 会得到真实时刻（北京 00:00 == UTC 前一日 16:00），
-    而库里的 `date_stamp` / `time_stamp` 是 QUANTAXIS 那套「墙上时间当 UTC」。
-
-    本函数**只用于范围过滤**，用错口径恰好还落在同一天内、不至于漏行 ——
-    但 :data:`UNIQUE_KEYS` 里就是 `date_stamp`，**任何按算出来的 stamp 去查/写的行为
-    都必须与库里逐秒相同**，所以这里必须钉死，不能「差不多就行」。
-
-    >>> _day_stamp('2018-12-20')
-    1545264000
-    >>> _day_stamp('2018-12-20 15:00:00')      # 时分秒被丢弃，只取当日
-    1545264000
-    >>> _day_stamp('2026-09-01')               # 与库里实测值一致
-    1788220800
+    >>> _date_range('datetime', since='2026-09-01', until='2026-09-30')
+    {'$gte': '2026-09-01 00:00:00', '$lte': '2026-09-30 23:59:59'}
+    >>> _date_range('date', since='2026-09-01', until='2026-09-30')
+    {'$gte': '2026-09-01', '$lte': '2026-09-30'}
+    >>> _date_range('date')
+    {}
     """
-    return int(datetime.strptime(day_date(day), '%Y-%m-%d')
-               .replace(tzinfo=timezone.utc).timestamp())
+    rng = {}
+    if since:
+        d = day_date(since)
+        rng['$gte'] = '{} 00:00:00'.format(d) if fmt == 'datetime' else d
+    if until:
+        d = day_date(until)
+        rng['$lte'] = '{} 23:59:59'.format(d) if fmt == 'datetime' else d
+    return rng
+
+
+def day_stamp(day) -> int:
+    """``'YYYY-MM-DD'``（或带时分秒）→ **本表** `date_stamp`（秒，int）。
+
+    ⚠️ 口径 = **8.3 自己的那套**：北京零点的**真实 UTC 时刻**（= 北京 00:00
+    == UTC 前一日 16:00），由 :func:`kline83.bj_date` 给出。实测锚点：
+
+    ==========================================  ============
+    `stock_day` / `stock_adj` 里 ``date='2026-10-08'`` 的 `date_stamp`  1791388800
+    本函数 ``day_stamp('2026-10-08')``                                  1791388800
+    ==========================================  ============
+
+    **为什么以 8.3 而不是源端为准**（2026-10-10 实测，三种口径并存）：
+
+    =========================================  ==========================
+    数据                                        口径
+    =========================================  ==========================
+    **8.3** `stock_day` / `stock_adj`            **真实 UTC**（本函数）
+    4.4 `stock_ranking`（东财那列）              墙上时间当 UTC（差 +8h）
+    4.4 `stock_valuation`（baostock 那列）       **两套混着**（2026-09-01：5131 真实UTC / 61 墙上）
+    =========================================  ==========================
+
+    本表住在 8.3，**与邻居一致**才能 join / 比较；照搬源端会把那个混乱带进来，
+    而且 `date` 与 `date_stamp` 会**不是同一天**（valuation 那 1.2%）。用户
+    2026-10-10 定：按 8.3 口径重算。`date` 字段原样保留，溯源不受影响。
+
+    >>> day_stamp('2026-10-08')           # 与 stock_day 逐秒相同
+    1791388800
+    >>> day_stamp('2026-10-08 15:00:00')  # 时分秒被丢弃，只取当日
+    1791388800
+    """
+    return int(bj_date('{} 00:00:00'.format(day_date(day))).timestamp())
 
 
 def day_date(date_str) -> str:
@@ -149,33 +181,36 @@ def day_date(date_str) -> str:
     return str(date_str)[:10]
 
 
-def metadata_day_doc(code, date_stamp, day, field, rate, created_at=None) -> dict:
+def metadata_day_doc(code, day, field, rate, created_at=None) -> dict:
     """一行元数据 → `stock_metadata_day` 文档（**只带一列载荷**）。
 
     字段集**照 4.4 的 `stock_metadata_day`**（`code` / `date` / `date_stamp` /
     `datetime` / `created_at`）+ 载荷列。额外多一个 `ts`（UTC-aware datetime）——
     8.3 其它表都有它、读层按它取轴，**这一处是对旧树的增补**，不是照抄。
 
-    >>> d = metadata_day_doc('600519', 1791388800, '2026-10-09', 'TurnoverRate', 0.0123, created_at=0)
+    ⚠️ **`date_stamp` 由 `day` 重算，不取源端的值** —— 源端三种口径并存
+    （见 :func:`day_stamp`），照搬会让 `date` 与 `date_stamp` 不是同一天。
+
+    >>> d = metadata_day_doc('600519', '2026-10-09', 'TurnoverRate', 0.0123, created_at=0)
     >>> sorted(d)      # ⚠️ 大写 T 的码点小于小写 ⇒ `TurnoverRate` 排**最前**
     ['TurnoverRate', 'code', 'created_at', 'date', 'date_stamp', 'datetime', 'ts']
-    >>> d['code'], d['date'], d['date_stamp'], d['TurnoverRate']
-    ('600519', '2026-10-09', 1791388800, 0.0123)
+    >>> d['code'], d['date'], d['TurnoverRate']
+    ('600519', '2026-10-09', 0.0123)
+    >>> d['date_stamp'] == day_stamp('2026-10-09')   # 与 8.3 口径一致（北京时间当天的真实时刻）
+    True
     >>> d['ts'].isoformat()          # 北京 00:00 == UTC 前一日 16:00
     '2026-10-08T16:00:00+00:00'
 
-    ⚠️ `date_stamp` 一律过 `int()` —— 源端若给成 float，存进去就与存量的
-    int32 **不相等**，唯一键会插出重复行：
+    带时分秒的 `day` 也收（源端两种格式），只取日期部分：
 
-    >>> metadata_day_doc('600519', 1791388800.0, '2026-10-09', 'TurnoverRate', 0.0123, 0)['date_stamp']
-    1791388800
+    >>> metadata_day_doc('600519', '2026-10-09 15:00:00', 'TurnoverRate', 0.1, 0)['date']
+    '2026-10-09'
     """
-    stamp = int(date_stamp)
     day = day_date(day)
     return {
         'code': str(code),
         'date': day,
-        'date_stamp': stamp,
+        'date_stamp': day_stamp(day),
         'datetime': '{} 00:00:00'.format(day),
         'ts': bj_date('{} 00:00:00'.format(day)),
         field: float(rate),
@@ -200,7 +235,9 @@ def turnover_rows(rows, src_field, dst_field, created_at=None) -> tuple:
 
     **纯函数**（不碰 DB），所以整条搬运的正确性可以在没有 4.4 的情况下测。
 
-    :param rows: 源行，每条至少含 ``code`` / ``date_stamp`` / ``date`` / `src_field`
+    :param rows: 源行，每条至少含 ``code`` / ``date`` / `src_field`
+        ⚠️ **要 `date`、不要 `date_stamp`** —— 本表的 stamp 由 `date` 按 8.3 口径重算
+        （源端三种口径并存，见 :func:`day_stamp`）。
     :param src_field: 源端字段名（如 ``'TurnoverRate'``）
     :param dst_field: 本表字段名（如 ``'TurnoverRate'``）
     :param created_at: 统一写入的 `created_at`（秒）。``None`` = 当前时刻
@@ -210,9 +247,9 @@ def turnover_rows(rows, src_field, dst_field, created_at=None) -> tuple:
     缺值丢掉（**不写 0** —— 0 是「当天真的零换手」）：
 
     >>> rows = [
-    ...   {'code': '600519', 'date': '2026-10-09 00:00:00', 'date_stamp': 1791388800, 'TurnoverRate': 0.0123},
-    ...   {'code': '000001', 'date': '2026-10-09 00:00:00', 'date_stamp': 1791388800, 'TurnoverRate': None},
-    ...   {'code': '000002', 'date': '2026-10-09 00:00:00', 'date_stamp': 1791388800, 'TurnoverRate': 'x'},
+    ...   {'code': '600519', 'date': '2026-10-09 00:00:00', 'TurnoverRate': 0.0123},
+    ...   {'code': '000001', 'date': '2026-10-09', 'TurnoverRate': None},
+    ...   {'code': '000002', 'date': '2026-10-09', 'TurnoverRate': 'x'},
     ... ]
     >>> docs, skipped = turnover_rows(rows, 'TurnoverRate', 'TurnoverRate', created_at=0)
     >>> len(docs), skipped
@@ -222,16 +259,21 @@ def turnover_rows(rows, src_field, dst_field, created_at=None) -> tuple:
 
     超过 :data:`MAX_TURNOVER_RATIO` 的判为「百分比没换算就落库了」，**丢并计数**：
 
-    >>> turnover_rows([{'code': '1', 'date': '2026-10-09', 'date_stamp': 1,
+    >>> turnover_rows([{'code': '1', 'date': '2026-10-09',
     ...                 'turnover': 2.68}], 'turnover', 'turnover')
+    ([], 1)
+
+    缺 `date` 的行也丢（stamp 推不出来）：
+
+    >>> turnover_rows([{'code': '1', 'TurnoverRate': 0.01}], 'TurnoverRate', 'TurnoverRate')
     ([], 1)
     """
     docs, skipped = [], 0
     for r in rows:
         code = r.get('code')
-        stamp = r.get('date_stamp')
+        day = r.get('date')
         rate = r.get(src_field)
-        if not code or stamp is None or rate is None:
+        if not code or not day or rate is None:
             skipped += 1
             continue
         try:
@@ -243,8 +285,7 @@ def turnover_rows(rows, src_field, dst_field, created_at=None) -> tuple:
         if rate < 0 or rate > MAX_TURNOVER_RATIO:
             skipped += 1
             continue
-        docs.append(metadata_day_doc(code, stamp, r.get('date'), dst_field, rate,
-                                     created_at))
+        docs.append(metadata_day_doc(code, day, dst_field, rate, created_at))
     return docs, skipped
 
 
@@ -267,8 +308,8 @@ def save_turnover(since=None, until=None, batch: int = 5000, verbose: bool = Tru
     **一次性搬运**（走 :mod:`GolemQ.core.migrate44` 那条只读通道）。
     ⚠️ 运行时路径**不许**调它 —— 它连 4.4。
 
-    为什么从 4.4 搬而不是爬 akshare：同源、一次搬完、且两个源**都已经是小数**、
-    `date_stamp` **现成是秒**，不需要任何换算。爬 akshare 要 5,573 次请求。
+    为什么从 4.4 搬而不是爬 akshare：同源、一次搬完、且两个源**都已经是小数**，
+    不需要任何换算。爬 akshare 要 5,573 次请求。
 
     :param since: 只搬 ``date >= since``（``'YYYY-MM-DD'``）。增量用。
     :param until: 只搬 ``date <= until``。
@@ -284,28 +325,15 @@ def save_turnover(since=None, until=None, batch: int = 5000, verbose: bool = Tru
     g44 = db44('golemq')
     dst = None if dry_run else _db()[METADATA_DAY_COLL]
 
-    # ⚠️ **用 `date_stamp`（int 秒）过滤，不要用 `date` 过滤** —— 实测两个源的
-    # 字符串格式**不同**：
-    #     stock_ranking.date   == '2026-10-09 00:00:00'（带时分秒）
-    #     stock_valuation.date == '2026-09-30'         （裸日期）
-    # 字符串比较下裸日期**排在**带时分秒的前面，所以给两边都补 ' 00:00:00' 会把
-    # 后者当天的整段**静默排除**（实测：查 `stock_valuation` 的 2026-10 得到 0 行）。
-    # `date_stamp` 两边都有、且都是秒，用它边界没有格式歧义。
-    query = {}
-    if since or until:
-        rng = {}
-        if since:
-            rng['$gte'] = _day_stamp(since)
-        if until:
-            # 当天 23:59:59 —— 用「次日零点」减 1 秒，避免依赖时分秒格式
-            rng['$lte'] = _day_stamp(until) + 86399
-        query['date_stamp'] = rng
-
     out = {}
-    for coll_name, src_field, dst_field in SOURCES:
+    for coll_name, src_field, dst_field, date_fmt in SOURCES:
         src = g44[coll_name]
+        # 每个源**按自己的 date 格式**造范围条件（见 `_date_range` 的说明）
+        rng = _date_range(date_fmt, since, until)
+        query = {'date': rng} if rng else {}
         stats = {'read': 0, 'written': 0, 'skipped': 0, 'upserted': 0, 'modified': 0}
-        proj = {'_id': 0, 'code': 1, 'date': 1, 'date_stamp': 1, src_field: 1}
+        # ⚠️ 不取源端 `date_stamp` —— 本表的 stamp 由 `date` 按 8.3 口径重算
+        proj = {'_id': 0, 'code': 1, 'date': 1, src_field: 1}
         cursor = src.find(query, proj).batch_size(batch)
         buf = []
         try:
