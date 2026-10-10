@@ -471,6 +471,44 @@ class FIELD(metaclass=_StubMeta):
         return cls._instance
 
 
+
+    # ------------------------------------------------------------------ #
+    # regtree 一族（2026-10-10 随 `analysis/regtree.py` 搬回时补）
+    #
+    # 值与旧树 `GolemQ_old/utils/parameter.py` 的 `INDICATOR_FIELD` **逐字相同** ——
+    # 它们是数据在 MongoDB 里的实际存储名（`PITFALLS.md` P1：缺常量不许编）。
+    # 补齐前实测：本文件用到的 29 个名字在新树**全部抛 AttributeError**。
+    # ------------------------------------------------------------------ #
+    ATR_LB = 'ATR_LB'
+    ATR_LB_REGTREE_DIVERGENCE = 'ATR_L_RT_DIV'
+    COMBINE_DENSITY = 'COMB_DENSITY'
+    DEA_ZERO_TIMING_LAG = 'DEA_O_LAG'
+    HMA10 = 'HMA10'
+    HMA5 = 'HMA5'
+    HMAPOWER120 = 'HMPWR12'
+    HMAPOWER120_QUARTER = 'HMPWR12_QTR'
+    HMAPOWER120_TIMING_LAG = 'HMPWR12_LAG'
+    MA30 = 'MA30'
+    MA90 = 'MA90'
+    MA90_SLOPE = 'MA90_SLOPE'
+    MACD_DELTA = 'MACD_diff_1T'
+    MAPOWER120 = 'MPWR12'
+    MAPOWER120_QUARTER = 'MPWR12_QTR'
+    MAPOWER120_TIMING_LAG = 'MPWR12_LAG'
+    MAPOWER30_QUARTER = 'MPWR3_QTR'
+    MAPOWER30_TIMING_LAG = 'MPWR3_LAG'
+    POLY9_REGTREE_DIVERGENCE = 'POLY9_RT_DIV'
+    POLYNOMIAL9_TIMING_LAG = 'poly9_LAG'
+    REGTREE_CORRCOEF = 'REGTREE_CORRCOEF'
+    REGTREE_DENY_LINE = 'REGTREE_DENY_LINE'
+    REGTREE_MA90_INTERCEPT = 'REGTREE_MA90_INT'
+    REGTREE_PRICE = 'REGTREE_PRICE'
+    REGTREE_SLOPE = 'REGTREE_SLP'
+    REGTREE_TIMING_LAG = 'REGTREE_LAG'
+    REGTREE_TREND = 'REGTREE_TRD'
+    REGTREE_TREND_RETURNS = 'REGTREE_TRD_RET'
+    REGTREE_TREND_RS = 'REGTREE_TRD_RS'
+
 class FEATURES(metaclass=_StubMeta):
     """
     Feature column name constants (stub — to be populated).
@@ -528,6 +566,13 @@ class TREND_STATUS(metaclass=_StubMeta):
             cls._instance = super(TREND_STATUS, cls).__new__(cls)
         return cls._instance
 
+
+
+    # 鲁棒性极值点识别（`analysis/peak.py` 写这一列）。
+    # 值与旧树 `GolemQ_old/utils/parameter.py` 的 `TREND_STATUS.PEAK_POINT` **逐字相同** ——
+    # 它是数据在 MongoDB 里的实际存储名（`PITFALLS.md` P1：缺常量不许编）。
+    PEAK_POINT = 'PEAK_POINT'
+    PEAK_POINT_MAX_FACTOR = 'PEAK_POINT_MAX_FACTOR'
 
 class STATE(metaclass=_StubMeta):
     """

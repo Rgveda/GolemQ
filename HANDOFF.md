@@ -1535,7 +1535,7 @@ stub = 还没写，dummy = 故意是假的）。
 | 从 | 到 | 是什么 |
 |:--|:--|:--|
 | `test_cases/` | **[`tools/diagnostics/`](tools/diagnostics/)**（新）| 7 个**运行时诊断**脚本（心跳/互斥锁/实例 id 的查看与清理）|
-| `test_cases/xtquant/` | **[`examples/Deprecated/xtquant/`](examples/Deprecated/xtquant/)**（新）| 4 个 QMT 用法示例 —— **不是测试**，且**已跑不通** |
+| `test_cases/xtquant/` | **[`examples/deprecated/xtquant/`](examples/deprecated/xtquant/)**（新）| 4 个 QMT 用法示例 —— **不是测试**，且**已跑不通** |
 
 **`test_cases/` 现在 = 32 个真测试 + `run_tests.py` + README**（干净的单一职责）。
 
@@ -1551,7 +1551,7 @@ stub = 还没写，dummy = 故意是假的）。
   `instance_id` 是 per-process sha256 ⇒ 索引永不冲突）**尚未修**，脚本里编码的是「怎么查、怎么清」。
   README 里写明了「缺陷修好即可删」。
 
-**为什么 `examples/Deprecated/`**（用户定）：`Deprecated` 是**状态**维度、`xtquant` 是主题，
+**为什么 `examples/deprecated/`**（用户定，且**目录名全小写**与 `examples/`/`tools/` 一致）：`deprecated` 是**状态**维度、`xtquant` 是主题，
 两层都在 —— 将来别的废弃示例也能这么放。README 里按用户口径写明原因：
 
 > **因监管要求，基于 MiniQMT 实现的 xtquant 于 2026-10-01 起停止量化交易服务。**
@@ -1574,3 +1574,77 @@ stub = 还没写，dummy = 故意是假的）。
 
 **验收**：全量 **469 通过 / 0 失败（skipped=1）**；`API_INDEX` **135 → 124 模块**
 （正好 −11 = 7 诊断 + 4 示例）；移动全部被 git 认成 `R`（rename），历史不断。
+
+---
+
+### ✅ regtree → `analysis/` + `regtree_jit` + `PEAK_POINT`（2026-10-10）
+
+用户最初提的第 1/2/3 件事，轮到它们了。
+
+#### ① `regtree` 搬运：只改 import，但坑比想象的多
+
+`GolemQ_old/analysis/regtree.py`（794 行）→ `GolemQ/analysis/regtree.py`，**算法与结构逐字保留**
+（因为 jit 版要对拍，改名/重构会让两边无法比对）。四处 import 改接 + 三个真坑：
+
+| 坑 | 详情 |
+|:--|:--|
+| **星号导入收窄会漏名字** | `from GolemQ.analysis.timeseries import *` 实际供了 **3 个**函数（`calc_event_timing_lag` ×11 / `rolling_sum` ×2 / `lineareg_intercept` ×1）。我第一版**只导了 `rolling_sum`** —— 那是靠固定名单猜的。**正确做法**：把对面模块的 **43 个函数名**逐个与本文件的调用点比。漏的那个只在某条分支上才 `NameError` |
+| **`np.mat` 已在 numpy 2.0 移除** | 实测本机 numpy **2.1.3**，报错原文 `Use np.asmatrix instead`。9 处全换（`np.asmatrix` 产出**同一个 `np.matrix` 类型** ⇒ `.I`/`*` 语义不变，是**官方迁移**不是重构）。⚠️ 这**不是可选项**：不换就抛 `AttributeError`，而它**被上层 `except` 吞掉**、诊断打印还带 `len>460` 的门槛 ⇒ **整段静默写出全 NaN**，跑起来 0.009s「成功」 |
+| **29 个常量新树全缺** | 本文件用到 **50 个 `FIELD` 常量，新树只有 4 个**。按 `PITFALLS.md` P1 的纪律，值**逐个从旧树 `utils/parameter.py` 取真值**补进 `core/constants.py`（脚本化插入，避免手抄错）。⚠️ 顺带确认 `ATR_S` 是**我正则的假象**（真名 `ATR_SuperTrend_TIMING_LAG`，混合大小写，且那两处在注释里） |
+
+新增依赖（都是新树缺的）：`analysis/timing.rolling_sum` / `lineareg_intercept`、
+`portfolio/returns.py`（新模块，装 `calc_onhold_returns_np`）。
+
+#### ② `regtree_jit`：**只 JIT 热点，树结构不动**
+
+旧树两条加速路都废了：**Cython**（`regtree_cython.pyx` 写好但 import 被注释，自述「Tree 结构中
+包含一些可变数据类型，不能完全扔进 .pyx」）与一个无用的 `sum1d`（**只有定义、从无调用**，已删）。
+
+这一版换了切法：热点在 `choose_best_split_branch`（对「每特征 × 每取值」各做一次
+**矩阵求逆**），**只把这一层 jit 掉，递归建树仍在 Python**。
+
+**实测数字（用户口径：拿不出数字不算完成）**：
+
+| 层 | python | jit | |
+|:--|--:|--:|:--|
+| 切分搜索 | — | — | **6/6 逐值一致** |
+| 建树（裸） | 332–375 ms | 3.5 ms | **≈95×** |
+| **端到端** | **528.9 ms** | **25.1 ms** | **21.1×** |
+
+端到端各列：`REGTREE_TREND` / `REGTREE_TIMING_LAG` **逐值相同**（离散信号）；
+`REGTREE_PRICE` 最大相对差 **5.4e-13**、`REGTREE_SLOPE` **4.4e-10**（闭式解 vs `xTx.I` 的尾数差）。
+⚠️ 端到端只有 21× 而内核 95× —— **编排层成了瓶颈**（特征写入 / `fit_regtree_trend` / pandas）。
+
+⚠️ **两个 bug 都是对拍抓的，都"跑得通"**：① 切分循环照抄旧版 `range(n-1)`，而这里 y 已拆出去
+⇒ `range(0)` ⇒ **一次都不循环、永远返回"不切分"**；② 叶子值返回标量 `0.0`，而旧版返回的是
+**OLS 系数矩阵** ⇒ 整棵树的叶子全错。**只看"跑起来了"会全盘接受这两个错。**
+
+⚠️ **一处刻意的偏离**：奇异矩阵旧版抛 `NameError`（被上层吞成整段 NaN），jit 里返回 `inf`
+（该切分永不被选中）—— 更稳健，但**是行为差异**，写在模块 docstring 里以免被当成等价。
+
+⚠️ **对 `regtree.py` 的唯一改动**：`calc_regtree_fractal_func` 加了个 `builder=` 逃生口
+（默认仍是自己那版，**行为一字不变**）。否则 jit 那份 60 行编排就得**复制一遍** —— 正是本项目
+最忌的平行实现。`regtree_jit.calc_regtree_fractal_jit` 因此只是三行薄封装。
+
+#### ③ `PEAK_POINT` → `analysis/peak.py`
+
+* `thresholding_algo`（鲁棒极值，**返回 3×len(y)**：[signals, avgFilter, stdFilter]）——
+  旧树给它挂了 `@nb.jit` 并实测**约 500×**，是那一轮 jit 尝试里**真正成功**的一个。
+  本模块**保留能力但不强制**：纯实现永远是参照、numba 在则走 jit 版，**两者逐值一致**有用例钉着。
+* `calc_peak_point_v8`（旧树 `fractal/v8.py` 与 `v8_1.py` **各有一份逐字相同**的实现 ——
+  老树里的平行实现，本模块**只留一份**）、`calc_peak_points`（两输入加权 `9 - i` 合成）。
+* ⚠️ `TREND_STATUS.PEAK_POINT` 新树**原先没有**，已按旧树真值补进 `core/constants.py`。
+
+#### ④ ⚠️ 待你决定：`numba` 要不要进 `MIN_PACKAGES`
+
+`analysis/peak.py` 与 `analysis/regtree_jit.py` 是**新树第一次用 numba**（此前全树 0 import）。
+两个模块的 import 都是**惰性**的：缺 numba 时 `available()` 报 False、`peak.py` 退回纯实现、
+`regtree_jit` 抛 `RuntimeError` —— 所以**不加也能跑**。
+要不要写进 `cli/bootstrap.py` 的 `MIN_PACKAGES`（那份是全树唯一的运行期依赖声明处），
+取决于你想不想让自检**强提示**它缺失。**我没动。**
+
+#### ⑤ 验收
+
+新增/改动：`analysis/{regtree,regtree_jit,peak,timing}.py`、`portfolio/returns.py`、
+`core/constants.py`（+29 `FIELD`、+2 `TREND_STATUS`）、`test_cases/{test_regtree_jit,test_peak,test_timing}.py`。
+**全量 469 → 492 通过 / 0 失败（skipped=1）**。

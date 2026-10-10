@@ -53,6 +53,17 @@
 |:--|:--|:--|
 | f | `find_zs(points)` | 输入笔或线段标记点，输出中枢识别结果。 `[dt]` |
 
+### `peak`
+鲁棒性极值点识别（PEAK_POINT）—— 基于方差统计与 ZSCORE 排序。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `peak_status()` | numba 在不在、jit 开没开（DISABLE_JIT 会关掉）。 |
+| f | `thresholding_algo_py(y, lag, threshold, influence)` | 纯 numpy 参照实现（jit 版必须与它逐值一致）。 |
+| f | `thresholding_algo(y, lag, threshold, influence)` | 鲁棒极值点识别（z-score）。返回 3×len(y) 的数组。 `[dt]` |
+| f | `calc_peak_point_v8(ohlc_data, features)` | 鲁棒性极值点识别（基于方差统计与 ZSCORE 排序）—— 写 ST.PEAK_POINT。 `[dt]` |
+| f | `calc_peak_points(closep, lineareg_price)` | 两个输入的极值合成：收盘价算一遍、拟合价算一遍，加权合成。 `[dt]` |
+
 ### `pivot`
 缠中说禅 走势中枢（pivot，盘整箱体）识别与绘制
 
@@ -68,6 +79,39 @@
 | f | `plot_pivots(ax, pivots, x_mapper, x_last, box_color, box_alpha, edge_color, line_width, label, fontsize, strict)` | 在 K 线图上绘制中枢箱体（因果口径，无未来函数）。 |
 | f | `plot_pivots_plotly(fig, pivots, x_last, row, col, box_color, edge_color, line_width, label, show_ggdd, strict)` | 在 Plotly K 线图上绘制中枢箱体（矩形 + GG/DD 因果台阶 + ZG/ZD 标注）。 |
 | f | `attach_pivot_features(features, symbol, max_bi_count, strict)` | 把中枢字段（ZD/ZG/GG/DD/direction）作为列附加到特征 DataFrame 上。 |
+
+### `regtree`
+回归树（CART）与 regtree 拟合线 —— 从旧树 analysis/regtree.py 搬运。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `choose_best_split_branch(seq_data, rate, dur)` | 判断所有样本是否为同一分类 |
+| f | `split_data_into_binary(seq_data, feature, value)` | 用feature把seq_data按value分成两个子集 |
+| f | `solve_lineareg_func(seq_data)` | 求给定数据集的线性方程 |
+| f | `fit_lineareg_slope_of_the_model_leaf(seq_data)` | 求线性方程的参数 |
+| f | `calc_err_of_the_model(seq_data)` | 预测值和y的方差 |
+| f | `tree_model_evaluation_func(model, branch_data)` | 预测评估函数,数据乘模型,模型是斜率和截距的矩阵 |
+| f | `is_tree_py(obj)` | 用字典保存的二叉树结构 |
+| f | `tree_model_forecast_decision_func_np(tree, branch_data, level)` | 预测/遍历整颗树的二元函数 |
+| f | `create_whole_forecast_tree(tree, seq_data, directions)` | 对测试数据集预测一系列结果, 用于输出， |
+| f | `predict_regression_tree_branch(seq_data, rate, dur, level, code)` | 生成回归树, seq_data是数据, rate是误差下降, dur是叶节点的最小样本数 |
+| f | `fit_regtree_trend(tree, seq_data)` | 输出回归树预测 |
+| f | `calc_regtree_fractal_func(data)` | 快速计算regtree拟合线，因为超过500bar计算速度会变得很慢（超过5秒），所以 bar_limit 默认限制为 300 |
+| f | `calc_regtree_renko_fractal_func(data)` | 计算 regtree_renko 延长形态 |
+| f | `calc_regtree_fractal_vXI(data)` | 快速计算regtree拟合线，因为超过500bar计算速度会变得很慢（超过5秒），所以 bar_limit 默认限制为 300 |
+| f | `calc_regtree_fractal_vXIs(data)` | 快速计算regtree拟合线，因为超过500bar计算速度会变得很慢（超过5秒），所以 bar_limit 默认限制为 300 |
+
+### `regtree_jit`
+regtree 的 numba 加速版（analysis/regtree.py 的 jit 对照实现）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `available()` | numba 在不在。 |
+| f | `regtree_jit_status()` | 排障用：numba 版本 + jit 是否真的开了（DISABLE_JIT 环境变量会关掉它）。 |
+| f | `choose_best_split_branch_jit(seq_data, rate, dur)` | regtree.choose_best_split_branch 的 jit 版；返回形状保持一致 |
+| f | `predict_regression_tree_branch_jit(seq_data, rate, dur, level, code)` | 逐行照搬 regtree.predict_regression_tree_branch，只把切分搜索换成 jit 版。 |
+| f | `tree_forecast_jit(tree, seq_data, directions)` | :func:regtree.create_whole_forecast_tree 的 jit 遍历版。 |
+| f | `calc_regtree_fractal_jit(data)` | :func:regtree.calc_regtree_fractal_func 的 jit 建树版。 |
 
 ### `timeseries`
 时间序列工具 —— 多频重采样与时间轴对齐。
@@ -90,6 +134,8 @@
 | f | `calc_energy_f4(signal)` | calc_energy 的 float32 内核（逻辑同 :func:calc_energy_f8，只差 dtype）。 |
 | f | `calc_energy(signal)` | 信号的绝对能量（同号连续累加、异号重启），按 dtype 选内核。 `[dt]` |
 | f | `resample_multi_frequency_indices_func(data)` | 把另一个频率算好的指标对齐到 data 的时间轴上（单标的）。 |
+| f | `rolling_sum(a, n)` | pandas.Series.rolling(n).sum() 的 numpy 版（前 n-1 个是 NaN）。 `[dt]` |
+| f | `lineareg_intercept(slope1, y1, slope2, y2)` | 两条直线的交点横坐标：y = slope*x + y 两式相等解 x。 `[dt]` |
 
 ## GolemQ.cli
 
@@ -1009,6 +1055,13 @@ Poolcoef Benchmark 子类
 | f | `BacktestEngine.run(features_dummy)` | 跑一次回测。 |
 | f | `make_ashare_engine(strategy, sizer, principal, benchmark)` | 便捷构造：用 A 股口径的成本与规则。 |
 
+### `returns`
+持仓收益的计算 —— 纯函数，为 JIT / Cython 而写成显式循环。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `calc_onhold_returns_np(closep, daily_position, long)` | 当前持仓的浮动收益；一次持仓结束时（仓位归 0）下一根起重新计。 `[dt]` |
+
 ### `rules`
 交易规则 —— 中立的参数容器，不预设任何市场的规则。
 
@@ -1586,6 +1639,26 @@ stock_metadata_day 的落库契约。
 | f | `TestNoQuantaxis.test_quantaxis_not_loaded_at_runtime()` | ② 运行时守卫：把入口与市场包导入一遍，sys.modules 里不许有它。 |
 | f | `TestNoQuantaxis.test_dead_handles_stay_dead()` | ③ 符号守卫：那 5 个句柄不许在 settings / core / GolemQ 上复活。 |
 
+### `test_peak`
+analysis/peak.py（PEAK_POINT）—— jit 与纯实现的对拍，以及加权合成的口径。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestJitMatchesPython` | 两个实现同口径 —— 这条比速度更重要。 |
+| f | `TestJitMatchesPython.test_random_walk_identical()` |  |
+| f | `TestJitMatchesPython.test_spike_shape()` | 恒定序列插一个尖峰：只有尖峰那一点是 ±1。 |
+| f | `TestJitMatchesPython.test_returns_three_rows()` |  |
+| f | `TestJitMatchesPython.test_short_input_raises_indexerror_like_the_old_one()` | 比 lag 还短 —— 循环体一次都不进（只填第 lag-1 个 avg/std 之前就越界）。 |
+| C | `TestCalcPeakPointV8` |  |
+| f | `TestCalcPeakPointV8.test_writes_the_peak_point_column()` |  |
+| f | `TestCalcPeakPointV8.test_accepts_an_existing_features_frame()` | 传 features 时就地写列（旧树就这么用的）。 |
+| f | `TestCalcPeakPointV8.test_values_are_in_plus_minus_one_and_zero()` |  |
+| f | `TestCalcPeakPointV8.test_first_lag_points_are_zero()` | 照抄旧实现：前 lag 个点恒为 0。 |
+| C | `TestCalcPeakPoints` | 两个输入加权合成（9 - i）。 |
+| f | `TestCalcPeakPoints.test_second_input_speaks_only_where_first_is_silent()` | 第一个输入有信号 → 权重 9；第二个只在第一个为 0 的位置上生效（权重 8）。 |
+| f | `TestCalcPeakPoints.test_first_input_wins_on_overlap()` | 同一位置两个输入都有信号 ⇒ 第一个（权 9）胜出，因为后写的只在原值为 0 时才覆盖。 |
+| f | `TestCalcPeakPoints.test_no_signal_is_zero()` |  |
+
 ### `test_pivot`
 缠论中枢（盘整箱体）的回归用例。
 
@@ -1719,6 +1792,23 @@ core/presentation.py 的状态 banner —— 纯渲染、显示宽度、光标�
 | f | `TestRefdataTtlGate.test_stale_is_fetched()` |  |
 | f | `TestRefdataTtlGate.test_never_succeeded_is_fetched()` | 从没成功过（age=None）按「该取」处理 —— 别把新库冻住。 |
 | f | `TestRefdataTtlGate.test_no_ttl_means_no_gate()` | 默认 ttl_hours=None = 不做闸，行为与从前逐字相同。 |
+
+### `test_regtree_jit`
+analysis/regtree_jit.py —— jit 版与 regtree.py 的对拍。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestSplitSearchMatches` | 切分搜索必须逐值一致 —— 它是整棵树的骨架。 |
+| f | `TestSplitSearchMatches.test_same_split_on_random_data()` |  |
+| f | `TestSplitSearchMatches.test_no_split_returns_none_feature()` | 所有 y 相同 ⇒ 不切分（旧版走 set(...) == 1 那条早退）。 |
+| C | `TestEndToEndMatches` | 端到端：离散列逐值相同，连续列在浮点容差内。 |
+| f | `TestEndToEndMatches.setUpClass()` |  |
+| f | `TestEndToEndMatches.test_discrete_columns_are_bit_identical()` |  |
+| f | `TestEndToEndMatches.test_continuous_columns_within_tolerance()` |  |
+| C | `TestSpeedup` | 加速要有数字（用户口径）。这里只做松断言：CI 机器抖动不该让用例红。 |
+| f | `TestSpeedup.test_jit_is_at_least_three_times_faster()` |  |
+| C | `TestStatusWithoutNumba` | regtree_jit_status / available 不管 numba 在不在都要能答。 |
+| f | `TestStatusWithoutNumba.test_status_shape()` |  |
 
 ### `test_stock_cn`
 

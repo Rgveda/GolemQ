@@ -39,6 +39,7 @@ __all__ = [
     'Timeline_Integral', 'Timeline_duration', 'calc_event_timing_lag',
     'calc_feature_event_timing_lag', 'calc_energy', 'calc_energy_f8',
     'calc_energy_f4', 'resample_multi_frequency_indices_func',
+    'rolling_sum',
 ]
 
 
@@ -238,3 +239,43 @@ def resample_multi_frequency_indices_func(data, *args, **kwargs):
         indices = indices.set_index(['datetime', 'code'], drop=True)
 
     return indices
+
+
+def rolling_sum(a: np.ndarray, n: int = 4) -> np.ndarray:
+    """``pandas.Series.rolling(n).sum()`` 的 numpy 版（**前 n-1 个是 NaN**）。
+
+    同 :func:`Timeline_*`，它也是**从旧树 `analysis/timeseries.py` 搬回**的
+    （`regtree` 要用）。用 `cumsum` 做前缀和再相减，O(N) 而非 O(N·n)。
+
+    ⚠️ `len(a) <= n` 时**全 NaN**（不是「短窗口也算」）—— 与 pandas 不同：
+    pandas 的 `rolling(4).sum()` 在第 4 个点就出值，这里是 `len > n` 才出。
+    实测钉住：
+
+    >>> rolling_sum(np.array([1., 2., 3., 4., 5.]), 2).tolist()
+    [nan, 3.0, 5.0, 7.0, 9.0]
+    >>> rolling_sum(np.array([1., 2., 3., 4.]), 4).tolist()   # len == n ⇒ 全 NaN
+    [nan, nan, nan, nan]
+    """
+    if (len(a) > n):
+        ret = np.cumsum(a, dtype=float)
+        ret[n:] = ret[n:] - ret[:-n]
+        return np.r_[np.full(n - 1, np.nan), ret[n - 1:]]
+    else:
+        return np.full(len(a), np.nan)
+
+
+def lineareg_intercept(slope1, y1, slope2, y2):
+    """两条直线的**交点横坐标**：``y = slope*x + y`` 两式相等解 x。
+
+    同 :func:`rolling_sum`，也是从旧树 `analysis/timeseries.py` 搬回的（`regtree` 要用）。
+
+    >>> lineareg_intercept(1.0, 0.0, -1.0, 4.0)     # y=x 与 y=-x+4 交于 x=2
+    2.0
+    >>> lineareg_intercept(2.0, 1.0, 2.0, 5.0)      # 平行 ⇒ 除零（旧树同行为，不特判）
+    Traceback (most recent call last):
+        ...
+    ZeroDivisionError: float division by zero
+    """
+    x = (y2 - y1) / (slope1 - slope2)
+    y = slope1 * x + y1                             # noqa: F841 旧树算了没用，逐字保留
+    return x

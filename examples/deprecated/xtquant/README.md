@@ -1,6 +1,6 @@
-# `examples/Deprecated/xtquant/` —— **已停用**：xtquant / MiniQMT 示例
+# `examples/deprecated/xtquant/` —— **已停用**：xtquant / MiniQMT 示例
 
-> ## ⚠️ 为什么在 `Deprecated/` 下
+> ## ⚠️ 为什么在 `deprecated/` 下
 >
 > **因监管要求，基于 MiniQMT 实现的 xtquant 于 2026-10-01 起停止量化交易服务。**
 >

@@ -83,6 +83,11 @@ DOCTEST_MODULES = (
     # 搬回的真实现。⚠️ 其中 `Timeline_duration` 曾是本树 stub 并被当死代码删过 ——
     # 复活的东西必须有测试，否则下次还会被删。见 GLOSSARY「stub vs dummy」。
     'GolemQ.analysis.timing',
+    # PEAK_POINT（鲁棒极值识别）：纯函数（numpy/pandas），numba 是**惰性 import**，
+    # 缺它时纯实现顶上 —— 故收集本模块不需要 numba 在场。
+    'GolemQ.analysis.peak',
+    # 持仓浮动收益：显式循环的纯函数（旧树就是为 JIT 写的）。
+    'GolemQ.portfolio.returns',
 )
 
 
