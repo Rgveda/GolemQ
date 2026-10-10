@@ -234,8 +234,33 @@ def xdxr_to_adj(dates, close, xdxr):
     ⚠️ **一个必须照做的对齐细节**：事件日期**不一定落在日线里**（实测 600519 的
     2006-05-19 除权日，日线整段 2006-05-18~05-24 是空的）。这种事件要**挪到
     下一个存在的交易日**再去算 —— 直接 `join` 会把它丢掉，结果就是**整段历史
-    差一个因子**（实测 600519 差 2 倍、600601 差 10 倍）。实证：按这个对齐，
-    抽样 120 只票与存量 `stock_adj` **逐值相同（<1e-9）**。
+    差一个因子**（实测 600519 差 2 倍、600601 差 10 倍）。
+
+    ⚠️ **与 QUANTAXIS 的一处刻意偏离：无事日的比率强制为精确 1.0。**
+    公式里 `preclose.shift(-1) / close` 在**无除权日**数学上**恒为 1**（那种日子
+    `preclose == close.shift(1) * 10 / 10 == close.shift(1)`），但 `x * 10 / 10`
+    在 IEEE754 下**可能差 1 ulp**，于是比率 ≈1 却非 1 —— **`cumprod` 把这点残差
+    一路连乘累积**。实测 `000711` 的无事段 1590 行漂到 `1 ± 2.9e-15`，
+    且**相邻日期的比特各不相同**。
+
+    后果不是"精度差一点"：因子因此**不再是分段常数**，会把原始行情里
+    **本来严格相等的价格撬开**（低价股同日 high 重复取值极多），czsc 分型的
+    **平局判定**随之翻转 —— 实测同一份 K 线、笔 59→61、中枢 4→6、
+    走势 盘整→上涨趋势（`PITFALLS.md` P30）。
+
+    故本函数把无事日的比率**显式置为精确 1.0**。这是**恒等变换**
+    （那些日子的真实比率就是 1），只是抹掉浮点残差。改后因子恢复
+    **分段常数**、末日**精确 1.0**；改前末日是 `1.0000000000000029` ——
+    一个前复权因子**大于 1** 本身就是警号。
+
+    ⚠️ **事件日的比率不动** —— 那是一次**真实除法**（如 `close*10/20`），
+    1 ulp 是这类计算的固有属性（10 送 10 会得到 `0.49999999999999994`），
+    **别去"修"它**：事件日只算一次，其后的 `cumprod` 乘的全是精确 1.0，
+    **分段常数**照样成立。要抹平它反而会引入一个新错误。
+    （两类比率的区分及其理由，见 `PITFALLS.md` P30 的末节。）
+
+    实证（2026-10-10，全市场 400 只抽样）：改前 313 只有"≈1.0 噪声行"、
+    改后与 4.4 存量（QUANTAXIS 生成）在**无事段逐值相同**。
 
     :param dates: 交易日 `'YYYY-MM-DD'` 列表（**升序**，与 `close` 等长）
     :param close: 对应的**不复权**收盘价
@@ -259,17 +284,27 @@ def xdxr_to_adj(dates, close, xdxr):
     >>> [round(float(x), 6) for x in xdxr_to_adj(
     ...     ['2024-01-01', '2024-01-02', '2024-01-03'], [10.0, 10.0, 2.0], ev)]
     [0.2, 0.2, 1.0]
+
+    **无事段的因子必须是"精确"1.0，不是 ≈1.0** —— 这条钉的正是上面那处偏离。
+    改成 `>= 1e-15` 之类的容差写就抓不住它了（改前这里漂到 2.9e-15）：
+
+    >>> days = ['2024-%02d-%02d' % (m, d) for m in range(1, 13) for d in range(1, 29)]
+    >>> closes = [10.0 + i * 0.37 for i in range(len(days))]     # 336 个交易日，零事件
+    >>> max(abs(float(x) - 1.0) for x in xdxr_to_adj(days, closes, []))
+    0.0
     """
     idx = [str(d) for d in dates]
     df = pd.DataFrame({'close': list(close)}, index=pd.Index(idx, name='date'))
 
     slots: dict = {}
+    event_days: set = set()          # 真正改变了 `preclose` 的日子（两类事件合并）
     for r in (xdxr or []):
         if int(r.get('category') or 0) != 1:
             continue
         pos = [i for i, d in enumerate(idx) if d >= str(r.get('date'))]
         if not pos:
             continue            # 事件晚于最后一根 bar：不影响任何已有行
+        event_days.add(idx[pos[0]])
         slot = slots.setdefault(idx[pos[0]], {k: 0.0 for k in XDXR_FIELDS})
         for k in XDXR_FIELDS:
             slot[k] += r.get(k) or 0.0
@@ -298,6 +333,15 @@ def xdxr_to_adj(dates, close, xdxr):
         prev = data['close'].shift(1).loc[day]
         if prev == prev and prev > 0:     # 非 NaN
             data.loc[day, 'preclose'] = float(prev) / float(suogu)
+            event_days.add(day)           # 只有真改了 preclose 才算事件日
 
-    data['adj'] = (data['preclose'].shift(-1) / data['close']).fillna(1)[::-1].cumprod()
+    # `ratio[t] = preclose[t+1] / close[t]`：**下一根不是事件日**时它数学上恒为 1
+    # （`preclose[t+1] == close[t] * 10 / 10`），这里把浮点残差抹掉 —— 见 docstring
+    # 「与 QUANTAXIS 的一处刻意偏离」。不这么做，`cumprod` 会把 1 ulp 的残差连乘
+    # 放大成 1e-15 量级的**逐日不同**的噪声，进而撬开价格的相等关系。
+    ratio = data['preclose'].shift(-1) / data['close']
+    next_is_event = pd.Series(data.index, index=data.index).shift(-1).isin(event_days)
+    ratio[~next_is_event.values] = 1.0
+
+    data['adj'] = ratio.fillna(1)[::-1].cumprod()
     return data['adj']

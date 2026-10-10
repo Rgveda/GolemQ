@@ -100,7 +100,7 @@ df = res.data        # MultiIndex (ts, code)，已前复权
 ## 测试
 
 ```bash
-python GolemQ/test_cases/run_tests.py     # 404 通过
+python GolemQ/test_cases/run_tests.py     # 全量回归（跑完会打印条数与通过/失败）
 ```
 
 ## 已知状态（诚实交代）

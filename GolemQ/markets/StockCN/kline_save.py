@@ -1061,7 +1061,8 @@ def save_adj(codes, verbose=True, echo=None, target='stock'):
 
     三道护栏（前复权因子写坏 = 全链路静默错价，宁可拒绝）：
     1. **空则不写**（`replace_code_rows` 内建）；
-    2. **不变量**：末日因子必须 == 1.0、所有因子必须 > 0，不满足就**拒绝该 code 并记录**；
+    2. **不变量**：末日因子必须**精确** == 1.0（**不放容差** —— 见 `PITFALLS.md` P30）、
+       所有因子必须 > 0，不满足就**拒绝该 code 并记录**；
     3. **只对事件变化的 code 调**（判据在 :func:`kline_doc.xdxr_adj_events_changed`）——
        调用方负责；本函数不自己判断，因为「事件变没变」要在写 `{target}_xdxr` **之前**取旧值。
 
@@ -1097,7 +1098,13 @@ def save_adj(codes, verbose=True, echo=None, target='stock'):
                 if not len(s):
                     out['skipped'].append(code)
                     continue
-                if abs(float(s.iloc[-1]) - 1.0) > 1e-9 or bool((s <= 0).any()):
+                # ⚠️ 末日因子要求**精确** 1.0，**不许用容差**。原先这里是 `> 1e-9`，
+                # 而 `PITFALLS.md` P30 那类浮点漂移产出的是 `1 + 2.9e-15` ——
+                # 稳稳落在 1e-9 之内，于是护栏**放行了坏因子**。漂移的后果不是
+                # "精度差一点"：它让因子不再是分段常数，撬开价格相等关系、
+                # 翻转 czsc 分型的平局判定。`fq.xdxr_to_adj` 已保证无事段比率
+                # 恒为精确 1.0，所以这里可以直接要求 `==`。
+                if float(s.iloc[-1]) != 1.0 or bool((s <= 0).any()):
                     out['refused'].append({
                         'code': code,
                         'reason': '不变量不成立：末日因子 {!r}'.format(float(s.iloc[-1]))})
@@ -1118,11 +1125,16 @@ def save_adj(codes, verbose=True, echo=None, target='stock'):
     return out
 
 
-def verify_adj(codes, tol=1e-9, verbose=True):
+def verify_adj(codes, tol=0.0, verbose=True):
     """把**重算结果**与存量 `stock_adj` 逐值比 —— 移植保真度的一次性核对。
 
     只对**事件没有变化**的 code 有意义（那种情形下重算必须与存量逐值相同）。
-    实测抽样 120 只：**120 只全部 < 1e-9**（对齐细节见 `fq.xdxr_to_adj` 的说明）。
+    **默认 `tol=0.0`（要求逐值相同）**：因子表重算过一次之后，两边就是同一份
+    代码的同一份输出，`==` 是能达成的。原先默认 `1e-9` —— 那个容差**正是
+    放行 `PITFALLS.md` P30 那道浮点漂移的原因**（漂移量 1e-15，被 1e-9 吞掉），
+    所以这里**故意收紧**，让这类回归下次能被这个核对抓到。
+
+    （`fq.xdxr_to_adj` 的对齐细节见其 docstring；无事段的因子现已保证精确 1.0。）
 
     :returns: ``{'checked':…, 'exact':…, 'worst':[(code, max相对差), …]}``
     """

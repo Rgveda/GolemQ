@@ -1412,6 +1412,26 @@ ETF 独立成 ETF_CN / etf_* 之后的路由测试。
 | f | `test_data_conversion()` | 测试数据转换功能 |
 | f | `test_cli_help()` | 测试CLI帮助信息 |
 
+### `test_fq`
+markets/StockCN/fq.py 的复权因子 —— 重点是分段常数这条不变量。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestNoDrift` | 无事段必须精确为 1.0 —— 这条是 P30 的直接回归。 |
+| f | `TestNoDrift.test_no_event_factors_are_exactly_one()` |  |
+| f | `TestNoDrift.test_no_drift_on_a_long_run()` | 长序列累积 —— 漂移正是靠 cumprod 累积出来的，短序列不一定显形。 |
+| C | `TestPiecewiseConstant` | 因子在两次事件之间恒为常数 —— 这才是它的正确形态。 |
+| f | `TestPiecewiseConstant.test_runs_around_an_event_are_flat()` |  |
+| C | `TestEventsStillScale` | 抹掉漂移不能顺手改掉真事件的口径 —— 防"修过头"。 |
+| f | `TestEventsStillScale.test_ten_for_ten()` |  |
+| f | `TestEventsStillScale.test_cash_dividend_and_rights()` | 送股 + 派现 + 配股，三者同时 —— 走的是同一条加性公式。 |
+| f | `TestEventsStillScale.test_suogu_is_multiplicative()` | 扩缩股（category 11）走乘性口径，且事后仍是精确 1.0。 |
+| f | `TestEventsStillScale.test_event_on_a_missing_day_moves_to_the_next_bar()` | 事件日不在日线里 ⇒ 挪到下一个存在的交易日（丢了就是整段差一个因子）。 |
+| C | `TestEdgeCases` |  |
+| f | `TestEdgeCases.test_single_row()` |  |
+| f | `TestEdgeCases.test_event_after_the_last_bar_is_ignored()` |  |
+| f | `TestEdgeCases.test_index_is_the_input_dates_in_order()` |  |
+
 ### `test_heartbeat_fix`
 测试HeartbeatMonitor超时实例清理修复
 
