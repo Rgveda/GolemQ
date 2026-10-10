@@ -86,3 +86,39 @@ streamlit run examples/app_renko.py
 （即 **lb > ub**）。本 demo 走的是 `renko_chart`，它的 lb/ub **有序** —— 实测两族
 都满足 `lb <= ub`。要走 `source_aligned` 的那条线（另案的 `calc_renko_atr_vX`）
 必须自己 `min/max`。详见 `analysis/renko.py` 的模块 docstring。
+
+## `app_pivot_renko.py` —— 缠论中枢 × RENKO 砖块界（**叠加图**）
+
+```bash
+streamlit run examples/app_pivot_renko.py
+```
+
+⚠️ 文件名是 `app_pivot_renko`（**pivot**，与上面那份 `app_pivot.py` 一致）。
+
+侧边栏可选：代码 / 频率（**日线 + 5、15、30、60min**）/ 加长历史，
+以及**两条方法各自的显示开关**（中枢箱体 / GG-DD / 笔 / RENKO S 族 / RENKO L 族 /
+`RENKO_BAR` 信号）—— 分开开关就是为了对照。
+
+### 它要回答的问题
+
+**两条互不相干的方法，在同一张图上说了什么。**
+
+* **缠论中枢**（`analysis/pivot.py`）：从 `czsc` 的**笔**序列找「至少三笔重叠」的箱体。
+  给的是**结构**（箱体上下沿 + 走势类型 盘整/上涨/下跌）。
+* **RENKO 砖块界**（`analysis/renko_jit.py`）：把价格压成固定砖高的砖块，给出
+  S 族（全段 ATR 中位数砖高）与 L 族（1200 bar 分窗、每窗自搜砖高）的上下界。
+  给的是**趋势**（`RENKO_BAR` 只在 S、L **同向**时才给 ±1）。
+
+两者**没有共同的数学基础** ⇒ 图上的分歧是常态。实测 `000711`/60min 末根
+**S=+1 而 L=−1** ⇒ `RENKO_BAR=0`（不给信号）；`600519`/日线则 S=L=−1 ⇒ `−1`。
+**本页不做任何融合**，分歧本身就是要看的东西。
+
+### 三条刻意设计
+
+1. **x 轴逐行对齐**才做得了叠加：中枢/笔用的 `dt` 与 RENKO 特征的索引
+   **是同一份帧**（同一个 `ohlc` 顺序构造），实测两者逐行相同。
+   不是"看起来差不多"——对不齐的叠加图会把人误导。
+2. **RENKO 砖界画台阶线**（`line_shape='hv'`）：砖界在两次分型之间**恒定不变**，
+   用普通折线会把"没变化"画成斜线，看不出台阶。
+3. **jit 缺失时自动退回纯版**（`renko_jit.available()`），并在侧边栏**如实标出**
+   走的是哪个版本 —— 两版逐值相同（见 `test_renko_jit.py`），只是快慢差 ~6×。
