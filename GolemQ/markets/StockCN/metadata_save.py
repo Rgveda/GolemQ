@@ -357,3 +357,33 @@ def save_turnover(since=None, until=None, batch: int = 5000, verbose: bool = Tru
                 stats['read'], stats['written'], stats['skipped'],
                 stats['upserted'], stats['modified']))
     return out
+
+
+def refresh_turnover(days: int = 7, verbose: bool = True, echo=None, **kwargs) -> dict:
+    """**增量刷新**最近 `days` 个自然日的换手率（供 `--save` 调用）。
+
+    ⚠️ **它连 4.4**（走 :mod:`GolemQ.core.migrate44`）。这条只允许出现在
+    **取数侧**（`--save` / 一次性搬运），库代码与交易运行时不许调它 ——
+    见 `core/migrate44.py` 的模块文档与 `DECISIONS.md` D34。
+
+    为什么用 4.4 而不是 东财/baostock 的在线接口做刷新：**后两者都有访问频次限制**
+    （用户 2026-10-10 明确），而 4.4 是同局域网的 Mongo 读、没有频次问题。
+    等 4.4 下线，把 :data:`SOURCES` 指到在线适配器即可 —— **换源只改那一处**。
+
+    :param days: 回溯的自然日数（含今天）。默认 7 天：够覆盖一个长假 + 补漏，
+        且每天的 upsert 是幂等的，重叠跑没有代价。
+    :returns: ``save_turnover`` 的统计；**4.4 不可达时**返回
+        ``{'unavailable': <原因>}`` 而不是抛 —— 换手率是加分项，
+        不该让整个 `--save` 失败（调用方负责把它说出来）。
+    """
+    from datetime import date, timedelta
+
+    since = (date.today() - timedelta(days=days)).isoformat()
+    try:
+        return save_turnover(since=since, verbose=verbose, echo=echo, **kwargs)
+    except Exception as exc:                      # noqa: BLE001
+        reason = '{}: {}'.format(type(exc).__name__, exc)
+        say = echo or print
+        if verbose:
+            say('[metadata_day] 4.4 不可达，跳过换手率刷新 —— {}'.format(reason))
+        return {'unavailable': reason}

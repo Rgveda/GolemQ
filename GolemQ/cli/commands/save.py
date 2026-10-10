@@ -43,6 +43,11 @@ def add_save_arguments(parser) -> None:
     parser.add_argument('--save-start', default='2015-01-01',
                         help="分钟线**首次**灌库的起点（库里没有该 code 时才用），默认 2015-01-01")
 
+    parser.add_argument('--save-turnover-days', type=int, default=7,
+                        help="换手率增量刷新的回溯自然日数（默认 7：够覆盖一个长假）。"
+                             "⚠️ 它读 4.4（同局域网，无频次限制）；4.4 不可达时"
+                             "只报警、不拖垮 --save")
+
     parser.add_argument('--save-margin-days', type=int, default=0,
                         help="增量窗口往前多算几个交易日（默认 0 = 只覆盖水位当天那一根）。"
                              "调大只在「源端回补了更早历史」的修补场景有用，"
@@ -113,6 +118,7 @@ def run_save(args) -> None:
             refdata_ttl_hours,
             save_refdata,
         )
+        from GolemQ.markets.StockCN.metadata_save import refresh_turnover
 
         # 源名决定整条流程。**K 线只有 pytdx 供得了**（`kline_save` 全模块只走
         # tdx 适配器），故非 tdx 侧一律跳过 K 线/xdxr/adj，只做参考数据。
@@ -154,9 +160,14 @@ def run_save(args) -> None:
         # 表在 CLI 拼，`refdata_save` / `kline_save` 都不认识 UI：它们只负责
         # `on_progress` 回调与 `echo` 输出汇。标题报**真实源名**而非 SOURCE 取值
         # （`--save tdx` 走的源就叫 pytdx，报 `source: pytdx` 才不误导）。
+        # 元数据（换手率）增量刷新：只有 tdx 侧的非干跑才做，且 4.4 不可达会自行降级
+        do_turnover = tdx_like and not args.save_dry_run
+
         rows = []
         if do_refdata:
             rows.append(('参考数据', None, requested))
+        if do_turnover:
+            rows.append(('元数据', None, ['turnover']))
         for tgt in (k_targets if tdx_like and k_targets else ()):
             rows.append(('K线', tgt,
                          [target_collection_name(tgt, f) for f in k_freqs]))
@@ -212,6 +223,26 @@ def run_save(args) -> None:
                     name, RUNNING if phase == 'start' else (
                         DONE if (entry.get('rows') or entry.get('cached'))
                         else PENDING)))
+
+        # —— 换手率（元数据）增量刷新 ——
+        # ⚠️ **它读 4.4**（同局域网 Mongo 读，**没有频次限制**）。选它而不是
+        # 东财/baostock 的在线接口做刷新，正是因为**后两者都有访问频次限制**
+        # （用户 2026-10-10 明确）。等 4.4 下线，换源只改
+        # `metadata_save.SOURCES` 那一处。
+        # ⚠️ **不可达时降级**：报警 + 跳过，不拖垮整个 `--save` —— 换手率是加分项，
+        # 不该让 K 线取数跟着失败。
+        if do_turnover:
+            if banner is not None:
+                # 阻塞调用**之前**先点亮（`PITFALLS.md` P22；同 `xdxr_node` 那条）
+                banner.mark('turnover', RUNNING)
+            turnover = refresh_turnover(days=args.save_turnover_days,
+                                        verbose=args.verbose, echo=say)
+            if banner is not None:
+                banner.mark('turnover',
+                            DONE if 'unavailable' not in turnover else PENDING)
+            if 'unavailable' in turnover:
+                # 降级要**说出来**（上面 `refresh_turnover` 在非 verbose 下是静默的）
+                say('[metadata_day] 换手率刷新跳过：{}'.format(turnover['unavailable']))
 
         if not tdx_like:
             say('[save] 源 {}：K 线/xdxr/adj 只有 pytdx 供得了，本命令跳过'.format(value))

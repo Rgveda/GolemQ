@@ -1496,3 +1496,31 @@ stub = 还没写，dummy = 故意是假的）。
 * 它原来**一条断言都没有**（是个打印脚本），已补不变量：`ChipList` 非空、
   获利盘比例**长度等于输入、非负、≤1**、成本分布等长 —— 否则"通过"没有意义。
 * **全量 448 → 469 通过 / 0 失败；skipped 2 → 1**（少的就是它）。
+
+### ✅ 换手率挂进 `--save`（2026-10-10，用户要求）
+
+**用户原话**：「换手率要更新在 `--save all`,`--save X` 里面，现在没有」；
+并给了约束：「目前两条路线，东财，还有 baostock 补数据，但是**这两个都有访问频次限制**」。
+
+**怎么做**：`--save` 里新增一步「元数据 · turnover」，走
+`metadata_save.refresh_turnover(days=args.save_turnover_days, …)` ——
+默认回溯 **7 个自然日**（够覆盖一个长假；upsert 幂等，重叠跑没代价）。
+
+| 决定 | 理由 |
+|:--|:--|
+| **刷新源仍读 4.4**（同局域网 Mongo 读）| 用户点明东财/baostock 的**在线接口都有频次限制**；4.4 是局域网读、没有这个问题。等 4.4 下线，**换源只改 `metadata_save.SOURCES` 一处** |
+| **4.4 不可达时降级**（报警 + 跳过）| 换手率是**加分项**，不该让 K 线取数跟着失败。降级**必须说出来**（`refresh_turnover` 在非 verbose 下是静默的，故调用方补一行）|
+| 阻塞调用**前**先 `mark(RUNNING)` | `PITFALLS.md` P22；且有个 **AST 结构用例**（`TestBlockingCallsLightUpTheBanner`）专门断言这件事 |
+| 新旗标 `--save-turnover-days`（默认 7）| 与 `--save-margin-days` 同风格 |
+
+**实测**（`--save tdx --save-codes 600519 --save-frequencies day`）：
+**exit 0**，banner 里真的多了一行 `元数据  turnover ·`，且该节点**亮两次**（RUNNING → DONE）；
+`refresh_turnover(days=3)` 单独跑：`stock_ranking` 读 10,400 / 写 10,400 /
+**upserted 0 / modified 10,400**（= 那些行已在库里，**幂等正确**）；
+`stock_valuation` 0 行（它的最新只到 2026-09-30，3 天窗口内确实没有）✓
+
+⚠️ **我在这步插错过一次**：`--save-margin-days` 的 `add_argument` 本来就跨行，
+我按单行做锚点替换，**吃掉了它的第一行**、只剩 `help=` 悬空 ⇒ `IndentationError`。
+被 `test_cli_commands` 当场抓住。**教训**：跨行语句别拿第一行当唯一锚点。
+
+全量 469 通过 / 0 失败（skipped=1）。
