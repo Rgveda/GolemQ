@@ -1,8 +1,26 @@
 # GolemQ
 
-A Python package for quantum-inspired algorithms.
+**A 股量化框架**：行情取数 → 复权 → 落库 → 回测 → 实时订阅，全部落在**一个 MongoDB 8.3** 上。
 
-## Installation
+> ⚠️ **本项目正在重构中**：新树 `GolemQ/` 逐模块替换老树 `GolemQ_old/`（后者不入库）。
+> 进度与下一步见 [`HANDOFF.md`](HANDOFF.md)，遗留缺陷见 [`MIGRATION_STATUS.md`](MIGRATION_STATUS.md)。
+
+## 它是什么 / 不是什么
+
+- ✅ A 股（沪深北）**日线与分钟线**的取数 → 复权 → 落库 → 消费，一条链
+- ✅ **实时 L1/L2 快照订阅**（腾讯源）→ 按日时间序列集合 `realtime_YYYY-MM-DD`
+- ✅ 回测与组合（`portfolio/`，策略与引擎分离）
+- ❌ **不是** “quantum-inspired algorithms” —— 那是 `pyproject.toml` 里一句**过时的模板残留**
+
+## 环境要求
+
+| | |
+|:--|:--|
+| Python | **≥ 3.12** |
+| MongoDB | **8.3，且只用 8.3** —— 时间序列集合是数据模型的基础 |
+| 平台 | Windows x64 / 主流 Linux |
+
+## 安装
 
 ```bash
 conda create -n GolemQ python=3.12
@@ -10,9 +28,87 @@ conda activate GolemQ
 pip install -e .
 ```
 
-## Usage
+⚠️ `pyproject.toml` **不声明运行期依赖** —— 真实依赖表在 `GolemQ/cli/bootstrap.py` 的
+`MIN_PACKAGES`（全树唯一的声明处），CLI 启动自检会逐条核。核心几条：
+
+| 包 | 为什么 |
+|:--|:--|
+| `numpy >= 2.0` / `pandas >= 2.3` / `polars >= 1.24` | 计算与列式构造 |
+| `pymongo >= 3.0` | 8.3 的唯一入口 |
+| `pytdx` | **K 线的唯一数据源**（通达信协议） |
+| `tqdm` | 进度条 |
+
+可选源（缺 token 就自动不可用，不影响主链路）：`akshare`、`tushare`、`tdxaidata`。
+
+## 配置：全在 `~/.GolemQ/`（**凭证不入库**）
+
+```
+~/.GolemQ/settings/config.ini      # MongoDB uri / 钉钉 / Server酱 / tdxaidata token …
+~/.GolemQ/settings/tdx_hosts.json  # 通达信服务器池（每周探活自动写）
+```
+
+## 用法
+
+```bash
+python -m GolemQ.cli --save tdx        # 参考数据 + K线(stock/index/etf × day,1,5,15,30,60min) + 复权
+python -m GolemQ.cli --save-coverage   # 只读：K 线覆盖缺口报告
+python -m GolemQ.cli --sub l1_tencent  # 实时 L1 快照订阅（腾讯）
+python -m GolemQ.cli --help
+```
 
 ```python
-import GolemQ
+from GolemQ.fetch.kline import get_kline_price_min, get_kline_price_v3
 
-print(GolemQ.__version__)
+res, code = get_kline_price_v3(['600519'], start='2024-01-01')   # 日线
+res, code = get_kline_price_min(['600519'], start='2026-09-01')  # 分钟线
+df = res.data        # MultiIndex (ts, code)，已前复权
+```
+
+⚠️ **门面暂不暴露 `frequency`**（当前只出 60min）。底层 `markets/StockCN/kline83.py`
+的 `get_kline_price_min(..., frequency=...)` 支持 `1/5/15/30/60min`，但从
+`fetch/kline.py` 门面 → `base_market.py` 契约 → 市场实现这条链上**没有这个形参**；
+要读更细的频率得直接调 `kline83`。是否把它提到门面是**待定**（见 `HANDOFF.md`）。
+
+两者**默认 `realtime=True`**：读到的历史会与当天的 `realtime_<日期>` tick 合成。
+
+## 数据规模（2026-10 实测，供参考）
+
+| 集合 | 行数 |
+|:--|--:|
+| `stock_1min` | **21.4 亿** |
+| `stock_day` | 1792 万 |
+| `index_day` / `etf_day` | 457 万 / 322 万 |
+
+整个 `golemq_stock_cn`：**逻辑 213.6 GB → 磁盘 61.5 GB**（时间序列列式压缩 ≈3.5×），
+另有索引 7.1 GB。
+
+## 文档是资产，按顺序读
+
+| 顺序 | 文档 | 读它干什么 |
+|:--|:--|:--|
+| 0 | `HANDOFF.md` | **当前进度与下一步** |
+| 1 | `PITFALLS.md` | 已知陷阱（看起来像 bug 的刻意设计，**勿“修正”**） |
+| 2 | `DECISIONS.md` | 架构决定与**弃案理由** |
+| 3 | `GLOSSARY.md` | 行话（第四节几乎全是老代码继承） |
+| 4 | `API_INDEX.md` | 110 模块的导航索引 |
+| 5 | `RESTRUCTURE_PLAN.md` / `MIGRATION_STATUS.md` | 重构方案与遗留缺陷 |
+
+## 测试
+
+```bash
+python GolemQ/test_cases/run_tests.py     # 404 通过
+```
+
+## 已知状态（诚实交代）
+
+- **MiniQMT 自 2026-10-01 停服** ⇒ QMT 那条路**只留结构**（`QMT_SOURCE_ENABLED = False`）
+- `tushare` 适配器是**骨架**，缺 token 未启用；`iwencai` 尚未实现
+- 重构进行中 —— `MIGRATION_STATUS.md` 有未闭合清单
+
+## 许可证
+
+MIT，见 [`LICENSE`](LICENSE)。
+
+## 联系
+
+`4910163@qq.com` ｜ GitHub [@Rgveda](https://github.com/Rgveda) ｜ 知乎 @阿财

@@ -4,9 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "GolemQ"
-version = "0.1.0"
-description = "A Python package for quantum-inspired algorithms"
+# 与 GolemQ/__init__.py 的 __version__ 对齐（那里是硬编码的唯一真值）
+version = "0.1.1"
+description = "A 股量化框架：行情取数 → 复权 → 落库 → 回测 → 实时订阅，全部落在 MongoDB 8.3 上"
+readme = "README.md"
 requires-python = ">=3.12"
+# 旧式 `{file = ...}`：PEP 639 的新式 SPDX（license = "MIT"）要 setuptools >= 77，
+# 本环境是 69.1.1 ⇒ 用旧式才不会打 warning。
+license = {file = "LICENSE"}
 authors = [
     {name = "acai", email = "4910163@qq.com"},
 ]
+
+[project.urls]
+Homepage = "https://github.com/Rgveda/GolemQ"
+Repository = "https://github.com/Rgveda/GolemQ"
+
+# ⚠️ 有意**不声明** dependencies / optional-dependencies：
+# 运行期依赖的唯一声明处是 GolemQ/cli/bootstrap.py 的 MIN_PACKAGES（CLI 启动自检逐条核）。
+# 在这里再抄一份 = 平行实现，会分叉 —— 要改依赖请改那处。

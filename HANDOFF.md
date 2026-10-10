@@ -669,6 +669,7 @@ QUANTAXIS 的 `.query('volume>1')` 把三者混为一谈，等于**每天都在�
 | 5 | **小时级 metadata 的归属** | 读函数按 `time_stamp` 过滤、写目标集合不存在 —— 先定它住哪 |
 | 6 | **MongoDB 起一下**（当前 27017 超时、无服务、默认路径无 `mongod.exe`）| **阻塞 E 的数据拆分**与三项验证（数值基准、拆分后对照、端到端复权一次）。代码半边已完成 |
 | 7 | **E 的两处路由变更要不要随之搬数据** | `200–209`（`index_*`→`stock_*`）、`161–169`/`184`（`stock_*`→`index_*`）。查库定；若无数据则纯属分类修正 |
+| 8 | **门面要不要暴露 `frequency`**（2026-10-10 新发现，见文末） | **(a)** 把 `frequency` 提到 `base_market` 契约 + `fetch/kline.py` 门面（两市场各一处、默认沿用 `'60min'`，**是 API 变更**）；**(b)** 维持现状，需要细频率的消费方直调 `kline83`；**(c)** 顺手把那个可疑的默认 `'60min'` 一并定掉 |
 
 ### ✅ 两处「低垂果实」**已做掉**（2026-09-25）
 
@@ -1000,7 +1001,14 @@ T-1 17:30 扫过 → T 08:30 开盘前那一跑只隔 15h < 24h ⇒ **被跳** �
 
 ---
 
-## 🚀 推送与合并方案（2026-10-10 备好，**未推送** —— 等所有者确认）
+## 🚀 推送与合并（2026-10-10 **已落地**）
+
+> ⚠️ 本节原先写的是「备好、未推送」。**2026-10-10 复核后更正**：三条都已成事实 ——
+> ① `main` 已推（`origin/main == 0621cd1`，与本地零差）；
+> ② **远端默认分支已是 `main`**（`git ls-remote --symref origin HEAD` → `ref: refs/heads/main`）；
+> ③ `master`（初代线）仍未动（`45beff9`）。
+> 也就是说 `github.com/Rgveda/GolemQ` 打开来是**新树**了，不再是 2021 那棵。
+> **下面保留当时的推理**（为什么不做 unrelated-histories merge / graft），那是决定依据。
 
 ### 现状（已核实）
 
@@ -1030,22 +1038,82 @@ mongo uri / dingtalk appkey·appsecret·robot_code / serverchan sendkey / tdxaid
 **保留两条线、两条都能 checkout** —— 既完整，又不撒谎。⚠️ 也**不做** graft/replace：
 那会把本机 81 条提交的 sha **全部重写**。
 
-### 所有者醒来后（两条命令）
+### 所有者醒来后（两条命令）—— ✅ **两条都已执行**
 
 ```bash
-git push origin main     # 推新树（需要你自己的 GitHub 凭据；我这台没有）
-# 再到 GitHub → Settings → Branches 把默认分支改成 main
+git push origin main     # ✅ 已推（两次：2dd1ef3..d733cdf、d733cdf..0621cd1）
+# 再到 GitHub → Settings → Branches 把默认分支改成 main   # ✅ 已是 main
 ```
 
 ⚠️ 本机到 github **网络间歇性**（同一分钟内 `ls-remote` 通、`fetch` 超时；直连可用，
-走系统代理 `127.0.0.1:7897` 反而 TLS 握手失败）。干跑 `git push --dry-run origin main`
-因此**没试成**。
+走系统代理 `127.0.0.1:7897` 反而 TLS 握手失败）。**推送本身没被它拦住**（凭据已在本机），
+但 `git push --dry-run` 当年没试成。
 
-### 待所有者定的两件事（都**没动**）
+⚠️ **`gh` 已装但没登录**：2026-10-10 用 `winget install GitHub.cli` 装了 **2.102.0**，
+但它有**自己独立**的认证存储、与 git 侧不互通 ⇒ `gh auth login` 之前所有 `gh` 子命令不可用。
+（装它本是为 `gh api -X PATCH ... default_branch=main`；既然默认分支已自己切好，**这条不急**。）
 
-1. **`.claude/` 要不要一起推**：里面有 **239 个 ruflo 生成的文件 / 2.0M**（`agents/ skills/ helpers/`），
-   与本项目无关。**建议** `git rm -r --cached` 后只留 `settings.json`
-   （`CLAUDE.md` 说它 pin 了 UTF-8 环境变量，对协作者有用）—— 会改动已提交内容，故没动。
+### 待所有者定的两件事
+
+1. ~~**`.claude/` 要不要一起推**~~ → ✅ **已定（2026-10-10，用户「撤销」）**：**留在仓库里**。
+   经过：`d733cdf` 把它踢出索引（连同 `CLAUDE.md` 那句「Already configured」改成「你需要自己配」、
+   `.gitignore` 换成 `.claude/`）→ 用户改主意 → `0621cd1` **revert** 回来（两笔都已推）。
+   ⇒ 现在 `.claude/`（239 文件 / 2.0M）**在受管文件里**，`CLAUDE.md` 那句仍是
+   「Already configured」——**对本机成立、对克隆者不成立**（那是本条唯二的遗留代价）。
 2. **内网 IP**：`DECISIONS.md` / `MONGODB83.md` / `core/migrate44.py` /
    `supervisor/function_checkin.py` 里共 **22 处 `192.168.x.x`**（实测记录里的服务器与网关）。
    公开后可见但内网不可达 —— **倾向保留**（那是实测证据），要打码说一声。
+
+---
+
+### ✅ README / LICENSE / pyproject 门面补完（2026-10-10）
+
+**背景**：上一轮「必要文档都补上，然后 git 提交」只做完 README 就被打断 ——
+`README.md` 刚 Write 下去，下一次 API 调用即 **400**（请求 1,049,752 > 上限 1,048,576）。
+所以本轮做的是**收尾 + 逐条复核**（上一轮是「先给一版」，没来得及验任何一条声明）。
+
+| 件 | 动作 | 为什么 |
+|:--|:--|:--|
+| `README.md` | **重写门户** | 原文件是模板残留：`A Python package for quantum-inspired algorithms` + 一段跑出来只有版本号的 `import GolemQ` |
+| `LICENSE` | **新建**（MIT） | README 链了 [`LICENSE`](LICENSE)，而仓库里**根本没有这个文件** —— 链接是死的 |
+| `pyproject.toml` | `description` 订正 / `version` `0.1.0` → **`0.1.1`** 对齐 `__init__.py` / 补 `readme` `license` `urls` | 两处版本不一致；`license`/`readme` 原先**都缺** |
+| `setup.py` | **降为 shim**（原重复一份 name/version/description）| 平行元数据 = 会分叉，且 `[project]` 胜出时**静默**，改错地方没人知道 |
+
+`license = {file = "LICENSE"}` 用**旧式**：PEP 639 的新式 SPDX（`license = "MIT"`）要
+setuptools ≥ 77，本环境是 **69.1.1** ⇒ 旧式才不打 warning。
+
+#### README 里的事实性声明 —— 逐条核实（**没有一条是照抄的**）
+
+| README 说 | 怎么核的 | 结果 |
+|:--|:--|:--|
+| `stock_1min` **21.4 亿** | 上一轮实测日志（`4b1db9e7` 转写，07:52）：**2,136,150,663** | ✓ |
+| `stock_day` 1792 万 / `index_day` 457 万 / `etf_day` 322 万 | 同上：17,921,151 / 4,573,381 / 3,220,050 | ✓ |
+| 逻辑 **213.6 GB** → 磁盘 **61.5 GB** + 索引 **7.1 GB** | **本轮 live 复测** `dbStats`：逐项相同（51 集合，MongoDB 8.3.11）| ✓ |
+| 测试 **404 通过** | `python GolemQ/test_cases/run_tests.py` → `Ran 404 tests` / **`OK (skipped=2)`** | ✓ |
+| `res.data` 是 `(ts, code)` MultiIndex | **真跑**（不是读代码推的）| ✓ |
+| `--save tdx` / `--save-coverage` / `--sub l1_tencent` | 与 `CLAUDE.md` 的命令表对齐 | ✓ |
+
+⚠️ **刻意没做的**：不重跑 `pip install -e .` —— 本机 conda env 与老树 `GolemQ_old` **共用**，
+重装 editable 会动共用环境（`CLAUDE.md` 已记「别做无关包操作」）。元数据改动对已装环境无影响，
+本机 `egg-info` 仍写 0.1.0，无所谓。
+
+#### ⚠️ 新发现：门面拿不到 `frequency`（分钟线被锁死在 60min）
+
+写 README 例子时**跑出来的**（不是读代码推的）：
+
+- ✅ `get_kline_price_v3(['600519'], start='2024-01-01')` → `shape (668, 10)`，索引 `['ts','code']`
+- ❌ `get_kline_price_min([...], frequency='5min')` → **`TypeError: unexpected keyword argument 'frequency'`**
+
+能力**在**，只是到不了门面 —— 四层里只有最底层有：
+
+| 层 | 有 `frequency` 吗 |
+|:--|:--|
+| `markets/StockCN/kline83.py:290` | ✅ `frequency='60min'`（支持 1/5/15/30/60min）|
+| `markets/StockCN/__init__.py:168` | ❌ |
+| `markets/base_market.py:108`（契约）| ❌ |
+| `fetch/kline.py:118`（门面）| ❌ |
+
+⇒ **从公开 API 只能读 60min**。README 例子已改成**能跑的那一版**，并在文里注明缺口；
+**没有擅自加形参**——那是跨「契约 + 两市场 + 门面」的 API 变更，要走「四问」第 4 步的
+三个定位问题。已列入「待你决定」**#8**。
+⚠️ 顺带记下 `kline83` 的默认是 **`'60min'`**（别的读口默认日线）—— 这个默认值是否合理一并待定。
