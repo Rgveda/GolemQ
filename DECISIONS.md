@@ -1494,3 +1494,53 @@ tushare（判断配置 tushare）、iwencai（判断配置东方财富问财）�
 
 **代价（用户知情后接受）**：库里已灌的 1620 万行是旧口径，**清掉重灌**
 （用户 2026-10-10 授权「甲」，并指出「4.4 本来就是备份」⇒ 8.3 那份备份也已按指示删除）。
+
+---
+
+## D35. RENKO 搬运：**三条平行实现只搬一条**，落点 `analysis/` —— 2026-10-10
+
+**背景**：用户要求移植 RENKO（砖块图）分析方法，源头在旧树
+`GolemQ_old/indices/renko.py`（1065 行）。勘查发现同一个「`RENKO_TREND_S` 家族」
+在旧树有**三条平行实现**，且**活着的两条互不喂给**（不是"一个喂另一个"）：
+
+| 实现 | 位置 | 调用者 | 本轮 |
+|:--|:--|:--|:--|
+| `renko_trend_cross_func` | 旧 `indices/renko.py:534` | **fractal/v0–v7,v9 + benchmark + signal/rsrs** | ✅ **搬** |
+| `calc_renko_atr_vX` | 旧 `features/base.py:1459` | models/{mainstream,poolcoef,zen,rare,polars} + benchmark + fractal/vXII | ⏸ **另案** |
+| `renko_trend_cross_old_func` | 旧 `indices/renko.py:667` | **全树 0 调用者** | ❌ 不搬 |
+
+两条活的写**同一批列名**（`RENKO_TREND_S/LB/UB` + 两个 `*_TIMING_LAG`）但**算法不同**：
+fractal 线用 numba `renko_chart`（纯收盘价压缩砖）+ 1200 bar 分窗聚类；
+models 线用 `renko` 类的 `source_aligned`。
+
+**决策**：
+
+1. **这一轮只搬 `renko_trend_cross_func` 那条活链**（5 个函数：`renko` 类 /
+   `renko_chart` / `evaluate_renko` / `renko_in_cluster_group` /
+   `renko_trend_cross_func`）。`calc_renko_atr_vX` **另案** —— 它是另一条
+   独立特征线，与 fractal 线不共享调用链，混在一轮里会让"对拍验证"失去单一解释。
+2. **零调用者一律不搬**（`RENKOP` / `renko_border` / `renko_trend_cross_old_func` /
+   `plot_renko_l`·`s` / `renko.plot_renko` 方法 / `__main__` 演示段），
+   理由逐条写进 `analysis/renko.py` 的模块 docstring ——
+   否则下一个人只看到"旧树有、新树没有"，**无从分辨是取舍还是疏忽**。
+   与 `regtree` 搬运时删掉零调用 `sum1d` 同一口径。
+3. **同目录 `indices/renko02.py` 不搬**：它是 `renko.py` 的整份近似拷贝
+   （import 早已废弃的 `GolemQ.GQUtil.*`），**全树零 import**，是死文件。
+4. **落点 `GolemQ/analysis/renko.py`**（用户明确：「以上搬迁的都安放在 analysis 目录下面」）
+   —— 与 `regtree` / `peak` / `timing` / `pivot` 同层，都是自旧树搬回的特征族。
+5. **`talib` + `scipy` 第一次进新树，并写进 `MIN_PACKAGES`**。
+   它们**不能**换成"等价"自实现：`talib.ATR` 定砖高、`scipy.optimize.fminbound`
+   搜最优砖高，换成自实现会**改变砖高**，而**逐值对拍是该模块唯一的正确性证据**。
+   ⚠️ 副作用要知情：写进 `MIN_PACKAGES` = 缺它们时 **CLI 硬拦**
+   （与 `numba` 那条同一个机制；`numba` 也因此从"可选"变成"缺了 renko 就 import 不了"）。
+
+**验证**（对拍，判据一律 `array_equal`）：
+`renko_chart` 5 组随机输入逐值相同；`class renko.build_history` 3 档砖高逐值相同；
+端到端 **4 只标的 × 2 频率 × 2 长度 = 16 组，14 列全部逐值相同**。
+用例 `test_cases/test_renko.py`（老树不在场时整份跳过）。
+
+**顺带坐实一条新陷阱**（`PITFALLS.md` **P31**）：`build_history` 的
+`source_aligned` 用 `np.empty` 起手而循环从 `idx=1` 开始 ⇒ **第 0 行是未初始化内存**；
+它**通常恰好是 0**（新页），只在分配路径变化时露出 `9.2e-312` 这类真实垃圾 ——
+对拍就是这么抓到它的。**保真保留**（消费方是另案的 `calc_renko_atr_vX`），
+已在模块 docstring「已知缺陷」第 4 条记明。

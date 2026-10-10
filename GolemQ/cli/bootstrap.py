@@ -86,9 +86,12 @@ MIN_PACKAGES = (
     ('tqdm', '4.0'),
     ('pytdx', ''),        # ⚠️ `''` = **只查能不能 import**（pytdx 没有 `__version__`，实测）
     # ⚠️ **这一条与上面几条性质不同，别顺着"主链路硬依赖"去理解它**（用户 2026-10-10 定要写在这里）：
-    # numba 是**可选加速器**，不是"缺了就断"—— 两个用它模块都写好了降级：
+    # numba 主要是**可选加速器**，不是"缺了就断"—— 两个用它模块写好了降级：
     # `analysis/peak.py` 退回纯实现（`thresholding_algo_py`）、
     # `analysis/regtree_jit.py` 的 `available()` 报 False 并让调用方另作打算。
+    # ⚠️ **但 2026-10-10 起多了一个不降级的用户**：`analysis/renko.py` 的
+    # `renko_chart` 是**模块级** `@nb.jit(nopython=True)`，缺 numba 时**整个模块
+    # import 就失败**。所以 numba 事实上已经从"可选"变成"缺了就断 renko"。
     # 写进本表 = 它进了 `ENV_GATE_NODES` 的 `依赖包` 节点 ⇒ **缺 numba 时 CLI 硬拦**
     # （只有 `--setup` / `--mongodb-init` / `--dingtalk-init` / `--serverchan-init` 四条放行）。
     # 若哪天想让它只提示不拦，把它挪到 `OPTIONAL_SOURCES` 那一侧即可（那里是灰点、不拦启动）。
@@ -97,6 +100,18 @@ MIN_PACKAGES = (
     # `test_peak` 11 条 + `test_regtree_jit` 6 条上逐值一致）。**不写没验过的更低版本** ——
     # 本项目的门槛一贯是"能跑的下限"，2.0/2.3 那两条的注释里也写着理由。
     ('numba', '0.61'),
+    # ⚠️ 下面两条是 2026-10-10 随 RENKO 搬运**第一次**进新树的依赖
+    # （`analysis/renko.py`）。它们**不能**换成自实现：
+    # `talib.ATR` 定砖高、`scipy.optimize.fminbound` 搜最优砖高 —— 换成"等价"实现
+    # 会**改变砖高**，与旧树的**逐值对拍**立刻失真，而对拍是那个模块唯一的正确性证据。
+    #
+    # 门槛写法与别处一致（**实测过的版本**，不是"猜的下限"）：
+    # talib 0.5.1 / scipy 1.15.2 是实测版本；两者 API 都足够老而稳，
+    # 真按 API 兼容性订下限会给出没验过的数字，**与其猜不如写验过的**。
+    # ⚠️ 副作用要知情：这两条让 CLI 在缺 talib/scipy 时**硬拦**
+    # （与 numba 那条同一个机制）。若嫌重，挪到 `OPTIONAL_SOURCES`。
+    ('talib', '0.5.1'),
+    ('scipy', '1.15'),
 )
 
 #: MongoDB 最低版本 —— 本项目**只用 8.3**（`CLAUDE.md`「Single database」）。

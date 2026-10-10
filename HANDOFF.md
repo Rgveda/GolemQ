@@ -1771,3 +1771,73 @@ stock_metadata_day  17,112,141 行 / 5,515 只 / 1999-01-04 → 2026-10-09
 * **40 只随机抽检**：「8.3 新因子」与「4.4 旧因子」算出的中枢
   **40/40 完全一致**（笔数 / 中枢数 / 走势类型三项全同）✓
 * 全量回归 **502 通过 / 0 失败**（skipped=1）
+
+---
+
+### ✅ RENKO（砖块图）搬进 `analysis/`（2026-10-10，用户要求）
+
+用户：「接下来继续移植名为 RENKO 的分析方法，在旧树上面」→
+「以上搬迁的都安放在 analysis 目录下面」。
+
+**落点**：`GolemQ/analysis/renko.py`。源头 `GolemQ_old/indices/renko.py`（1065 行）。
+
+#### ① 只搬活链（5 个），零调用者一律不搬
+
+| 搬 | `class renko` / `renko_chart` / `evaluate_renko` /
+`renko_in_cluster_group` / `renko_trend_cross_func` |
+|:--|:--|
+| **不搬** | `RENKOP`（jit 核里有 `print`）、`renko_border`（`closep` 形参没用）、
+`renko_trend_cross_old_func`（0 调用者）、`plot_renko_l`·`s`（0 调用者）、
+`renko.plot_renko` 方法（**已烂**：用从未 import 的 `plt`/`mpf`/`patches`）、
+整个 `__main__` 演示段（签名对不上 + 全 QUANTAXIS）、
+同目录 `renko02.py`（旧拷贝，**全树零 import**）|
+
+理由逐条写进了模块 docstring —— 不做这一步，下一个人只看到"旧树有、新树没有"，
+**无从分辨是取舍还是疏忽**。另见 `DECISIONS.md` **D35**。
+
+#### ② 五处改动（都不该改变数值，故必须对拍）
+
+1. import 改接：`utils.parameter` → `core.constants`；
+   `analysis.timeseries import *` → `analysis.timing` 的**两个**具名函数
+   （`Timeline_Integral` / `Timeline_duration` —— 清单是**扫出来的**，不是猜的）。
+2. 删 `QA_util_timestamp_to_str`（QUANTAXIS 透传）。
+3. **删全部 `print`**（用户：「ST.VERBOSE 部分代码去除」→「不需要打印了，这个已经非常成熟」）。
+   共 6 处：2 处 VERBOSE 门控、2 处 `except` 里倾倒整段数组、2 处入参列数提示。
+   **控制流一律未动**（`except: pass` 保持原语义）。
+   顺带：因删了 VERBOSE 段，**没补** `TREND_STATUS.VERBOSE`（新树有意不加）。
+4. 补 **14 个** `FIELD.RENKO_*` 常量，真值取自旧树 `parameter.py` L1849-1880，
+   **逐值核对过**（18/18 一致）。⚠️ 那批值 **L 侧大写 / S 侧小写混用**，别"统一"。
+5. `cli/bootstrap.py` 的 `MIN_PACKAGES` 加 **`talib` + `scipy`**
+   （第一次进新树；换自实现会改砖高、对拍失真）。`numba` 那条注释同步更新 ——
+   `renko_chart` 是**模块级** `@nb.jit`，缺 numba 时整个模块 import 就失败，
+   numba 事实上已从"可选加速器"变成"缺了 renko 就断"。
+
+#### ③ 验收（判据一律 `array_equal`，**不用容差**）
+
+| 层 | 结果 |
+|:--|:--|
+| `renko_chart` | 5 组随机输入 **逐值相同** ✓ |
+| `class renko.build_history` | 3 档砖高，砖价/方向/对齐数组 **逐值相同** ✓ |
+| **端到端** `renko_trend_cross_func` | **4 只标的 × 2 频率 × 2 长度 = 16 组，14 列全部逐值相同** ✓ |
+| 全量回归 | **516 通过 / 0 失败**（skipped=1）✓ |
+
+新增 `test_cases/test_renko.py`（13 条，老树不在场整份跳过）。
+⚠️ harness 有个**跨用例污染**坑，已在用例里写死教训：载入旧模块要先往 `sys.modules`
+注入 shim，**用完必须清** —— 第一版没清，把 `QUANTAXIS*` 留在了 `sys.modules`，
+同进程后面的 `test_no_quantaxis` 当场红。
+
+#### ④ 对拍顺带抓到一条新陷阱 → `PITFALLS.md` **P31**
+
+`build_history` 的 `source_aligned = np.empty(...)` 起手，而写它的循环从 `idx = 1`
+开始 ⇒ **第 0 行是未初始化内存**；它**通常恰好是 0**（`np.empty` 拿到的是零页），
+只在分配路径变化时露出 `9.2e-312` 这种真实垃圾 —— 于是**两条逐字相同的实现**
+会在这一行上"不一致"，排查方向被引偏。
+**保真保留**（消费方是另案的 `calc_renko_atr_vX`，它走 `source_aligned`，
+所以它写出的 `RENKO_TREND_S_LB/UB` 第 0 行作废）。已记进模块 docstring「已知缺陷」4。
+
+#### ⏳ 仍未做
+
+* **`calc_renko_atr_vX`（`features/base.py:1459`）另一案** —— 那是 models 那条特征线，
+  走 `renko` 类的 `source_aligned`。搬它时记着上面那条"第 0 行作废"。
+* `RENKO_OPTIMAL` / `RENKO_PRICE_L` **写后无人读**、`RENKO_PRICE_S` 被下游统一 drop ——
+  三个都**照写不删**（`len(data) < 30` 的早退分支靠这批列名保形状）。

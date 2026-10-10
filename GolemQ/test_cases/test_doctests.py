@@ -88,6 +88,12 @@ DOCTEST_MODULES = (
     'GolemQ.analysis.peak',
     # 持仓浮动收益：显式循环的纯函数（旧树就是为 JIT 写的）。
     'GolemQ.portfolio.returns',
+    # 砖块图（RENKO）：`renko_chart` 是**纯 numpy in/out**（无常量、不碰 DB），
+    # 也是本模块唯一值得挂 doctest 的入口 —— 它那条 doctest 钉住了一个反直觉的
+    # 编码：**价格列把方向编码在符号里**（下跌砖是负数），末行 `-11.0` 是刻意的。
+    # ⚠️ 本模块**模块级**导入 numba/scipy/talib（三者都在 MIN_PACKAGES），
+    # 所以收集它比别的条目慢一点点 —— 但不需要 DB 与网络，仍是 hermetic 的。
+    'GolemQ.analysis.renko',
 )
 
 

@@ -113,6 +113,27 @@ regtree 的 numba 加速版（analysis/regtree.py 的 jit 对照实现）。
 | f | `tree_forecast_jit(tree, seq_data, directions)` | :func:regtree.create_whole_forecast_tree 的 jit 遍历版。 |
 | f | `calc_regtree_fractal_jit(data)` | :func:regtree.calc_regtree_fractal_func 的 jit 建树版。 |
 
+### `renko`
+砖块图（RENKO）—— 砖块序列生成与趋势判定。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `renko` | Renko Chart/Renko Brick/Renko Bar |
+| f | `renko.set_brick_size(HLC_history, auto, brick_size)` | Setting brick size.  Auto mode is preferred, it uses history |
+| f | `renko.build_history(prices, hlc)` | Getting renko on history |
+| f | `renko.do_next(last_price)` |  |
+| f | `renko.evaluate(method)` |  |
+| f | `renko.get_renko_prices()` | 返回每个 Renko bar 的价格 |
+| f | `renko.get_renko_directions()` | 返回每个 Renko bar 的方向 |
+| f | `renko.get_renko_upper_shadow()` | 返回每个 Renko bar 的上影线 |
+| f | `renko.get_renko_lower_shadow()` | 返回每个 Renko bar 的下影线 |
+| f | `renko.get_renko_gaps()` | 返回每个 Renko bar 的原始时间轴坐标起点 |
+| f | `renko.get_source_aligned()` | 返回时间轴对齐原始 OHLC 的 Renko Bars |
+| f | `evaluate_renko(brick, history, column_name)` | 用给定砖高跑一遍砖块序列，返回 evaluate() 里的某一项（调用方传 'score'）。 |
+| f | `renko_chart(price_series, N, condensed)` | 定砖高 Renko 压缩：把价格序列压成砖块序列。 `[dt]` |
+| f | `renko_in_cluster_group(data, indices, maxlength)` | 按 maxlength 分窗，用 ATR 定界 + 布伦特法搜每窗的最优砖高。 |
+| f | `renko_trend_cross_func(data, indices)` | 使用 Renko brick 砖块图进行趋势判断 —— 写 FLD.RENKO_* 一族列。 |
+
 ### `timeseries`
 时间序列工具 —— 多频重采样与时间轴对齐。
 
@@ -1829,6 +1850,31 @@ analysis/regtree_jit.py —— jit 版与 regtree.py 的对拍。
 | f | `TestSpeedup.test_jit_is_at_least_three_times_faster()` |  |
 | C | `TestStatusWithoutNumba` | regtree_jit_status / available 不管 numba 在不在都要能答。 |
 | f | `TestStatusWithoutNumba.test_status_shape()` |  |
+
+### `test_renko`
+analysis/renko.py —— 与旧树 indices/renko.py 的逐值对拍。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestRenkoChartMatches` | renko_chart 是纯 numpy in/out、无常量依赖 —— 最干净的一层。 |
+| f | `TestRenkoChartMatches.test_bit_identical_on_random_walks()` |  |
+| f | `TestRenkoChartMatches.test_negative_price_encodes_direction()` | 价格列把方向编码在符号里 —— 下跌砖是负数，别当 bug 修。 |
+| C | `TestBuildHistoryMatches` | class renko 的整段构建（砖价 / 方向 / 时间轴对齐）逐值相同。 |
+| f | `TestBuildHistoryMatches.test_bit_identical()` |  |
+| f | `TestBuildHistoryMatches.test_source_aligned_row0_is_never_written()` | ⚠️ 旧树既有缺陷：source_aligned = np.empty(...) 起手，而写它的循环 |
+| f | `TestBuildHistoryMatches.test_evaluate_matches()` | evaluate 的返回字典逐键相同 —— 注意键名 'sign_changes:' 带冒号。 |
+| C | `TestTrendCrossMatchesEndToEnd` | 端到端：整条 renko_trend_cross_func 的全部列逐值相同。 |
+| f | `TestTrendCrossMatchesEndToEnd.setUpClass()` |  |
+| f | `TestTrendCrossMatchesEndToEnd.test_all_columns_bit_identical()` |  |
+| f | `TestTrendCrossMatchesEndToEnd.test_output_is_not_all_empty()` | ⚠️ 防"两条实现都静默早退"导致的假通过 —— 结果必须真有内容。 |
+| f | `TestTrendCrossMatchesEndToEnd.test_s_family_is_float16()` | S 族末尾被 cast 成 float16 —— 对拍要知情，否则容差判断会假。 |
+| C | `TestShortInputContract` | len(data) < 30 的早退形状承重 —— 调用方正是靠这些列名判断要不要重算。 |
+| f | `TestShortInputContract.test_returns_the_same_empty_column_set()` |  |
+| f | `TestShortInputContract.test_short_input_with_indices_concatenates()` |  |
+| C | `TestNoQuantaxisLeaked` | 搬运删掉了 QUANTAXIS 透传（QA_util_timestamp_to_str）—— 本模块不得依赖它。 |
+| f | `TestNoQuantaxisLeaked.test_no_quantaxis_import()` |  |
+| f | `TestNoQuantaxisLeaked.test_no_quantaxis_symbol_in_code()` |  |
+| f | `TestNoQuantaxisLeaked.test_no_print_call_in_code()` | 旧树活链有 6 处 print；用户 2026-10-10「不需要打印了」—— 全部已删。 |
 
 ### `test_stock_cn`
 
