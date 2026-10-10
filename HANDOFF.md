@@ -1045,7 +1045,20 @@ git push origin main     # ✅ 已推（两次：2dd1ef3..d733cdf、d733cdf..062
 # 再到 GitHub → Settings → Branches 把默认分支改成 main   # ✅ 已是 main
 ```
 
-⚠️ 本机到 github **网络间歇性**（同一分钟内 `ls-remote` 通、`fetch` 超时；直连可用，
+⚠️ 本机到 github **网络间歇性**，而且**方向会翻**（2026-10-10 一天之内见过两种）：
+早先记录的是「**直连可用**、走系统代理 `127.0.0.1:7897` 反而 TLS 握手失败」；
+同日晚间变成**反过来** —— 直连 `Failed to connect ... port 443 after 21s`（百度却 200，
+所以是 **GitHub 侧**不通、不是整网断），而**显式走代理就通**：
+
+```bash
+git -c http.proxy=http://127.0.0.1:7897 push origin main:main
+git -c http.proxy=http://127.0.0.1:7897 ls-remote origin refs/heads/main   # 复核
+```
+
+⚠️ **别信 `git push` 那句 `Everything up-to-date`** —— 本地 `origin/main` 引用只有 fetch
+才更新，直连失败时 push 可能给出误导性输出。**复核一律用 `ls-remote`**（比 `rev-list
+origin/main...main` 可靠，后者读的是陈旧引用）。当日实测：push 报 `Everything up-to-date`
+而远端其实停在上一笔（`ls-remote` 一看便知差两笔）。
 走系统代理 `127.0.0.1:7897` 反而 TLS 握手失败）。**推送本身没被它拦住**（凭据已在本机），
 但 `git push --dry-run` 当年没试成。
 
