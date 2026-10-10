@@ -8,7 +8,9 @@
 
 ## 一、背景
 
-分钟线已从旧 GolemQ 系统的 MongoDB 4.4 迁移到 8.3 的时序集合，但代码里**没有任何地方指向新库**，且 `services/persistence/*` 仍从 stub 模块 `GolemQ.fetch.kline` 导入（返回空结果）。后果是一条静默失败链：
+分钟线已从旧 GolemQ 系统的 MongoDB 4.4 迁移到 8.3 的时序集合，但**当时**代码里没有任何地方指向新库、`services/persistence/*` 仍从一个 stub 模块导入（返回空结果）。后果是一条静默失败链：
+
+> ⚠️ 2026-10-10 补记：那个 stub 包 `GolemQ.fetch/` 与 `services/persistence/` **都已删除**；现在取数入口是 `GolemQ.get_active_market().get_kline_price_min(...)`。
 
 ```
 空数据 → each_day[0] IndexError → 持久化检查中止 → 完整性监控对全部标的报 0%
@@ -213,7 +215,7 @@ each_day = sorted(kline.index.get_level_values(level=0).unique())
 |:--|:--|
 | ~~**日线未迁移**~~ **已作废**（2026-10-08） | 先前那条是**错的**：`stock_day` **17,893,343** 行、`index_day` 4,564,152 行、`etf_day` 3,220,050 行 —— 日线**迁全了**。当时据以判断的计数来自时序集合上不可靠的 `$collStats count`，见 `PITFALLS.md` P15。⚠️ **实测真有洞的是 ETF**：`etf_day` 抽查 1,689 只里 **739 只有缺日**（`--save-coverage` 可复现）|
 | **指数集合数据不全** | ~~先前的说法~~ 实测 `index_day` 有 8,733 个 code、`index_1min` 亦然（2026-10-08）。⚠️ 但**指数分钟与 pytdx 不同源**：`vol` 比值 14–18 非常数、`close` 精度也不同 → `--save tdx` 里指数分钟**按 pytdx 原值写**（`INDEX_MIN_VOL_SCALE`），边界处会与存量跳变 |
-| **概念 K 线仍是 stub** | `GolemQ.fetch.concept` 无真实实现；真实版本只在 `GolemQ_old/fetch/concept.py:865`（读 4.4）。`_concept.py:56` 已加 TODO |
+| **概念 K 线仍未实现** | 真实版本只在 `GolemQ_old/fetch/concept.py:865`（读 4.4）。⚠️ 2026-10-10 补记：原先那个空壳 `GolemQ/fetch/concept.py` **已随 `fetch/` 整包删除**，现在该方法是 `markets/StockCN/__init__.py` 里一个直接抛 `NotImplementedError` 的实现（`base_market.py` 的契约本就要求如此） |
 | **下游 stub 未解** | `load_massive_reviews` / `attach_reality_features` / `align_kline_timeline` 仍是 stub，端到端检查会停在这些点 —— 与 kline 通路无关 |
 
 ### 附：本次发现的既有缺陷（非本次引入）

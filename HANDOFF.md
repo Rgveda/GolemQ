@@ -1169,6 +1169,11 @@ doctest：`_zs.py` 7 条 + `pivot.py` 19 条 = **26 条**，已登记进 `test_d
 
 #### ④ 门面加 `frequency`（**关掉「待你决定」#8**）
 
+> ⛔ **同日晚些时候已推翻**：用户定「删 `fetch/` 整包」，所以下表第 4 行那个门面
+> **已经不存在了**。`frequency` 现在从**市场方法**上取（`base_market` 契约 →
+> `StockCN` → `kline83` 三层，少一层）。本节其余实测数据（92 / 1104 / 368 / 184 / 5520）
+> 仍成立 —— 它量的是市场方法那条链。见文末「删 `GolemQ/fetch/`」。
+
 `frequency=None` = **该市场的默认频率**（不在根层契约里写死 60min，否则就是把 A 股口径
 泄漏进共用层）。改动四处：
 
@@ -1177,7 +1182,7 @@ doctest：`_zs.py` 7 条 + `pivot.py` 19 条 = **26 条**，已登记进 `test_d
 | `markets/base_market.py` | 抽象声明加 `frequency=None` + 说明（**只有分钟线有**，日线无此参数）|
 | `markets/StockCN/__init__.py` | 转发；**只在给了才传**（`extra = {} if frequency is None else {...}`）—— 默认值只此一处（kline83 的函数签名），这里再写 `or '60min'` 就是第二份定义 |
 | `markets/StockHK/__init__.py` | stub 签名跟上（反正抛 `NotImplementedError`）|
-| `fetch/kline.py` | 门面加形参并转发 |
+| ~~`fetch/kline.py`~~ | ⛔ 该门面已于同日删除 |
 
 **实测**（`000711`，2026-09-01 起，`realtime=False`）：`None` 与 `60min` 都是 **92 根**
 （默认未变），`5min` 1104 / `15min` 368 / `30min` 184 / `1min` 5520 —— 全是 92 的整数倍。
@@ -1258,3 +1263,63 @@ golemq.function_checkins                              24   ★ 这张表是活�
 
 **顺带查清一条陈旧文档**：`MIGRATION_STATUS.md:91` 提到 `maintenance.GQ_migrate_removed_from_44`
 —— 该函数**在新树里根本不存在**（全树 grep 零命中），那条引用已失效。
+
+---
+
+### ✅ 删 `GolemQ/fetch/` 整包 + 新增 `get_default_market()`（2026-10-10）
+
+**用户决定**：① `default_market` 用**函数**形态（`get_default_market()`）；② **删 `fetch/` 整包**；
+③ 「`golemq_stock_cn` 这个 A 股库名不应该硬编码出现在 `markets.StockCN` 之外的任何代码中」。
+
+#### ① 为什么是「删」而不是「搬进 StockCN」
+
+| 证据 | 实测 |
+|:--|:--|
+| **生产代码里零调用者** | 全树消费者只有 `examples/app_pivot.py` 与 `test_cases/test_pivot.py`（都是本轮新加的）。`resolve_market` 在 `fetch/kline.py` 之外**一次都没被调用** |
+| **它的 docstring 正在腐烂** | 写着「调用方 `services/persistence/_daily.py:105` 依赖这一点」—— 而 `services/persistence/` **已随 QUANTAXIS 解耦删除** |
+| **搬进去会成第四份同名函数** | `kline83`(实现) → `StockCN.get_kline_price_min`(市场方法) → `base_market`(契约) → `fetch`(门面)。再搬 = 第 4 份，正是「平行实现不会报错，只会分叉」 |
+| **实证代价** | 同一天给 `frequency` 加形参，改了 **4 个文件**（`base_market` + `StockCN` + `StockHK` + `fetch`） |
+| **它不在 CLAUDE.md 的包结构表里** | 那张表列了 `markets/ gateway/ services/ analysis/ pipeline/ agents/ supervisor/ cli/ core/` —— **没有 `fetch/`**，是个没登记的遗留 |
+
+#### ② 搬了什么 / 新增什么
+
+* `resolve_market` + `MARKET_TYPE_TO_MARKET` —— **整条搬进 `core/market_registry.py`**
+  （那本来就是「注册表」的职责：把品种类型解析成市场名）。连它们 9 条 doctest 一起搬，
+  故该模块的 doctest 由 20 → **29** 条；错误提示里的「请在 `fetch/kline.py` 的 …中登记」
+  改成 `core/market_registry.py`。
+* **新增 `get_default_market()`** —— 与 `get_active_market()` 对称（惰性发现、明确报错）。
+  区别：前者始终给 `DEFAULT_MARKET` 指的那个，后者尊重 `set_active_market` 的切换。
+  **刻意做成函数而非模块级变量**（用户原话是「注册一个全局变量」）：
+  变量会在 `register_market(replace=True)` 换实例后**陈旧且不报错**；模块级绑实例
+  要求导入时市场包在场（与 `PITFALLS.md` P18 的惰性导入冲突）；且赋值时机要外部喂
+  （只在 CLI bootstrap 里赋值 ⇒ 库用法 / notebook / 示例全拿不到）。
+* `GolemQ/__init__.py` 再导出 `get_default_market` / `resolve_market` / `MARKET_TYPE_TO_MARKET`，
+  并**在注释里写明现在取数的唯一写法**。
+
+#### ③ 改到的调用方与文档
+
+代码：`examples/app_pivot.py`（→ `get_active_market().get_kline_price_min(...)`）、
+`test_cases/test_pivot.py`、`test_cases/test_doctests.py`（去掉 `GolemQ.fetch.kline` 那项 ——
+⚠️ 我第一版误加成 `GolemQ.core.market_registry`，而它在表里**本来就有**，等于重复收一遍，已撤）、
+`markets/StockCN/kline83.py`（3 处 docstring）、`markets/StockCN/__init__.py`（1 处注释）。
+
+文档：`README.md`（用法段重写 —— 频率示例现在真的能跑）、`examples/README.md`、
+`CLAUDE.md`（Market registry 那条写明入口 + 「别再造一层」）、`MONGODB83.md`（2 处）、
+`MIGRATION_STATUS.md`（3 处「132 行真门面」回标为已删）、`HANDOFF.md`（本节 + 上节 ④ 加作废指针）。
+
+#### ④ 规则③在代码层**已经达成**
+
+```
+$ grep -rn "['\"]golemq_stock_cn['\"]" GolemQ/ examples/ tools/ --include=*.py
+GolemQ/markets/StockCN/__init__.py:62:GOLEMQ_STOCK_CN_NAME = 'golemq_stock_cn'
+```
+
+删掉 `cli/commands/migrate.py`（D33 那批）之后，全树**唯一**的库名字面量就在 `StockCN/` 里。
+CLAUDE.md 也已把这条写成硬规定，并**订正了那句错话**（原写「三个库句柄都在 `core/`」，
+实际 `GOLEMQ_STOCK_CN*` 在 `markets/StockCN/__init__.py`）。
+
+#### ⑤ 验收
+
+全量 **420 通过 / 0 失败**（419 → 420，多的那条是 `get_default_market` 的 doctest）；
+`market_registry` doctest **29 条**；`pivot` 19 / `_zs` 7；`examples/app_pivot.py` 经
+Streamlit `AppTest` 真跑无异常（2060 根 / 61 笔 / 6 中枢）。

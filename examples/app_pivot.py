@@ -7,7 +7,7 @@
 
 数据链路：
 
-    GolemQ.fetch.kline.get_kline_price_min          # 门面，可指定 frequency
+    GolemQ.get_active_market().get_kline_price_min  # 市场实例，可指定 frequency
         → markets/StockCN/kline83.py                # MongoDB 8.3 时序集合，已前复权
     czsc.CZSC                                       # 分笔（bi_list）
     GolemQ.analysis.pivot                           # 中枢识别 / 走势分类 / 绘图
@@ -42,11 +42,11 @@ import streamlit as st
 from czsc import CZSC
 from czsc.objects import Freq, RawBar
 
+from GolemQ import get_active_market
 from GolemQ.analysis.pivot import (
     bi_confirm_map, bi_list_to_points, calc_pivots, classify_pivots,
     pivots_to_df, plot_pivots_plotly,
 )
-from GolemQ.fetch.kline import get_kline_price_min
 
 # 频率 → (czsc 枚举, 日线根数, 取「加长历史」时回溯的自然日数)
 # 日线根数按 A 股一个交易日算：1min=240 / 5min=48 / 15min=16 / 30min=8 / 60min=4
@@ -85,13 +85,14 @@ with st.sidebar:
 def load_pivots(symbol: str, frequency: str = '60min', long_history: bool = False):
     """8.3 分钟线 → czsc 分笔 → 中枢识别。不跑任何重特征流水线。"""
     freq_enum, _, lookback_days = FREQS[frequency]
+    market = get_active_market()
     if long_history:
         start = str(datetime.now() - timedelta(days=lookback_days))
-        d, name = get_kline_price_min(symbol, start=start, frequency=frequency,
-                                      realtime=True, verbose=False)
+        d, name = market.get_kline_price_min(symbol, start=start, frequency=frequency,
+                                             realtime=True, verbose=False)
     else:
-        d, name = get_kline_price_min(symbol, frequency=frequency,
-                                      realtime=True, verbose=False)
+        d, name = market.get_kline_price_min(symbol, frequency=frequency,
+                                             realtime=True, verbose=False)
     # ⚠️ **总是**截到最后 MAX_BARS 根：读取器的默认窗口是按**小时**算的
     # （60min 约 2000 根），切到 5min/1min 会变成两万根以上，画不动。
     ohlc = d.data.tail(MAX_BARS)

@@ -16,7 +16,7 @@ GG-DD 延伸边界 / 是否加长历史。
 
 | 环节 | 落点 | 说明 |
 |:--|:--|:--|
-| 取数 | `GolemQ.fetch.kline.get_kline_price_min` | 门面；`frequency` 由此传入 |
+| 取数 | `GolemQ.get_active_market().get_kline_price_min` | 市场实例；`frequency` 由此传入（无中转门面）|
 | ↓ | `markets/StockCN/kline83.py` | MongoDB **8.3** 时序集合，**已前复权** |
 | 分笔 | `czsc.CZSC(bars).bi_list` | pip `czsc`（本环境 0.7.10） |
 | 中枢 | `GolemQ.analysis.pivot` | 中枢识别 / 走势分类 / 绘图 |

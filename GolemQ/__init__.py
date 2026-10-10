@@ -64,17 +64,25 @@ from . import agents
 # 其中 statsmodels / matplotlib / joblib / tushare / QUANTAXIS **一个都用不到**。
 # 那正是「解耦解了个寂寞」的观感来源（`PITFALLS.md` P18）。
 
-# 市场注册表与「当前激活市场」—— 实现在 core/market_registry.py，此处再导出
-# 以保持既有 `from GolemQ import GQMARKETS` 的写法可用。
+# 市场注册表、默认/当前激活市场、市场类型解析 —— 实现在 core/market_registry.py，
+# 此处再导出以保持既有 `from GolemQ import GQMARKETS` 的写法可用。
+#
+# ⚠️ **这里是取行情唯一的入口**：2026-10-10 起 `GolemQ/fetch/` 整包已删（旧门面
+# 只是 `get_active_market().xxx(...)` 的一层改名），故取数一律写成
+#     from GolemQ import get_active_market
+#     res, code = get_active_market().get_kline_price_min('600519', frequency='60min')
 from .core.market_registry import (  # noqa: F401
     DEFAULT_MARKET,
     GQMARKETS,
     GQSUBSCRIBER,
+    MARKET_TYPE_TO_MARKET,
     active_market_name,
     get_active_market,
+    get_default_market,
     get_market,
     register_market,
     register_subscriber,
+    resolve_market,
     set_active_market,
 )
 

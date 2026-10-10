@@ -57,19 +57,22 @@ python -m GolemQ.cli --help
 ```
 
 ```python
-from GolemQ.fetch.kline import get_kline_price_min, get_kline_price_v3
+from GolemQ import get_active_market
 
-res, code = get_kline_price_v3(['600519'], start='2024-01-01')   # 日线
-res, code = get_kline_price_min(['600519'], start='2026-09-01')  # 分钟线
+market = get_active_market()                                                    # 当前激活市场
+res, code = market.get_kline_price_v3(['600519'], start='2024-01-01')           # 日线
+res, code = market.get_kline_price_min(['600519'], start='2026-09-01',
+                                       frequency='5min')                        # 分钟线
 df = res.data        # MultiIndex (ts, code)，已前复权
 ```
 
-⚠️ **门面暂不暴露 `frequency`**（当前只出 60min）。底层 `markets/StockCN/kline83.py`
-的 `get_kline_price_min(..., frequency=...)` 支持 `1/5/15/30/60min`，但从
-`fetch/kline.py` 门面 → `base_market.py` 契约 → 市场实现这条链上**没有这个形参**；
-要读更细的频率得直接调 `kline83`。是否把它提到门面是**待定**（见 `HANDOFF.md`）。
+`frequency` 收 `1min / 5min / 15min / 30min / 60min`（默认 `60min`）；它是**分钟线独有**
+的形参，日线走 `get_kline_price_v3`。两者**默认 `realtime=True`**：读到的历史会与当天的
+`realtime_<日期>` tick 合成。
 
-两者**默认 `realtime=True`**：读到的历史会与当天的 `realtime_<日期>` tick 合成。
+⚠️ **没有「市场无关的门面层」** —— `GolemQ/fetch/` 已于 2026-10-10 整包删除（那层只是
+`return get_active_market().xxx(...)` 的改名）。取数一律**经市场实例**；不想指明市场就
+`get_active_market()`（尊重切换）或 `get_default_market()`（始终系统默认的那个）。
 
 ## 数据规模（2026-10 实测，供参考）
 

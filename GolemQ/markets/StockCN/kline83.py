@@ -4,9 +4,10 @@
 为什么存在这一层
 ====================================================================
 分钟线已从旧 GolemQ 系统的 MongoDB 4.4（``stock_min`` / ``index_min``）迁移到
-8.3 的时序集合，但 ``services/persistence/*`` 仍从 stub 模块 ``GolemQ.fetch.kline``
-导入（返回空结果）。本模块提供真实读路径，返回形态与既有调用点对齐，
-从而修复那条「空数据 → IndexError → 完整性监控恒报 0%」的静默失败链。
+8.3 的时序集合。本模块提供真实读路径（2026-09 迁移时它替换掉了原先那个返回
+空结果的 stub，从而修复「空数据 → IndexError → 完整性监控恒报 0%」的静默失败链）。
+⚠️ 2026-10-10 起 `GolemQ/fetch/` 整包已删，取数入口是
+``GolemQ.get_active_market().get_kline_price_min(...)``。
 
 数据布局
 ====================================================================
@@ -101,8 +102,8 @@ _DAY_DEFAULT_DAYS = 365 * 40
 class KlineResult:
     """与 QUANTAXIS ``QA_DataStruct_*`` 对齐的最小接口 —— 调用方只取 ``.data``。
 
-    刻意在本模块内定义而非复用 ``GolemQ.fetch.kline`` 的同名类：那个包整体是
-    stub，本模块不依赖它，以免 stub 被删除时连带受影响。
+    刻意在本模块内定义而不是从别处复用：本模块是**叶子**，不该依赖任何上层门面
+    —— 上层被改/被删（`GolemQ/fetch/` 就于 2026-10-10 整包删除）时，读路径不该受影响。
     """
 
     def __init__(self, data=None):
@@ -335,10 +336,9 @@ def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
     的 L1 tick 合成（见 :func:`_merge_realtime`）。
 
     ⚠️ **默认值 2026-10-09 由 `None` 改成 `True`**：`base_market.py` 的抽象声明与
-    两个门面（`markets/StockCN/__init__.py`、`fetch/kline.py`）**一直写的就是
-    `True`**，而实现写 `None` —— 以前是空转所以看不出来，接通后必须对齐。
-    改它是**行为保持**的：门面**显式传** `realtime=realtime`，所以现有调用方本来就
-    一直在传 `True`。
+    市场方法（`markets/StockCN/__init__.py`）**一直写的就是 `True`**，而实现写
+    `None` —— 以前是空转所以看不出来，接通后必须对齐。改它是**行为保持**的：
+    市场方法**显式传** `realtime=realtime`，所以现有调用方本来就一直在传 `True`。
     """
     market = _market_prefix(codelist, market_type)
     frequency = 'day'

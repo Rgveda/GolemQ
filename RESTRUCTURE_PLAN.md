@@ -308,16 +308,21 @@ python -c "import GolemQ; from GolemQ import get_active_market; print(get_active
 python -c "from GolemQ import get_active_market as g; m=g(); print(m.get_kline_price_min('600496')[0].data.shape)"
 ```
 
-### 步骤 3 —— 把 `fetch/` 改成门面
+### 步骤 3 —— 把 `fetch/` 改成门面 ⛔ **已作废（2026-10-10）：走向了反面 —— 整包删除**
 
-* `fetch/kline.py` 重写为调度层（`get_active_market().xxx(...)`）
-* `fetch/concept.py` 同
-* 4 个 `services/persistence/*` 的 import **不用改** —— 它们从 `GolemQ.fetch.kline` 导入是**正确**的（门面就该从那里调）
+> 本节当时的计划是「把 `fetch/` 改造成调度门面」。实际执行时发现那层只是
+> `return get_active_market().xxx(...)` 的一次改名，于是**直接删掉整包**（`DECISIONS.md` 与
+> `HANDOFF.md` 有完整论证：零生产调用者、加一个形参要改四处、docstring 引用已删除的调用方）。
+> 下面保留原文，仅作历史记录 —— **`GolemQ/fetch/` 已不存在**，别照它做。
 
-验证：
+* ~~`fetch/kline.py` 重写为调度层（`get_active_market().xxx(...)`）~~
+* ~~`fetch/concept.py` 同~~
+* ~~4 个 `services/persistence/*` 的 import 不用改~~ —— 那 4 个调用方**已随 `services/persistence/` 整包删除**
+
+验证（**现在是反面**）：
 ```bash
-grep -rn "from GolemQ.fetch" GolemQ/ --include=*.py   # 应仍指向 fetch/
-python -m GolemQ.cli --save-status                     # 回归
+grep -rn "from GolemQ.fetch\|GolemQ\.fetch" GolemQ/ --include=*.py   # 应为**零命中**
+python -m GolemQ.cli --save-status                                   # 回归
 ```
 
 ### 步骤 4 —— 修既有缺陷 1/2/4

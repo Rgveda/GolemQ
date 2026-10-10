@@ -1,22 +1,30 @@
 # coding:utf-8
-"""市场注册表与「当前激活市场」。
+"""市场注册表、「默认 / 当前激活市场」与市场类型的解析。
 
 系统的隐含属性
 ==============
 交易系统天然有一个**默认市场** —— 调用方说「取 600519 的日线」时，并没有指定
-是哪个市场；这个信息由系统的当前状态提供。本模块把它显式化。
+是哪个市场；这个信息由系统的当前状态提供。本模块把它显式化，并给出取用入口：
 
-`fetch/` 下的门面函数**不含任何市场知识**，一律调度到 :func:`get_active_market`：
+    from GolemQ import get_default_market, get_active_market
 
-    # GolemQ/fetch/kline.py
-    def get_kline_price_min(symbol, ...):
-        return get_active_market().get_kline_price_min(symbol, ...)
+    get_active_market().get_kline_price_min('600519', frequency='60min')
+
+**没有门面层**（2026-10-10 起 `GolemQ/fetch/` 整包已删）。原先 `fetch/kline.py`
+只做一件事：`return get_active_market().get_kline_price_min(...)` —— 一层改名，
+却让每个形参都得在四个地方各声明一遍。
 
 好处：
 
 * **加新市场 = 新增一个市场包**，不改任何抽象层
 * **切换市场 = 一次 :func:`set_active_market` 调用**，而非改 import
 * `features/` `models/` `pipeline/` `portfolio/` 里的代码完全不含市场判断
+
+「默认」与「激活」的区别
+========================
+:data:`DEFAULT_MARKET` 是**系统自带的**那个；:data:`_active_market_name` 是**当前生效**的。
+没人调 :func:`set_active_market` 时两者相同。要「不管当前切到哪、都取系统默认」，用
+:func:`get_default_market`；要「尊重当前的切换」，用 :func:`get_active_market`。
 
 为什么注册表不放 `GolemQ/__init__.py`
 ====================================
@@ -27,10 +35,12 @@
 ⚠️ 惰性注册
 ===========
 市场包在导入时自注册（`markets/StockCN/__init__.py`），但**谁先导入谁决定成败**。
-故 :func:`get_active_market` 在注册表为空时先触发一次自动发现，
+故三个 `get_*` 入口在注册表为空时都会先触发一次自动发现，
 避免「先 import core 再 import 市场」这种顺序问题。
 """
 from __future__ import annotations
+
+from GolemQ.core.constants import MARKET_TYPE
 
 #: 所有已注册的市场：`{市场名: 市场实例}`
 GQMARKETS: dict = {}
@@ -185,3 +195,116 @@ def get_market(name: str):
     if name not in GQMARKETS:
         raise KeyError(f'市场 {name!r} 未注册。已注册: {sorted(GQMARKETS)}')
     return GQMARKETS[name]
+
+
+def get_default_market():
+    """返回**系统默认市场**实例（:data:`DEFAULT_MARKET` 指的那个）。
+
+    与 :func:`get_active_market` 的区别：那个尊重 :func:`set_active_market` 的切换，
+    这个始终给系统自带的那一个。没人切换过时两者是同一个对象。
+
+    **返回实例而不是把它绑成模块级变量**（2026-10-10 用户提过「注册一个全局变量
+    `default_market`」，这里刻意不那样做）：
+
+    * 变量会在 `register_market(..., replace=True)` 换掉实例后**陈旧**，且不报错；
+    * 变量要在模块级绑实例 ⇒ 导入即要求市场包在场，与 `GolemQ/__init__.py`
+      费力消掉的**急切导入**（`PITFALLS.md` P18）冲突；
+    * 函数可以惰性发现，变量的赋值时机则要外部喂（例如只在 CLI bootstrap 里赋值
+      ⇒ 库用法 / notebook / 示例脚本全拿不到它）。
+
+    注册表为空时先自动发现，同 :func:`get_active_market`。默认市场**未注册则明确
+    报错，不静默回落到激活市场** —— 回落会让「你以为在取默认市场、实际是另一个」。
+
+    >>> import GolemQ.core.market_registry as reg
+    >>> prev, prev_active = reg.DEFAULT_MARKET, reg._active_market_name
+    >>> class Fake:
+    ...     name = '__doctest_default__'
+    >>> register_market('__doctest_default__', Fake())
+    True
+    >>> reg.DEFAULT_MARKET = '__doctest_default__'
+    >>> get_default_market().name
+    '__doctest_default__'
+
+    默认市场未注册 ⇒ 抛错（此时注册表非空，不会触发自动发现）：
+
+    >>> reg.DEFAULT_MARKET = 'NoSuchDefaultMarket'
+    >>> get_default_market()
+    Traceback (most recent call last):
+        ...
+    KeyError: ...'NoSuchDefaultMarket' 未注册...
+
+    ⚠️ 本函数读的是模块级全局 `DEFAULT_MARKET`，**doctest 必须自行还原**：
+
+    >>> reg.DEFAULT_MARKET, reg._active_market_name = prev, prev_active
+    >>> GQMARKETS.pop('__doctest_default__', None) is not None
+    True
+    """
+    if not GQMARKETS:
+        _ensure_registered()
+    if DEFAULT_MARKET not in GQMARKETS:
+        raise KeyError(
+            f'默认市场 {DEFAULT_MARKET!r} 未注册。已注册: {sorted(GQMARKETS)}。'
+            f'请 import 对应市场包，或调用 '
+            f'GolemQ.cli.tools.auto_register_markets()')
+    return GQMARKETS[DEFAULT_MARKET]
+
+
+#: `MARKET_TYPE` → 市场包名。**品种类型不等于市场** —— 指数/ETF/基金都是 A 股市场下的品种。
+#:
+#: ⚠️ 加新市场时**只改这一张表**（原先它在 `fetch/kline.py`，2026-10-10 随该包删而搬来）。
+MARKET_TYPE_TO_MARKET = {
+    # —— A 股市场下的各品种 ——
+    MARKET_TYPE.STOCK_CN: 'StockCN',
+    MARKET_TYPE.STOCK_CN_B: 'StockCN',
+    MARKET_TYPE.STOCK_CN_D: 'StockCN',
+    MARKET_TYPE.INDEX_CN: 'StockCN',
+    MARKET_TYPE.ETF_CN: 'StockCN',
+    MARKET_TYPE.FUND_CN: 'StockCN',
+    MARKET_TYPE.BOND_CN: 'StockCN',
+    MARKET_TYPE.FUTURE_CN: 'StockCN',
+    MARKET_TYPE.OPTION_CN: 'StockCN',
+    MARKET_TYPE.STOCKOPTION_CN: 'StockCN',
+    # —— 其他市场（待实现）——
+    MARKET_TYPE.STOCK_HK: 'StockHK',
+    # MARKET_TYPE.STOCK_US: 'StockUS',        # 市场包尚未实现
+    # MARKET_TYPE.CRYPTOCURRENCY: 'Crypto',   # 市场包尚未实现
+}
+
+
+def resolve_market(market=None):
+    """把 `market` 参数解析成市场实例。
+
+    `None` → 当前激活市场（**隐含默认市场**）。
+    给了值 → 按 :data:`MARKET_TYPE_TO_MARKET` 找到市场包。
+
+    **未知值明确报错，不静默回落** —— 回落会让你「以为在取美股、实际拿到 A 股」，
+    比直接失败危险得多。
+
+    映射的层级关系（`INDEX_CN` 也是 A 股市场，不是另一个市场）：
+
+    >>> MARKET_TYPE_TO_MARKET[MARKET_TYPE.STOCK_CN]
+    'StockCN'
+    >>> MARKET_TYPE_TO_MARKET[MARKET_TYPE.INDEX_CN]
+    'StockCN'
+    >>> MARKET_TYPE_TO_MARKET[MARKET_TYPE.STOCK_HK]
+    'StockHK'
+
+    未登记的品种类型报错，并提示该往哪加：
+
+    >>> resolve_market(MARKET_TYPE.STOCK_US)
+    Traceback (most recent call last):
+        ...
+    ValueError: 未知的市场类型 'stock_us'。已登记: ...若这是新市场的品种类型，请在 core/market_registry.py 的 MARKET_TYPE_TO_MARKET 中登记。
+    """
+    if market is None:
+        return get_active_market()
+    if isinstance(market, str) and market in ('StockCN', 'StockHK'):
+        # 允许直接传市场包名（内部调用与测试方便）
+        return get_market(market)
+    name = MARKET_TYPE_TO_MARKET.get(market)
+    if name is None:
+        raise ValueError(
+            f'未知的市场类型 {market!r}。已登记: {sorted(MARKET_TYPE_TO_MARKET)}。'
+            f'若这是新市场的品种类型，请在 core/market_registry.py 的 '
+            f'MARKET_TYPE_TO_MARKET 中登记。')
+    return get_market(name)

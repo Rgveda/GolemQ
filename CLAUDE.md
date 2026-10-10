@@ -261,7 +261,7 @@ python -m GolemQ.cli --save-coverage           # 只读：K线覆盖缺口报告
 
 ### Key Design Patterns
 
-- **Market registry**: `GQMARKETS` (dict in `GolemQ.__init__`) holds market instances. `cli/tools.py` auto-discovers and registers them. `GQSUBSCRIBER` maps subscription keys (e.g., `l1_tencent`) to subscriber functions.
+- **Market registry**: `GQMARKETS` (dict in `core/market_registry.py`，再导出到 `GolemQ.__init__`) holds market instances. `cli/tools.py` auto-discovers and registers them. `GQSUBSCRIBER` maps subscription keys (e.g., `l1_tencent`) to subscriber functions. **取数据的唯一入口是市场实例**：`get_active_market()`（尊重 `set_active_market` 的切换）或 `get_default_market()`（始终系统默认的那个）。⚠️ 2026-10-10 起 `GolemQ/fetch/` 整包已删 —— 没有中转门面，别再造一层。
 - **StockCN singleton**: `StockCN.__new__` enforces a single instance. Auto-instantiated on module import and registered into `GQMARKETS`.
 - **Configuration**: `GQ_Setting` reads/writes `~/.GolemQ/settings/config.ini`. Sections `DINGTALK`, `SERVERCHAN`, `XTQUANT` are stored in the INI file; other sections fall back to MongoDB.
 - **Single database**: 一律 MongoDB **8.3** —— 行情与参考数据在 `GOLEMQ_STOCK_CN`（`golemq_stock_cn`）、实时在 `GOLEMQ_STOCK_CN_REALTIME`、框架运维（心跳/签到/关注列表）在 `GOLEMQ`（`golemq`）。**QUANTAXIS 已全树剔除**（`DECISIONS.md` D12）；4.4 的搬运通道已于 2026-10-10 **整条退休**（`DECISIONS.md` D33）—— 全树零 4.4 引用。

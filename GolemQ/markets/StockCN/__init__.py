@@ -160,7 +160,10 @@ class StockCN(BaseMarket):
         """获取单只股票分钟线历史行情"""
         return self.quotes.get_kline_quotes_min(code, start, end, frequency, fq)
 
-    # ---- 门面契约的实现（`GolemQ/fetch/*` 调度到这里）----------------------
+    # ---- 市场契约的实现（`BaseMarket` 的方法，直接由调用方经市场实例取用）----
+    #
+    # 取用方式：`GolemQ.get_active_market().get_kline_price_min(...)`
+    # （2026-10-10 起 `GolemQ/fetch/` 整包已删，没有中转门面了）
     #
     # 委托给 `kline83`（MongoDB 8.3 时序读路径）。契约与空值语义见
     # `markets/base_market.py` 的声明，两处**必须一致**。

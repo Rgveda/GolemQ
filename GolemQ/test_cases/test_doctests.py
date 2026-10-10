@@ -40,8 +40,8 @@ DOCTEST_MODULES = (
     'GolemQ.datasource.base',
     'GolemQ.datasource.proxy',
     'GolemQ.datasource.throttle',
-    # 门面的市场映射表
-    'GolemQ.fetch.kline',
+    # 市场映射表与解析（原在 fetch/kline.py，2026-10-10 随该包删而搬进注册表）
+    # —— 不在这里另列一行：`GolemQ.core.market_registry` 上面已经收过一次了。
     # 日期助手：纯函数，且是 QUANTAXIS 解耦时逐个对齐过行为的
     'GolemQ.markets.StockCN.date_utils',
     # 号段分类器：纯字符串判断（`symbol` 模块本身会 import pymongo，但

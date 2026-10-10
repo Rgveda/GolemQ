@@ -249,7 +249,7 @@ GolemQ Constants Module
 | f | `GQ_util_log_info(logs, ui_log, ui_progress, ui_progress_int_value)` | INFO 级日志接口 —— 行为对齐 QUANTAXIS.QAUtil.QA_util_log_info。 `[dt]` |
 
 ### `market_registry`
-市场注册表与「当前激活市场」。
+市场注册表、「默认 / 当前激活市场」与市场类型的解析。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -259,6 +259,8 @@ GolemQ Constants Module
 | f | `set_active_market(name)` | 切换激活市场。 `[dt]` |
 | f | `get_active_market()` | 返回当前激活的市场实例。 |
 | f | `get_market(name)` | 按名取市场实例（不影响激活状态）。 |
+| f | `get_default_market()` | 返回系统默认市场实例（:data:DEFAULT_MARKET 指的那个）。 `[dt]` |
+| f | `resolve_market(market)` | 把 market 参数解析成市场实例。 `[dt]` |
 
 ### `mongo`
 
@@ -412,24 +414,6 @@ Feature review stubs (to be populated).
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `attach_reality_features(features_dummy, annual, collections)` | Attach reality features to a baseline dataframe (stub). |
-
-## GolemQ.fetch
-
-### `concept`
-Concept kline fetching stubs (to be populated).
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `get_stock_concept_kline(symbol, start, end, freq)` | Fetch stock concept kline data (stub). |
-
-### `kline`
-K 线获取的门面 —— 不含任何市场知识，一律调度到市场实现。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `resolve_market(market)` | 把 market 参数解析成市场实例。 `[dt]` |
-| f | `get_kline_price_min(symbol, start, end, verbose, realtime, market, frequency)` | 分钟线。market 省略则用当前激活市场。 |
-| f | `get_kline_price_v3(symbol, start, end, verbose, realtime, market)` | 日线。market 省略则用当前激活市场。 |
 
 ## GolemQ.gateway.xtquant
 

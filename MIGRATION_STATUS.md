@@ -46,7 +46,7 @@
 | 支柱 | 当时 | 现在 |
 |:--|:--|:--|
 | `_StubMeta` 伪造字段名（#3）| 静默返回假名 | **已修**：未定义名一律抛 `AttributeError` |
-| `fetch/kline.py` 是 stub（#6）| 返回空结果 | **已修**：132 行真门面，调度到市场实现 |
+| `fetch/kline.py` 是 stub（#6）| 返回空结果 | **已修**：132 行真门面（⛔ 该门面已于 2026-10-10 随 `GolemQ/fetch/` 整包删除），调度到市场实现 |
 | 字段名漂移（#8）| 11 个常量是假名 | **已修**：11 个全部等于老值（实测 0 处不符）|
 
 **但「接了根假线」这个模式本身仍在**，只是换了地方：`GolemQ/features/` 仍返回空
@@ -75,7 +75,7 @@ core/constants.py:34-37  _StubMeta.__getattr__ 伪造字段名（静默，不抛
 |:--|:--|:--|
 | ① `_StubMeta` 伪造字段名 | 静默假名 | ✅ **已修**（#3）—— 现在抛 `AttributeError` |
 | ② 查询 `field_maxfactor_major` 而数据在 `MFT_MAJ` | 漂移 | ✅ **已修**（#8）—— `FIELD.MAXFACTOR_MAJOR == 'MFT_MAJ'`，实测 11/11 等于老值 |
-| ③ `fetch/kline.py` 是 stub | 空结果 | ✅ **已修**（#6）—— 132 行真门面 |
+| ③ `fetch/kline.py` 是 stub | 空结果 | ✅ **已修**（#6）—— 132 行真门面（⛔ 该门面已于 2026-10-10 随 `GolemQ/fetch/` 整包删除） |
 | ④ `_daily.py` `each_day[0]` → `IndexError` | 报错 | ⚠️ **仍在**，但**上游不再必然为空**了 |
 | ⑤ ratio = 0 → 全标的报 0% 完整度 | 假 0% | ⚠️ **仍未闭** —— 现在的主因是 #5（`GolemQ/features/` 仍是 stub）|
 
@@ -93,7 +93,7 @@ core/constants.py:34-37  _StubMeta.__getattr__ 伪造字段名（静默，不抛
 | 3 | ~~**`_StubMeta` 伪造字段名**~~ **✅ 已修** —— 现对任何未定义属性一律抛 `AttributeError`（`PITFALLS.md` P1 闸门已翻）。实测 `class T(metaclass=_StubMeta)` 取未定义名 → 抛错，不再伪造 | `core/constants.py:34-37` | **新引入** → 已修 |
 | 4 | **三个 benchmark 子类全部失效** ⛔ **未修**（复核确认）—— 悬空 import，`calculate()` 静默返回 None，`success_count=0` 与"确实没数据"无法区分。实测目标**根本不存在**：`GolemQ/models/mainstream.py` 不存在、`GolemQ/pipeline/compact.py` 不存在、`GolemQ/models/poolcoef.py` 存在但**无** `calc_stock_poolcoef_analysis`（唯一顶层 def 是 `calc_4Quad_push_credit`）。三个 import 都包在 `try/except` 里并置 `*_AVAILABLE=False` | 新 `pipeline/mainstream_benchmark.py:34-37`、`poolcoef_benchmark.py:34-38`、`compact_benchmark.py:39-43` | 未迁移 |
 | 5 | **`features/` 用 stub 顶替真实 Mongo 读写** ⛔ **未修**（复核确认）—— ⚠️ **本条的"调用方"已随 D12 作废一半**：原文列的四个调用方 `services/persistence/_daily.py` / `_stock.py` / `_concept.py` / `_review.py` **整个包已删**（零调用者），故现在**没有任何活调用方**；剩下的 `GolemQ/features/` 是零调用者 stub。属「接线问题」而非「QUANTAXIS 遗留」，另案处置 | `features/empirical.py`、`features/reviews.py` | 未迁移（但已无调用方） |
-| 6 | ~~**真实 kline 实现就在同一棵树里，`services/` 却接了 stub**~~ **✅ 已修** —— `fetch/kline.py` 现为 **132 行的真门面**（`resolve_market` + `MARKET_TYPE_TO_MARKET` 调度到市场实现），不再返回空结果。`persistence/*` 仍 import 它，那是**设计如此**（门面 → `BaseMarket` → `markets/StockCN`） | 调用方 `persistence/_daily.py:54`、`_stock.py:52`、`_review.py:50`、`_concept.py:51` | **接线错误** → 已修 |
+| 6 | ~~**真实 kline 实现就在同一棵树里，`services/` 却接了 stub**~~ **✅ 已修** —— `fetch/kline.py` 现为 **132 行的真门面（⛔ 该门面已于 2026-10-10 随 `GolemQ/fetch/` 整包删除，取数改经市场实例 `get_active_market()`）**（`resolve_market` + `MARKET_TYPE_TO_MARKET` 调度到市场实现），不再返回空结果。`persistence/*` 仍 import 它，那是**设计如此**（门面 → `BaseMarket` → `markets/StockCN`） | 调用方 `persistence/_daily.py:54`、`_stock.py:52`、`_review.py:50`、`_concept.py:51` | **接线错误** → 已修 |
 | 7 | ~~**`models/alias.py` 是空类**~~ **✅ 已修** —— `LTT` 现注册 **15 个常量**，含 `QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY = 'QLevMACDLagD'`（实测可取）。⚠️ 类 docstring 仍写着 "stub — to be populated"，**已过时**，别再据此判定它没实现 | 老 `models/alias.py:732` → 新 `models/alias.py:7` | 未迁移 → 已修 |
 | 8 | ~~**模型字段常量与存储 schema 不再匹配**~~ **✅ 已修**（2026-09-25 实测复核）—— 3.8 表里的 **11 个常量全部等于「老值（数据实际存储名）」，0 处不符**：`FIELD.MAXFACTOR='MAXFACTOR'`、`FIELD.MAXFACTOR_MAJOR='MFT_MAJ'`、`AKA.STAGE='STAGE'`、`MAS.STAGE_MODE='STAGE_MOD'`、`MAS.BOOTSTRAP_STAGE_MODE_BEFORE='BST_STG_MOD_BF'`、`MAS.MACD_COMPOUDED_BAND_RATIO_MEDIAN='mMacdCpdBandRtoMed'`、`FEATURES.ZEN_PEAK_TIMING_LAG_MAJOR_REAL='ZPLagMajR'`、`RSK.CVaR_PEAK_PRICE/LOW/LOW_PRICE/LOW_BEFORE='ES_PEAK_P/LO/P/BF'`。**注：`_StubMeta` 已改为抛 `AttributeError`，所以「仍缺的常量」会是显式报错而非静默假名** | `core/constants.py`、`models/massive.py`、`models/risk.py` | **新引入** → 已修 |
 | 9 | ~~**ETF 前复权模块整删**~~ **✅ 已于 2026-09-21 修复** —— 拉 ETF 日线（如 510300）跨除权日时，老代码返回**连续的前复权 OHLC**，新代码只打印"ETF 需要人工复权"就返回**不复权数据**，产生约 10% 假跳空，**污染 ETF 回测** | 老 `markets/StockCN/etf_fq.py`（260 行 / 3 函数，`GQ_is_etf` / `GQ_fetch_etf_adj` / `GQ_apply_etf_qfq`）→ 新 `markets/StockCN/fetch.py:1416-1423` 仅打印提示 | **逻辑丢失** → 已回迁 |

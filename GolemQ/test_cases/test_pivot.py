@@ -236,10 +236,10 @@ def _has_83():
 @unittest.skipUnless(_has_83(), 'MongoDB 8.3 不可用 —— 真数据用例跳过')
 class TestPivotRealData(unittest.TestCase):
     def test_000711_60min_end_to_end(self):
-        from GolemQ.fetch.kline import get_kline_price_min
+        from GolemQ import get_active_market
 
-        d, name = get_kline_price_min('000711', frequency='60min',
-                                      realtime=False, verbose=False)
+        d, name = get_active_market().get_kline_price_min(
+            '000711', frequency='60min', realtime=False, verbose=False)
         bars = []
         for i, (idx, row) in enumerate(d.data.iterrows()):
             dt = idx[0] if isinstance(idx, tuple) else idx
