@@ -1,53 +1,49 @@
-# GolemQ 测试说明
+# 测试
 
-## 测试文件组织结构
+## 怎么跑
 
-本项目采用模块化的测试组织结构，每个主要功能模块都有对应的测试文件：
-
-### 现有测试文件
-
-1. **`test_messenger.py`** - 测试消息通知功能（钉钉、Server酱）
-2. **`test_stock_cn.py`** - 测试A股市场基础功能
-
-### 新增测试文件
-
-3. **`test_market_tools.py`** - 测试市场工具功能（数据清理等）
-4. **`test_market_align.py`** - 测试数据对齐功能  
-5. **`test_market_crawler.py`** - 测试数据爬取功能
-6. **`test_market_quotes.py`** - 测试行情数据功能
-
-## 测试运行
-
-### 运行所有测试
 ```bash
-python run_tests.py
+python GolemQ/test_cases/run_tests.py                                        # 全部
+python -m unittest GolemQ.test_cases.test_messenger -v                       # 单模块
+python -m unittest GolemQ.test_cases.test_messenger.TestDingtalkConfig.test_check_config_success -v   # 单方法
+python -m unittest GolemQ.test_cases.test_doctests -v                        # 只跑 docstring 里的 doctest
 ```
 
-### 运行特定测试模块
+⚠️ 模块路径是 **`GolemQ.test_cases.*`**，不是 `GolemQ.tests.*` —— 本 README 的**上一版**
+把三条示例命令全写成了 `GolemQ.tests.…`（那目录**不存在**），照着敲必然 `ModuleNotFoundError`。
+
+## 这一层放什么
+
+| 放 | 不放 |
+|:--|:--|
+| `test_*.py` —— **能被发现、能失败**的用例 | **一次性 / 排查脚本** → [`tools/diagnostics/`](../../tools/diagnostics/) |
+| `run_tests.py`（本层入口）、本 README | **示例 / demo** → [`examples/`](../../examples/) |
+
+`run_tests.py` 用的是 `unittest discover(pattern='test_*.py')` —— 所以
+`check_*` / `cleanup_*` / `debug_*` 这类脚本**本来就不参与测试**，混在这里只会让
+「这一层有多少真测试」看不出来。2026-10-10 已把它们分出去。
+
+## 约定
+
+1. **命名**：文件 `test_*.py`（不以此开头就**不会被发现**）、类 `TestXxx`、方法 `test_*`。
+2. **外部依赖用 mock 隔离**：DB / 网络 / QMT 客户端。
+   ⚠️ **真库用例必须能跳过**（`unittest.skipUnless(能连上 8.3, …)`），且探活要**用短超时**
+   （`serverSelectionTimeoutMS=1500`）—— `GQ_util_mongodb_client` 默认 30 秒，
+   库没起时会把整个套件拖住半分钟。
+3. **纯函数的 doctest 走 `test_doctests.py` 的 `DOCTEST_MODULES` 清单**，别新开收集器。
+   想加就先读那个文件顶部的规则：**需要 DB / 网络 / QMT 的模块不该进清单**，
+   判据是**逐函数**而不是逐模块。
+4. **每个用例都要能失败**。占位式用例（只打印、无断言）没有价值 ——
+   2026-10-10 就把 `test_chip_distribution` 从一个「只打印耗时的脚本」补成了带不变量的真用例。
+
+## ⚠️ 别在这里枚举测试文件
+
+**这个 README 的上一版**是一张「现有测试文件」清单（6 条），而其中
+`test_market_align.py` / `test_market_crawler.py` **早已不存在**，真正的 30 多个用例一个没提。
+清单会腐烂，而且腐烂时**不报错**。
+
+要看有哪些用例，跑 `run_tests.py` 或问 `unittest`：
+
 ```bash
-python -m unittest GolemQ.tests.test_messenger -v
+python -m unittest discover -s GolemQ/test_cases -p 'test_*.py' -v --locals 2>&1 | grep -c ' ... ok'
 ```
-
-### 运行单个测试类
-```bash
-python -m unittest GolemQ.tests.test_messenger.TestDingtalkConfig -v
-```
-
-### 运行单个测试方法
-```bash
-python -m unittest GolemQ.tests.test_messenger.TestDingtalkConfig.test_check_config_success -v
-```
-
-## 测试编写规范
-
-1. **命名规范**: 测试文件以 `test_` 开头，测试类以 `Test` 开头，测试方法以 `test_` 开头
-2. **Mock使用**: 外部依赖（数据库、API等）必须使用mock进行隔离测试
-3. **断言清晰**: 每个测试应该有明确的断言和错误信息
-4. **独立运行**: 测试之间不应该有依赖关系，可以独立运行
-
-## 注意事项
-
-- 测试文件应该放在 `GolemQ/tests/` 目录下
-- 避免在测试中访问真实的外部服务
-- 使用适当的mock来模拟外部依赖
-- 确保测试覆盖主要业务逻辑

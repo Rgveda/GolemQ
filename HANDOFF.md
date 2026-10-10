@@ -1524,3 +1524,53 @@ stub = 还没写，dummy = 故意是假的）。
 被 `test_cli_commands` 当场抓住。**教训**：跨行语句别拿第一行当唯一锚点。
 
 全量 469 通过 / 0 失败（skipped=1）。
+
+---
+
+### ✅ 目录重新分类（2026-10-10，用户要求）
+
+**起因**：「测试目录里混着一次性脚本，看不出来有多少真测试」。做法不是拆 `test_cases/`
+（那要动文档里所有命令与 discover 路径，~44 文件时收益不抵成本），而是**按性质分流**。
+
+| 从 | 到 | 是什么 |
+|:--|:--|:--|
+| `test_cases/` | **[`tools/diagnostics/`](tools/diagnostics/)**（新）| 7 个**运行时诊断**脚本（心跳/互斥锁/实例 id 的查看与清理）|
+| `test_cases/xtquant/` | **[`examples/Deprecated/xtquant/`](examples/Deprecated/xtquant/)**（新）| 4 个 QMT 用法示例 —— **不是测试**，且**已跑不通** |
+
+**`test_cases/` 现在 = 32 个真测试 + `run_tests.py` + README**（干净的单一职责）。
+
+**为什么 `tools/diagnostics/` 而不是 `extras/`**（用户先提议 `extras/`，我按开源惯例评估后改的）：
+
+* **`tools/` 是社区公认名**（CPython 的 `Tools/`、numpy 的 `tools/`），而 **`extras/` 不是 Python 惯例**；
+* 更要紧：**`extras` 在 Python 打包里已有确定含义 = 可选依赖组**（`extras_require` /
+  `[project.optional-dependencies]`）⇒ 放个 `extras/` 目录，读者第一反应是「装可选依赖的？」
+* 老树确实有 `extras/` 先例（`docs/claude_change_log.md` 里的 `extras/_parity.py`、`_reconcile.py`
+  一族，`_` 前缀 + 「用后删」）—— 但那是**本项目的内部习惯**，不是社区惯例。
+* 折中：父目录用公认名 `tools/`，子目录 `diagnostics/` 把那套「一次性/排查用」的语义显式化。
+* ⚠️ 那 7 个脚本**不该当垃圾扔**：它们服务的 mutex 缺陷（`MIGRATION_STATUS.md` §六，
+  `instance_id` 是 per-process sha256 ⇒ 索引永不冲突）**尚未修**，脚本里编码的是「怎么查、怎么清」。
+  README 里写明了「缺陷修好即可删」。
+
+**为什么 `examples/Deprecated/`**（用户定）：`Deprecated` 是**状态**维度、`xtquant` 是主题，
+两层都在 —— 将来别的废弃示例也能这么放。README 里按用户口径写明原因：
+
+> **因监管要求，基于 MiniQMT 实现的 xtquant 于 2026-10-01 起停止量化交易服务。**
+> 即这些脚本**不是"暂时没配好"，而是上游服务已终止**；`DECISIONS.md` **D13** 据此只留结构。
+
+#### 顺带查出的四处问题（都已在 README 里说明）
+
+1. **`test_cases/README.md` 不只是过时、是错的**：它列的 6 个文件里
+   `test_market_align.py` / `test_market_crawler.py` **都不存在**；而且**三条示例命令全写成
+   `GolemQ.tests.…`** —— 目录其实叫 `test_cases/`，照着敲必然 `ModuleNotFoundError`。
+   已重写成**不枚举文件**的写法（附上"清单会腐烂、且腐烂时不报错"这条教训）。
+2. **`xtquant_03_趋势网格策略_test.py` 是个从来没跑过的"测试"**：命名是**后缀** `_test.py`，
+   而 `unittest` 只收**前缀** `test_*.py` ⇒ 永远不被发现；且它**零 import**、自己定义
+   `MockTrendGridStrategy` ⇒ **只测自己写的 mock**，不碰真策略。它是开发时的**草稿**。
+   已在 README 里标明「别当回归用例、别以为网格策略有覆盖」——**没替所有者删**。
+3. `examples/README.md` 顶部加了指针，免得有人以为 `examples/` 里全是能跑的。
+4. ⚠️ **我搬 README 时踩了一个自己的错**：`git mv` 对**未入库**的文件会失败，而我后面紧接着
+   `rm -rf examples/xtquant` —— 把刚写、还没提交的 README 一起删了。内容还在上下文里、已在新位置重写。
+   **教训**：`git mv` 失败后别接着 `rm -rf` 那个目录。
+
+**验收**：全量 **469 通过 / 0 失败（skipped=1）**；`API_INDEX` **135 → 124 模块**
+（正好 −11 = 7 诊断 + 4 示例）；移动全部被 git 认成 `R`（rename），历史不断。

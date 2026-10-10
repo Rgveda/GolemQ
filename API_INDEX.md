@@ -717,6 +717,7 @@ stock_metadata_day —— 日频元数据的统一落点。
 | f | `metadata_day_doc(code, day, field, rate, created_at)` | 一行元数据 → stock_metadata_day 文档（只带一列载荷）。 `[dt]` |
 | f | `turnover_rows(rows, src_field, dst_field, created_at)` | 某个源的源行 → stock_metadata_day 文档列表。 `[dt]` |
 | f | `save_turnover(since, until, batch, verbose, echo, created_at, dry_run)` | 把 4.4 两源的换手率搬进 8.3 stock_metadata_day（两列，各写各的）。 |
+| f | `refresh_turnover(days, verbose, echo)` | 增量刷新最近 days 个自然日的换手率（供 --save 调用）。 |
 
 ### `quotes`
 
@@ -1131,47 +1132,6 @@ Poolcoef Benchmark 子类
 | f | `stop_xtquant_sync_scheduler()` | 停止XTQuant同步调度器 |
 
 ## GolemQ.test_cases
-
-### `check_heartbeat`
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `check_heartbeat_records()` | 检查心跳记录 |
-
-### `check_running_modules`
-检查当前运行中的模块
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `check_running_modules()` | 检查当前运行中的模块 |
-
-### `cleanup_timeout_instance`
-清理超时的xtquant_sync_loop实例
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `cleanup_timeout_instance()` | 清理超时的xtquant_sync_loop实例 |
-
-### `debug_instance_id`
-调试实例ID问题
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `debug_instance_id()` | 调试实例ID问题 |
-
-### `direct_cleanup`
-直接清理超时的xtquant_sync_loop实例
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `direct_cleanup()` | 直接清理超时的xtquant_sync_loop实例 |
-
-### `final_cleanup`
-最终清理超时的xtquant_sync_loop实例
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `final_cleanup()` | 最终清理超时的xtquant_sync_loop实例 |
 
 ### `run_tests`
 GolemQ 测试运行脚本
@@ -1899,71 +1859,3 @@ analysis/timing.py —— 从旧树搬回的时序累积器与金叉/死叉间�
 | f | `test_scheduler_initialization()` | 测试调度器初始化 |
 | f | `test_heartbeat_integration()` | 测试心跳监控集成 |
 | f | `test_messenger_integration()` | 测试消息通知集成 |
-
-### `verify_heartbeat`
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `test_heartbeat()` |  |
-
-## GolemQ.test_cases.xtquant
-
-### `xtquant_01_hello_quant`
-
-*(无公开成员)*
-
-### `xtquant_02_自动逆回购`
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| C | `A` |  |
-| f | `price_compare(list2)` | 参数为两个股票代码，如'204001.SH'， |
-| f | `get_last_price(stock_code)` |  |
-| f | `reverse_repos(xt_trader, acc, symbol)` |  |
-| C | `MyXtQuantTraderCallback` |  |
-| f | `MyXtQuantTraderCallback.on_disconnected()` | 连接断开 |
-| f | `MyXtQuantTraderCallback.on_stock_order(order)` | 委托回报推送 |
-| f | `MyXtQuantTraderCallback.on_stock_trade(trade)` | 成交变动推送 |
-| f | `MyXtQuantTraderCallback.on_order_error(order_error)` | 委托失败推送 |
-| f | `MyXtQuantTraderCallback.on_cancel_error(cancel_error)` | 撤单失败推送 |
-| f | `MyXtQuantTraderCallback.on_order_stock_async_response(response)` | 异步下单回报推送 |
-| f | `MyXtQuantTraderCallback.on_cancel_order_stock_async_response(response)` | :param response: XtCancelOrderResponse 对象 |
-| f | `MyXtQuantTraderCallback.on_account_status(status)` | :param response: XtAccountStatus 对象 |
-
-### `xtquant_03_趋势网格策略`
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| C | `TrendGridStrategy` | 趋势网格做多策略 |
-| f | `TrendGridStrategy.is_trend_up(stock_code)` | 判断股票是否处于多头趋势 |
-| f | `TrendGridStrategy.get_15min_ma30(stock_code)` | 获取15分钟线的MA30 |
-| f | `TrendGridStrategy.get_current_price(stock_code)` | 获取当前价格 |
-| f | `TrendGridStrategy.initialize_grid(stock_code, current_price)` | 初始化网格 |
-| f | `TrendGridStrategy.calculate_grid_level(stock_code, current_price)` | 计算当前网格层级 |
-| f | `TrendGridStrategy.should_buy(stock_code)` | 判断是否应该加仓 |
-| f | `TrendGridStrategy.should_sell(stock_code)` | 判断是否应该减仓 |
-| f | `TrendGridStrategy.get_position_quantity(stock_code)` | 获取持仓数量 |
-| f | `TrendGridStrategy.execute_buy(stock_code)` | 执行买入操作 |
-| f | `TrendGridStrategy.execute_sell(stock_code)` | 执行卖出操作（减仓但不清仓） |
-| f | `TrendGridStrategy.run_strategy(stock_codes, check_interval)` | 运行策略主循环 |
-| C | `MyXtQuantTraderCallback` | 交易回调类 |
-| f | `MyXtQuantTraderCallback.on_disconnected()` | 连接断开回调 |
-| f | `MyXtQuantTraderCallback.on_stock_order(order)` | 委托回报推送 |
-| f | `MyXtQuantTraderCallback.on_stock_trade(trade)` | 成交变动推送 |
-| f | `MyXtQuantTraderCallback.on_order_error(order_error)` | 委托失败推送 |
-| f | `MyXtQuantTraderCallback.on_cancel_error(cancel_error)` | 撤单失败推送 |
-| f | `MyXtQuantTraderCallback.on_order_stock_async_response(response)` | 异步下单回报推送 |
-| f | `MyXtQuantTraderCallback.on_cancel_order_stock_async_response(response)` | 异步撤单回报推送 |
-| f | `MyXtQuantTraderCallback.on_account_status(status)` | 账户状态回调 |
-
-### `xtquant_03_趋势网格策略_test`
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| C | `MockTrendGridStrategy` | 模拟趋势网格策略用于测试 |
-| f | `MockTrendGridStrategy.mock_is_trend_up(ma_values)` | 模拟趋势判断 |
-| f | `MockTrendGridStrategy.initialize_grid(stock_code, current_price)` | 初始化网格 |
-| f | `MockTrendGridStrategy.calculate_grid_level(stock_code, current_price)` | 计算网格层级 |
-| f | `MockTrendGridStrategy.test_trend_conditions()` | 测试趋势判断条件 |
-| f | `MockTrendGridStrategy.test_grid_logic()` | 测试网格逻辑 |
-| f | `MockTrendGridStrategy.test_trading_conditions()` | 测试交易条件 |
