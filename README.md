@@ -37,6 +37,7 @@ pip install -e .
 | `pymongo >= 3.0` | 8.3 的唯一入口 |
 | `pytdx` | **K 线的唯一数据源**（通达信协议） |
 | `tqdm` | 进度条 |
+| `numba >= 0.61` | **可选加速器**：`analysis/peak.py` 与 `analysis/regtree_jit.py` 用它（缺了会降级/报错，但 `--save` 主链路不依赖它）|
 
 可选源（缺 token 就自动不可用，不影响主链路）：`akshare`、`tushare`、`tdxaidata`。
 

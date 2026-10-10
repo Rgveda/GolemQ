@@ -85,6 +85,18 @@ MIN_PACKAGES = (
     ('pymongo', '3.0'),
     ('tqdm', '4.0'),
     ('pytdx', ''),        # ⚠️ `''` = **只查能不能 import**（pytdx 没有 `__version__`，实测）
+    # ⚠️ **这一条与上面几条性质不同，别顺着"主链路硬依赖"去理解它**（用户 2026-10-10 定要写在这里）：
+    # numba 是**可选加速器**，不是"缺了就断"—— 两个用它模块都写好了降级：
+    # `analysis/peak.py` 退回纯实现（`thresholding_algo_py`）、
+    # `analysis/regtree_jit.py` 的 `available()` 报 False 并让调用方另作打算。
+    # 写进本表 = 它进了 `ENV_GATE_NODES` 的 `依赖包` 节点 ⇒ **缺 numba 时 CLI 硬拦**
+    # （只有 `--setup` / `--mongodb-init` / `--dingtalk-init` / `--serverchan-init` 四条放行）。
+    # 若哪天想让它只提示不拦，把它挪到 `OPTIONAL_SOURCES` 那一侧即可（那里是灰点、不拦启动）。
+    #
+    # 门槛取 **0.61**：那是**实测过**的版本（0.61.0 + numpy 2.1.3；jit 与纯实现在
+    # `test_peak` 11 条 + `test_regtree_jit` 6 条上逐值一致）。**不写没验过的更低版本** ——
+    # 本项目的门槛一贯是"能跑的下限"，2.0/2.3 那两条的注释里也写着理由。
+    ('numba', '0.61'),
 )
 
 #: MongoDB 最低版本 —— 本项目**只用 8.3**（`CLAUDE.md`「Single database」）。
