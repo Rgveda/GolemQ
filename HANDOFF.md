@@ -2167,3 +2167,30 @@ moneyflow 爬到的数据写入 `stock_metadata_day`，而不是 `stock_ranking`
 **不盯被 import 的库模块**；改了 `kline83.py` 不重启进程，跑的还是旧字节码。
 重启后即好（用户确认）。这条已写进 `examples/README.md` 顶部 ——
 症状极具误导性（**代码是对的，你在跟幽灵较劲**）。
+
+---
+
+### ✅ 复测：代理关闭后，东财那批接口**确认是真死**（2026-10-11，用户要求）
+
+用户：「我把代理关闭，在直连的情况下测试东财接口是否还全死」。
+
+**测了，结论不变，而且这次能排除「代理问题」这个误读。**
+
+| 接口 | 开代理 | **关代理（直连）** |
+|:--|:--|:--|
+| `push2his`（逐只资金流 / 逐只日线）| 502 / ProxyError | ❌ **RemoteDisconnected** |
+| `push2`（批量快照）| 502 / ProxyError | ❌ **RemoteDisconnected** |
+| `datacenter-web`（千股千评）| **200** | ✅ **200** |
+| `ak.stock_comment_em` | ✓ (5200, 14) | ✅ **✓ (5200, 14)** |
+| `ak.stock_fund_flow_individual('即时')` | ✓ (5210, 10) | ✅ **✓ (5210, 10)** |
+| `stock_individual_fund_flow` 等（依赖 `push2*`）| ✗ | ❌ RemoteDisconnected |
+
+⇒ **失败形态变了三次**（502 / ProxyError / RemoteDisconnected），**结论一次没变**。
+
+⚠️ **这次复测的价值在于排除误读**：原始表格里的 "ProxyError" **很容易被读成
+「那是你的代理问题，修好代理就能用」** —— 而复测证明**与代理无关**。
+`PITFALLS.md` **P32** 因此补了「代理开/关都要试」这条方法（三种失败形态含义不同：
+502 = 服务端在但拒绝、ProxyError = 有东西在中间、RemoteDisconnected = 对端主动断开）。
+
+**顺带确认**：`--moneyflow all --moneyflow-dry-run` 在**无代理**环境下**照常工作**
+（两源都干跑成功）—— 我的实现不依赖代理。
