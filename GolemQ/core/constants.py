@@ -398,6 +398,27 @@ class FIELD(metaclass=_StubMeta):
 
     PE_RATION = 'PERation'
 
+    # --- 千股千评（东财 `ak.stock_comment_em`）其余几列 -------------------------
+    # ⚠️ 这批**不是**从旧树 `parameter.py` 取的 —— 那里根本没有它们。旧爬虫
+    # （`GolemQ_old/fetch/crawler.py:1626-1646`）用的是**字面量**做的 `rename`，
+    # 所以**真值就是那些字面量本身**（它决定了当年写进 Mongo 的字段名）。
+    # 搬过来时按本项目「字段名一律进 `FIELD`」的约定收拢到一处。
+    ZLCB = 'ZLCB'                     # 主力成本
+    JGCYD = 'JGCYD'                   # 机构参与度
+    TOTAL_SCORE = 'TotalScore'        # 综合得分
+    RANKING_UP = 'RankingUp'          # 排名上升
+    RANKING = 'Ranking'               # 目前排名
+    FOCUS = 'Focus'                   # 关注指数
+    CHANGE_PERCENT = 'ChangePercent'  # 涨跌幅（÷100 后的小数）
+
+    # --- 同花顺资金流（`ak.stock_fund_flow_individual`）----------------------
+    # ⚠️ 这四个是**全新**的列：旧树没有同花顺资金流（`--moneyflow ths` 是假分支，
+    # 与 eastmoney 并进同一段东财代码）。命名由本轮定，前缀 `THS_` 标明来路。
+    THS_INFLOW = 'THS_Inflow'
+    THS_OUTFLOW = 'THS_Outflow'
+    THS_NET = 'THS_Net'
+    THS_AMOUNT = 'THS_Amount'
+
     # 资金流
     MONEYFLOW_PERCENT = 'MONEYFLOW_PCT'
     MONEYFLOW_VOLUME = 'moneyflow_volume'

@@ -206,16 +206,50 @@ def metadata_day_doc(code, day, field, rate, created_at=None) -> dict:
     >>> metadata_day_doc('600519', '2026-10-09 15:00:00', 'TurnoverRate', 0.1, 0)['date']
     '2026-10-09'
     """
+    return metadata_day_doc_multi(code, day, {field: rate}, created_at=created_at)
+
+
+def metadata_day_doc_multi(code, day, fields, created_at=None) -> dict:
+    """一行**多列**元数据 → 文档。:func:`metadata_day_doc` 是它的单列特例。
+
+    存在的理由：`stock_metadata_day` 是「一行 = 一标的 × 一交易日，**列就是字段**」，
+    而爬来的数据一次就有多列（千股千评一次 9 列）。单列版要写 9 次文档、
+    `$set` 9 遍同一行的公共键 —— 多列版一条文档解决。
+
+    ⚠️ **值为 `None` / NaN 的列直接跳过，不写 `None`** —— 与换手率那条
+    「哪一列没有就不写，**不写 0**」是同一个口径：写 `None` 会让下游分不清
+    「没这个数据」与「这个数据是空」。
+
+    ⚠️ 公共键的形状**必须与 :func:`metadata_day_doc` 逐字一致**（`code` / `date` /
+    `date_stamp` / `datetime` / `ts` / `created_at`）—— 单列版已委托到本函数，
+    所以这条由它的 doctest 自动守住。
+
+    >>> d = metadata_day_doc_multi('301308', '2026-10-09', {'PERation': 4.38, 'Ranking': 1302}, created_at=0)
+    >>> d['PERation'], d['Ranking'], d['date_stamp'] == day_stamp('2026-10-09')
+    (4.38, 1302.0, True)
+    >>> 'ZLCB' in metadata_day_doc_multi('301308', '2026-10-09', {'ZLCB': None}, 0)   # None 不写
+    False
+    """
     day = day_date(day)
-    return {
+    doc = {
         'code': str(code),
         'date': day,
         'date_stamp': day_stamp(day),
         'datetime': '{} 00:00:00'.format(day),
         'ts': bj_date('{} 00:00:00'.format(day)),
-        field: float(rate),
         'created_at': int(created_at if created_at is not None else time.time()),
     }
+    for field, value in (fields or {}).items():
+        if value is None:
+            continue
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            continue
+        if value != value:          # NaN（唯一不自等的浮点）
+            continue
+        doc[field] = value
+    return doc
 
 
 def _db():

@@ -1587,3 +1587,77 @@ models 线用 `renko` 类的 `source_aligned`。
 （一次 `1→100` 跳空配 `0.01` 砖高 = **9901 块砖**，而 bar 只有 2），
 那会**静默截断**，而随机游走的对拍恰好没触发。现改为按总变差 `Σ|Δp|/砖高` 估容量
 + 核内计数 + 越界**抛错**，并有专门用例钉住。
+
+---
+
+## D37. `--moneyflow` 的源被**实测**改掉：东财资金流已死，交易流走同花顺 —— 2026-10-11
+
+**背景**：用户要求移植旧 CLI 的 `elif (cmdline_args.moneyflow in ['eastmoney', 'ths']):`
+分支（旧 `cli/__main__.py:514`），初口径是「**只搬东财**」。
+
+**但先实测推翻了它**（这一步是本次最有价值的地方）：
+
+| 目标 | 实测（2026-10-11）| 结论 |
+|:--|:--|:--|
+| `push2his.eastmoney.com/.../fflow/daykline`（旧树逐只资金流）| http **502** / https ProxyError | ❌ 死 |
+| `push2.eastmoney.com/api/qt/clist`（批量快照）| http **502** / https ProxyError | ❌ 死 |
+| `ak.stock_individual_fund_flow` / `stock_market_fund_flow` / `stock_sector_fund_flow_rank` | ProxyError | ❌ 死 |
+| **`datacenter-web.eastmoney.com`**（千股千评）| **200**，pageSize=500 → 11 页 | ✅ |
+| **`ak.stock_comment_em()`** | **✓ (5200, 14)** / 3.1s | ✅ |
+| **`ak.stock_fund_flow_individual('即时')`**（同花顺）| **✓ (5210, 10)** / 8.3s | ✅ |
+
+⇒ 旧树 `GQ_SU_crawl_moneyflow_from_eastmoney`（**逐只**、打已死的 `push2his`）
+**搬过来就是一个跑不通的东西**。用户据此改口径。
+
+**决策**：
+
+1. **千股千评照旧走东财**（`ak.stock_comment_em`）—— 它是通的，且是 4.4
+   `stock_ranking` 的**同一个源**（所以「换手率」那一列与库里既有值**逐位相同**：
+   实测 `600519` `0.28→0.0028`、`000001` `0.56→0.0056`、`301308` `3.61→0.0361`）。
+2. **资金流改走同花顺**（`ak.stock_fund_flow_individual`）。⚠️ 旧 flag 里**本来就有
+   `ths`**（虽然当年是个假别名 —— 分支体里只实现了东财），所以这不是另起炉灶。
+3. **两源都落 `stock_metadata_day`**（用户要求），不写旧树的
+   `stock_ranking` / `stock_valuation` / `stock_moneyflow`。
+4. **千股千评的「换手率」写进现有 `TurnoverRate` 列** —— 同源同义 ⇒ 那一列
+   从「一次性搬运」升级成「每次爬取都刷新」。**下游一行不改**。
+5. **同花顺的换手率丢弃** —— 它是**第三个口径**（既非东财、也非 baostock）。
+   表里已两列，再加就是第三列死列。
+
+⚠️ **同花顺只有当日，没有历史** ⇒ 补不了过去，只能从今天起攒。CLI 输出里写明。
+
+**落点**：`markets/StockCN/moneyflow_save.py` + `cli/commands/moneyflow.py`
+（`--moneyflow {eastmoney|ths|all}`）。
+
+**验证**：实跑两源 → 库内 7 字段 → **19 字段**，**原有字段一列不丢**
+（专门拿一条**同时有两列换手率**的记录验证：只 `$set` 新列后，
+`TurnoverRate=0.0018` 与 `turnover=0.0030649998` **逐位保留**）✓
+
+---
+
+## D38. `stock_min_aligned` → **「元数据对齐到 K 线」**（不是照搬）—— 2026-10-11
+
+**背景**：用户要求移植 `elif cmdline_args.stock_min_aligned:`（旧 `cli/__main__.py:426`），
+并「改造得针对 8.3 库」。
+
+**勘查结论：照搬不可能**：
+
+* 名字**名不副实** —— `markets/StockCN/align.py`（581 行）全文**没有任何分钟数据**，
+  它对齐的是**日线**（`(date, code)` 索引）。「股票分钟对齐功能」那句注释误导了整轮。
+* 依赖 **QUANTAXIS**（`QA_fetch_stock_list` / `QA_fetch_stock_day_adv`）、
+  **xtquant**（`GQ_featch_stock_valuation_from_xtquant`，**MiniQMT 自 2026-10-01 停服**）
+  与 **4.4 的 `stock_valuation`**（已随 4.4 停用）。
+* 它还**写** `stock_ranking` / `stock_valuation` —— 那两列新树已经在
+  `stock_metadata_day` 里了。
+* 全树**零单元测试**、无功能 spec，只在文档里被当「查缺补漏范式」引用。
+
+**决策**（用户定）：**保留「对齐」这个能力，数据源换成 8.3 自己的
+`stock_metadata_day`**，且**只读**（写元数据是 `--moneyflow` / `refresh_turnover` 的事）。
+落点 `markets/StockCN/metadata_align.py` —— ⚠️ **刻意不叫 `align.py`**，
+避免让人以为它是旧文件原样搬运。
+
+**改造后的差异（这是它比旧实现强的地方）**：旧实现名叫「分钟对齐」却只对日线做；
+新函数**接受任意频率**，内部按日折叠 —— 实测 60min 的 2105 根 bar 里，
+同一个交易日的 **4 根 bar 拿到同一行元数据**。
+
+**CLI**：`--metadata-align` 是**只读覆盖率报告**，**不自动补数据**
+（补数据要联网、要限频，不该藏在报告命令里）。

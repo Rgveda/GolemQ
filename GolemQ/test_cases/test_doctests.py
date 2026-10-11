@@ -94,6 +94,12 @@ DOCTEST_MODULES = (
     # ⚠️ 本模块**模块级**导入 numba/scipy/talib（三者都在 MIN_PACKAGES），
     # 所以收集它比别的条目慢一点点 —— 但不需要 DB 与网络，仍是 hermetic 的。
     'GolemQ.analysis.renko',
+    # 资金流/千股千评的行构造与单位换算：`to_code`（int 陷阱）、
+    # `parse_cn_amount`（`'3.72亿'`）、`parse_pct`（`'20.02%'`）、
+    # `metadata_day_doc_multi`（多列文档）都是纯函数。
+    'GolemQ.markets.StockCN.moneyflow_save',
+    # 元数据对 K 线的对齐：`align_metadata_frame` 是纯 pandas，无 DB。
+    'GolemQ.markets.StockCN.metadata_align',
     # RENKO 的 jit 版：`bricks_directions` 与 `evaluate_renko_jit` 是纯 numpy in/out。
     # ⚠️ numba 是**惰性** import（`_nb()`），但这两条 doctest 真会调它 ——
     # 收集本模块不需要 numba 在场，**跑这两条**需要（与 `regtree_jit` 同理）。

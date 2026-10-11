@@ -248,6 +248,14 @@ CLI 命令注册表 —— 机制层，不认识任何具体命令。
 | f | `run_watchdog(args)` |  |
 | f | `run_stop(args)` |  |
 
+### `metadata_align`
+--metadata-align —— stock_metadata_day 对 K 线的覆盖率报告（只读）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `add_metadata_align_arguments(parser)` |  |
+| f | `run_metadata_align(args)` | --metadata-align 的处理体：取 K 线 → 对齐 → 打覆盖率表。 |
+
 ### `migrate`
 一次性搬运入口：从 4.4 取材落进 8.3。
 
@@ -257,6 +265,14 @@ CLI 命令注册表 —— 机制层，不认识任何具体命令。
 | f | `run_migrate_turnover(args)` | --migrate-turnover 的处理体：只做参数校验，干活在 metadata_save。 |
 | f | `add_index_list_arguments(parser)` |  |
 | f | `run_migrate_index_list(args)` | --migrate-index-list 的处理体：只做参数校验，干活在 refdata_save。 |
+
+### `moneyflow`
+--moneyflow —— 抓资金流 / 千股千评并落 stock_metadata_day。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `add_moneyflow_arguments(parser)` |  |
+| f | `run_moneyflow(args)` | --moneyflow 的处理体：只做参数校验，干活在 moneyflow_save。 |
 
 ### `purge`
 --purge-l1 / --purge：清理 MongoDB 数据库。破坏性，故有确认闸。
@@ -788,6 +804,14 @@ pytdx bar / xdxr → 8.3 时序文档的纯函数核心（写侧契约）。
 | f | `GQ_purge_suspended(dry_run, limit, targets, verbose)` | 把停牌日的 bar 移出主集合到 <集合名>_removed。默认只统计不移动。 |
 | f | `GQ_restore_suspended(targets, removed_by, verbose)` | 回迁：把 <集合名>_removed 里由清理移走的内容搬回主集合，幂等。 |
 
+### `metadata_align`
+把 stock_metadata_day 的列对齐到任意频率的 K 线。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `align_metadata_frame(kline, meta, columns)` | 纯函数：把 meta（索引 (date, code)）对齐到 kline 的每一行。 `[dt]` |
+| f | `align_metadata_to_kline(kline, columns, database)` | 读 stock_metadata_day 并把它对齐到 kline（见 :func:align_metadata_frame）。 |
+
 ### `metadata_save`
 stock_metadata_day —— 日频元数据的统一落点。
 
@@ -796,9 +820,25 @@ stock_metadata_day —— 日频元数据的统一落点。
 | f | `day_stamp(day)` | 'YYYY-MM-DD'（或带时分秒）→ 本表 date_stamp（秒，int）。 `[dt]` |
 | f | `day_date(date_str)` | 源端日期 → '%Y-%m-%d'。 `[dt]` |
 | f | `metadata_day_doc(code, day, field, rate, created_at)` | 一行元数据 → stock_metadata_day 文档（只带一列载荷）。 `[dt]` |
+| f | `metadata_day_doc_multi(code, day, fields, created_at)` | 一行多列元数据 → 文档。:func:metadata_day_doc 是它的单列特例。 `[dt]` |
 | f | `turnover_rows(rows, src_field, dst_field, created_at)` | 某个源的源行 → stock_metadata_day 文档列表。 `[dt]` |
 | f | `save_turnover(since, until, batch, verbose, echo, created_at, dry_run)` | 把 4.4 两源的换手率搬进 8.3 stock_metadata_day（两列，各写各的）。 |
 | f | `refresh_turnover(days, verbose, echo)` | 增量刷新最近 days 个自然日的换手率（供 --save 调用）。 |
+
+### `moneyflow_save`
+资金流 / 千股千评 → stock_metadata_day（旧 CLI --moneyflow 的搬运）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `to_code(value)` | 任意形态的标的代码 → 6 位字符串。 `[dt]` |
+| f | `parse_cn_amount(text)` | 同花顺的带单位金额 → 浮点。 `[dt]` |
+| f | `parse_pct(text)` | '20.02%' → 0.2002（百分数 → 小数）。取不到返回 None。 `[dt]` |
+| f | `last_trade_day()` | 8.3 口径的最后交易日（'YYYY-MM-DD'）—— 同花顺的日期靠它。 |
+| f | `fetch_eastmoney_comment()` | 东财千股千评（ak.stock_comment_em）—— 实测 5200 行 / 11 次分页 / ~3s。 |
+| f | `fetch_ths_fundflow()` | 同花顺全市场当日资金流（ak.stock_fund_flow_individual('即时')）。 |
+| f | `rows_eastmoney(df, created_at)` | 千股千评帧 → stock_metadata_day 文档列表。 |
+| f | `rows_ths(df, day, created_at)` | 同花顺资金流帧 → stock_metadata_day 文档列表（day 由调用方给）。 |
+| f | `save_moneyflow(source, created_at, verbose, echo, dry_run)` | 取数 → 组行 → upsert_fields 落 stock_metadata_day。 |
 
 ### `quotes`
 
@@ -1675,6 +1715,22 @@ K 线保存的本地水位短路（DECISIONS.md D25）。
 | f | `TestDingReminder.test_send_message_markdown_content(mock_config, mock_token)` |  |
 | f | `TestDingReminder.test_send_message_no_token(mock_config, mock_token)` |  |
 
+### `test_metadata_align`
+markets/StockCN/metadata_align.py —— 元数据对 K 线的对齐。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestDayFolding` |  |
+| f | `TestDayFolding.test_same_day_bars_get_the_same_value()` | ⚠️ 核心行为：同一天的所有 bar 拿到同一行元数据。 |
+| f | `TestDayFolding.test_two_days_two_values()` |  |
+| C | `TestNoForwardFill` |  |
+| f | `TestNoForwardFill.test_missing_day_is_nan_not_previous_value()` | ⚠️ 不许前向填充 —— 缺的那天是 NaN，不是前一天的值。 |
+| C | `TestShapeContract` |  |
+| f | `TestShapeContract.test_index_and_length_preserved()` |  |
+| f | `TestShapeContract.test_multi_code_does_not_cross_contaminate()` | 同一天两只票 —— 值不能串。 |
+| f | `TestShapeContract.test_empty_meta_gives_all_nan()` |  |
+| f | `TestShapeContract.test_columns_subset()` |  |
+
 ### `test_metadata_save`
 stock_metadata_day 的落库契约。
 
@@ -1710,6 +1766,29 @@ stock_metadata_day 的落库契约。
 | f | `TestUpsertFieldsDoesNotClobber.test_second_column_does_not_wipe_the_first()` |  |
 | f | `TestUpsertFieldsDoesNotClobber.test_unique_index_is_created()` |  |
 | f | `TestUpsertFieldsDoesNotClobber.test_save_collection_would_wipe_it()` | 反证：证明「用 $set」不是洁癖 —— ReplaceOne 真会抹掉别列。 |
+
+### `test_moneyflow_save`
+markets/StockCN/moneyflow_save.py —— 两个源的行构造与单位换算。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestScalarParsers` |  |
+| f | `TestScalarParsers.test_to_code_keeps_six_digits()` | ⚠️ int 陷阱：000001 必须还是 '000001'，不能塌成 '1'。 |
+| f | `TestScalarParsers.test_parse_cn_amount_units()` |  |
+| f | `TestScalarParsers.test_parse_pct_is_divide_by_100()` |  |
+| C | `TestEastmoneyRows` |  |
+| f | `TestEastmoneyRows.test_columns_and_units()` |  |
+| f | `TestEastmoneyRows.test_date_stamp_is_recomputed_not_copied()` | date_stamp 由 day_stamp 重算（不取源端）—— 与 8.3 口径一致。 |
+| f | `TestEastmoneyRows.test_does_not_carry_price_or_name()` | 最新价/名称 刻意不落（价在 K 线、名在 stock_list）。 |
+| f | `TestEastmoneyRows.test_bad_rows_are_skipped()` |  |
+| C | `TestThsRows` |  |
+| f | `TestThsRows.test_code_does_not_collapse()` | ⚠️ 同花顺的代码是 int —— 000001 必须是 '000001'。 |
+| f | `TestThsRows.test_amounts_are_parsed()` |  |
+| f | `TestThsRows.test_turnover_and_change_are_dropped()` | ⚠️ 同花顺的换手率是第三个口径 —— 丢，不落（否则就是第三列死列）。 |
+| f | `TestThsRows.test_day_comes_from_the_caller()` | 同花顺不带交易日字段 ⇒ day 由调用方给（实测：周六给的是最后交易日）。 |
+| C | `TestPayloadWhitelists` | 白名单是 upsert_fields 的防线 —— 它必须覆盖本模块真写的每一列。 |
+| f | `TestPayloadWhitelists.test_payloads_cover_what_rows_write()` |  |
+| f | `TestPayloadWhitelists.test_the_two_sources_do_not_share_payload_columns()` | ⚠️ 两个源不得碰同一列 —— 否则后跑的会覆盖前一个的成果。 |
 
 ### `test_no_quantaxis`
 

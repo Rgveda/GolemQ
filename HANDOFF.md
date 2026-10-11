@@ -2107,3 +2107,63 @@ demo 侧另加一句：名字 == 代码时**不再印两遍**（`301308（301308
 * 三个 demo bare 模式退出码全 **0** ✓
 * 新增 `test_kline83.py` **14 条**（链路用 monkeypatch —— 真实数据碰不到第二跳）
 * 全量回归 **545 通过 / 0 失败**（skipped=1）
+
+---
+
+### ✅ 旧 CLI 两条功能搬完：`--moneyflow` + `--metadata-align`（2026-10-11）
+
+用户：「移植 `elif (cmdline_args.moneyflow in ['eastmoney','ths']):` 与
+`elif cmdline_args.stock_min_aligned:` 两个命令行功能，股票对齐功能要改造得针对 8.3 库，
+moneyflow 爬到的数据写入 `stock_metadata_day`，而不是 `stock_ranking` / `stock_v*`」。
+
+#### ① 实测推翻了「只搬东财」的前提（本次最有价值的一步）
+
+东财的资金流接口**今天全死**：`push2his` / `push2` 两个 host 都是
+**http 502 / https ProxyError**，`ak.stock_individual_fund_flow` 等同族也全挂。
+⇒ 旧树那个**逐只**资金流爬虫**搬不了**（搬过来就是跑不通的东西）。
+而 **`datacenter-web`（千股千评）200 可用**、**同花顺资金流可用**。
+用户据此改口径：**东财千股千评 + 同花顺资金流**（而 `ths` 本就在旧 flag 的取值里）。
+详见 `DECISIONS.md` **D37** 与 `PITFALLS.md` **P32**。
+
+#### ② 交付一：`--moneyflow {eastmoney|ths|all}`
+
+落点 `markets/StockCN/moneyflow_save.py` + `cli/commands/moneyflow.py`。
+
+| 源 | 取数 | 行 | 落哪些列 |
+|:--|:--|--:|:--|
+| 东财千股千评 | `ak.stock_comment_em` | 5200 | `TurnoverRate`(÷100，**写现有列**)/ `PERation` / `ZLCB` / `JGCYD` / `TotalScore` / `RankingUp` / `Ranking` / `Focus` / `ChangePercent` |
+| 同花顺资金流 | `ak.stock_fund_flow_individual` | 5210 | `THS_Inflow` / `THS_Outflow` / `THS_Net` / `THS_Amount` |
+
+⚠️ **同花顺只有当日、没有历史** ⇒ 补不了过去，只能从今天起攒（CLI 输出里写明）。
+⚠️ 同花顺的**换手率被丢弃** —— 那是第三个口径，表里已有两列，再加就是第三列死列。
+
+#### ③ 交付二：`--metadata-align`（只读覆盖率）
+
+`stock_min_aligned` **不能照搬**：名不副实（全文没有分钟数据）、依赖
+**QUANTAXIS + xtquant（已停服）+ 4.4 `stock_valuation`**。用户定：
+**保留对齐能力、源换成 8.3 的 `stock_metadata_day`**。
+落点 `markets/StockCN/metadata_align.py`（**刻意不叫 `align.py`** —— 免得被当成原样搬运）。
+
+**它比旧实现强的地方**：旧实现叫「分钟对齐」却只对日线做；新函数**接受任意频率**，
+内部按日折叠 —— 实测 60min 的 2105 根 bar 里，同一交易日的 **4 根拿到同一行元数据** ✓
+
+#### ④ 验收
+
+* **两源实跑**：eastmoney 读 5200 / 写 5200（更新 5200，**新增 0** —— 没插重行）；
+  ths 读 5210 / 写 5210（新增 24 / 更新 5185）
+* ⚠️ **「别的列不被抹掉」拿到确证**：专门找了一条**同时有两列换手率**的记录
+  （`TurnoverRate=0.0018` + `turnover=0.0030649998`），只 `$set` 一列新列之后
+  —— **一列不丢、原值逐位保留** ✓（库里 7 字段 → 19 字段）
+* ⚠️ **`code` 是 6 位串**：同花顺那列源是 **int**，实测**塌成 `'1'` 的行数 = 0** ✓
+* `--metadata-align` 实跑：600519@60min 2105 根里 `turnover` 2097 / `TurnoverRate` 1697 /
+  资金流列 4（= 刚写的那一个交易日）—— 报告如实暴露覆盖现实
+* 新增 `test_moneyflow_save.py`（12 条）+ `test_metadata_align.py`（8 条）
+  + 2 个 doctest 模块；全量回归 **570 通过 / 0 失败**（skipped=1）
+
+#### ⑤ 顺带：streamlit 的「假 bug」
+
+用户实报「三个 demo 标的显示还是 `000711` 没有名字」——**代码已经是对的**。
+根因：**streamlit 的热重载只盯主脚本**（`examples/app_*.py`），
+**不盯被 import 的库模块**；改了 `kline83.py` 不重启进程，跑的还是旧字节码。
+重启后即好（用户确认）。这条已写进 `examples/README.md` 顶部 ——
+症状极具误导性（**代码是对的，你在跟幽灵较劲**）。
