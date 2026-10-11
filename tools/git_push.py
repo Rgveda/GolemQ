@@ -100,8 +100,9 @@ def main(argv=None) -> int:
             return 1
         branch = out.strip()
     want = local_head(branch)
-    print('[push] 分支 {} → {}/{}    本地 {}'.format(branch, args.remote, branch, want))
-    print('[push] 探活：' + _probe(args.proxy))
+    print('[push] 分支 {} → {}/{}    本地 {}'.format(branch, args.remote, branch,
+                                                   want), flush=True)
+    print('[push] 探活：' + _probe(args.proxy), flush=True)
 
     routes = [(name, tuple(a.format(proxy=args.proxy) for a in extra))
               for name, extra in ROUTES]
@@ -113,14 +114,16 @@ def main(argv=None) -> int:
             got = remote_head(args.remote, branch, extra)
             ok = (got == want[:len(got)]) and got != ''
             print('[push] 第 {} 轮 / {:<4s} rc={} | {} | 远端 {}'.format(
-                round_no + 1, name, rc, tail[0][:70], got or '取不到'))
+                round_no + 1, name, rc, tail[0][:70], got or '取不到'), flush=True)
             if ok:
-                print('[push] ✓ 远端**已确认**同步：{}'.format(got))
+                print('[push] ✓ 远端**已确认**同步：{}'.format(got), flush=True)
                 return 0
         time.sleep(3 + 2 * round_no)        # 退避：直连会随机抽风，别打太密
-    print('[push] ✗ 试完 {} 轮 × {} 条路仍未确认同步 —— **别当已推**\n'
-          '       复核一下：git ls-remote {} refs/heads/{}'.format(
-              args.attempts, len(routes), args.remote, branch), file=sys.stderr)
+    # ⚠️ 走 **stdout 且 flush**：与上面那些行同一条流，顺序才不会被缓冲打乱。
+    # （写 stderr 时它与 block-buffered 的 stdout 不同步 —— 实测那行会跑到标题前面。）
+    print('[push] ✗ 试完 {} 轮 × {} 条路仍未确认同步 —— **别当已推**；'
+          '复核：git ls-remote {} refs/heads/{}'.format(
+              args.attempts, len(routes), args.remote, branch), flush=True)
     return 1
 
 
