@@ -55,7 +55,11 @@ import 改接（老树 → 新树）
 * 字段常量补齐 14 个（``FIELD`` 里原有 4 个 ``RENKO_*``），真值取自旧树
   ``GolemQ_old/utils/parameter.py`` L1849-1880，**逐值核对过**。
   ⚠️ 那批值 **L 侧大写 / S 侧小写混用**（``RENKO_lBAR`` vs ``renkosBarBf``）——
-  这是旧树真值，**别"统一"**。
+  这是旧树真值。**其中三个已在 2026-10-11 按用户要求对齐成驼峰**
+  （``RENKO_BAR`` → ``renkoBar``、``RENKO_lBAR_LB`` → ``renkolBarLb``、
+  ``RENKO_lBAR_UB`` → ``renkolBarUb``）；**其余 11 个仍原样**，
+  理由与「为什么只动这三个」见 ``core/constants.py`` 那一处的注释。
+  ⇒ **别再照抄「整族别统一」这句话** —— 那是 2026-10-11 之前的状态。
 
 依赖
 ====

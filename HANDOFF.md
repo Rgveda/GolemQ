@@ -1819,7 +1819,11 @@ stock_metadata_day  17,112,141 行 / 5,515 只 / 1999-01-04 → 2026-10-09
    **控制流一律未动**（`except: pass` 保持原语义）。
    顺带：因删了 VERBOSE 段，**没补** `TREND_STATUS.VERBOSE`（新树有意不加）。
 4. 补 **14 个** `FIELD.RENKO_*` 常量，真值取自旧树 `parameter.py` L1849-1880，
-   **逐值核对过**（18/18 一致）。⚠️ 那批值 **L 侧大写 / S 侧小写混用**，别"统一"。
+   **逐值核对过**（18/18 一致）。⚠️ 那批值 **L 侧大写 / S 侧小写混用**。
+   → **2026-10-11 更新**：其中**三个已按用户要求对齐成驼峰**
+   （`RENKO_BAR`→`renkoBar`、`RENKO_lBAR_LB`→`renkolBarLb`、`RENKO_lBAR_UB`→`renkolBarUb`），
+   其余 11 个仍原样。**零兼容成本**：实测全库 + 全仓 grep，这三个字段名
+   **从未被写进任何集合**、也无第二处引用（用户确认）。见 `core/constants.py` 的注释。
 5. `cli/bootstrap.py` 的 `MIN_PACKAGES` 加 **`talib` + `scipy`**
    （第一次进新树；换自实现会改砖高、对拍失真）。`numba` 那条注释同步更新 ——
    `renko_chart` 是**模块级** `@nb.jit`，缺 numba 时整个模块 import 就失败，

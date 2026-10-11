@@ -475,20 +475,32 @@ class FIELD(metaclass=_StubMeta):
     RENKO_TREND_S_TIMING_LAG = 'renkosBarLag'
     RENKO_TREND_S_LB = 'renkosBarLb'
     RENKO_TREND_S_UB = 'renkosBarUb'
-    RENKO_TREND = 'RENKO_BAR'
+    RENKO_TREND = 'renkoBar'
     RENKO_TREND_S = 'RENKO_sBAR'
     RENKO_PRICE_S = 'RENKO_sPRICE'
     RENKO_TREND_S_BEFORE = 'renkosBarBf'
     RENKO_S_JX_BEFORE = 'RENKO_sBAR_JX_BF'
     RENKO_TREND_L = 'RENKO_lBAR'
     RENKO_PRICE_L = 'RENKO_lPRICE'
-    RENKO_TREND_L_LB = 'RENKO_lBAR_LB'
-    RENKO_TREND_L_UB = 'RENKO_lBAR_UB'
+    RENKO_TREND_L_LB = 'renkolBarLb'
+    RENKO_TREND_L_UB = 'renkolBarUb'
     RENKO_TREND_L_BEFORE = 'RENKO_lBAR_BF'
     RENKO_TREND_L_JX_BEFORE = 'RENKO_lBAR_JX_BF'
     RENKO_TREND_L_TIMING_LAG = 'RENKO_lBAR_LAG'
     RENKO_BOOST_L_TIMING_LAG = 'RENKO_lBOOST_LAG'
     RENKO_OPTIMAL = 'RENKO_OPT'
+    # ⚠️ 上面这三个值是**对旧树的刻意偏离**（用户 2026-10-11 定）：
+    # 旧树 `parameter.py` L1850/L1855/L1856 的真值是 `RENKO_BAR` /
+    # `RENKO_lBAR_LB` / `RENKO_lBAR_UB`（**全大写**），而 S 侧同族是
+    # `renkosBarLb` / `renkosBarUb`（**驼峰**）—— 旧树自己 L/S 两侧不一致。
+    # 这次把 L 侧这三个**对齐到 S 侧的驼峰风格**，理由：
+    #   1. **零兼容成本**：实测全库扫描 + 全仓 grep，这三个字段名
+    #      **从来没有被写进任何集合**，也没有第二处引用（用户 2026-10-11 确认）。
+    #   2. 留着两套风格，下一个搬 RENKO 的人**一定会问哪边是对的**，
+    #      而「哪边都对、只是历史」是个只增不减的解释负担。
+    # ⚠️ 其余 11 个 RENKO_* 值**原样保留**（`RENKO_lBAR` / `RENKO_lPRICE` …）——
+    # 本轮只动用户点名的这三个。**别"顺手"把整族都改了**：
+    # 那几个要与旧树对拍/对读，改了就得重新论证。
     STOCK_SCORE_M15_TIMING_LAG = 'Score_M15_LAG'
     STOCK_SCORE_M15_NORM_TIMING_LAG = 'SSM15_NORM_LAG'
     POLYNOMIAL9 = 'poly9'
