@@ -238,11 +238,19 @@ ts   用 datetime → 7 行 ✓
 | `stock_info` | 5,574 |
 | `etf_list` | 1,674 |
 | `stock_block` | 72,856 |
-| `financial` | **0** |
+| `financial` | **182,751** |
 | `stock_day` | 17,871,122 |
 | `stock_adj` | 17,547,519 |
 | `index_day` | 8,602,127 |
 | `stock_min` | **0** |
+
+> ⚠️ **`financial` 已于 2026-10-11 更正**：原表记 **0** —— 实测 **182,769**
+> （182,751 行自 4.4 `quantaxis.financial` 搬入，`report_date` 为 int、覆盖到
+> **2020-03-31**；另 **18 条**是测试残留，同日已清 ⇒ 现 **182,751**）。
+> ⇒ **「从 4.4 搬运」早已完成**（`D33` 记的就是这批）；4.4 的源**只到 2020-03-31**，
+> **再搬是空操作**。真正的缺口是 8.3 的 financial **停在 2020Q1、落后 6 年** ——
+> 用户定「走通达信」，那要走 `tdxaidata`（`fetch_financial` **要求非空 `field_list`**）。
+> 其余行数仍是 2026-09 那一轮的值，未复测。
 
 ### D —— 已完成（提交 `6d93dfe` / `6f20152` / `72f3025` / `de24c8b`）
 
@@ -662,10 +670,10 @@ QUANTAXIS 的 `.query('volume>1')` 把三者混为一谈，等于**每天都在�
 
 | # | 事项 | 选项 |
 |:--|:--|:--|
-| 1 | **`financial` 集合（当前 0 行）** | **(a)** 暂缓（上一轮倾向此项：无消费方 + akshare 全量 46.5h + tdxaidata 字段目录未知）；**(b)** 你给 tdxaidata 字段名，走批量通道几分钟灌完；**(c)** 限定代码范围跑 akshare |
+| 1 | ~~**`financial` 集合（当前 0 行）**~~ | ✅ **已澄清（2026-10-11）**：**前提有误** —— 实为 182,769 行，4.4 早已搬完（见第二节计数表下的注）。用户定「走通达信」；真正缺口是**停在 2020-03-31**，续数据须走 `tdxaidata`（要 field_list）。18 条测试残留同日已清 |
 | 2 | **C2 撮合移植** | 需你先给策略实现（`XGB_ECHO_TIMING_LAG` + `QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY`）—— 信号公式属策略侧，不猜 |
 | 3 | 未被引用但值错的常量 | 只有**全量审计**能闭合（两个工具都只看被引用的）。只读检查，成本低 |
-| 4 | **`GQ_fix_daily_metadata` 的 lambda 缺陷** | 修 = 启用一条从未跑过的 Mongo 写路径，属行为变更 |
+| 4 | ~~**`GQ_fix_daily_metadata` 的 lambda 缺陷**~~ | ✅ **已作废（2026-10-11）**：该函数随 `services/features/` 包在 QUANTAXIS 解耦时**已从新树删除**（只在 `GolemQ_old/scribe/features.py:533`）。且它修的是 4.4 的 `stock_diagnosis`、**不是 `stock_metadata_day`**；后者 `date_stamp` 由 `date` 用 `day_stamp()` 重算 ⇒ 该缺陷类**不可能发生**。实测 `stock_metadata_day` 17,112,165 行 / 抽样 5000 行零不一致 ⇒ 无需修复 |
 | 5 | ~~**小时级 metadata 的归属**~~ | ✅ **已定（2026-10-10）**：命名法为 `stock_metadata_day`（日频）/ **`stock_metadata_60min`（≈旧库的 `stock_metadata`）** |
 | 6 | **MongoDB 起一下**（当前 27017 超时、无服务、默认路径无 `mongod.exe`）| **阻塞 E 的数据拆分**与三项验证（数值基准、拆分后对照、端到端复权一次）。代码半边已完成 |
 | 7 | **E 的两处路由变更要不要随之搬数据** | `200–209`（`index_*`→`stock_*`）、`161–169`/`184`（`stock_*`→`index_*`）。查库定；若无数据则纯属分类修正 |
