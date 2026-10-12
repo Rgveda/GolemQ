@@ -64,6 +64,7 @@ ts   用 datetime → 7 行 ✓
 | **SAVE-CLI** | `--save` 收口成 `<SOURCE>` + 参考数据 banner | ✅ **代码完成、测试跑过**（`DECISIONS.md` D14）／⏳ **真机看 banner 待做**（见下下节）|
 | **KLINE-SHORT** | K 线**短路**：集合自证探针 + 逐只水位 + TTL 兜底（三条缺一不可）| ✅ **完成、端到端验过**（`DECISIONS.md` **D25** / `PITFALLS.md` **P25**）—— 实跑 `index_day` 两遍：第①遍建连 3 次/写 2 行，**第②遍建连 1 次/写 0 行/skipped_fresh=2**。每集合探针 **0.02–0.15 s**（9 次），前沿与该 code 最新一根**逐秒相同**。⚠️ 复权四节点**只记账不开闸**；`--save-refresh` 一旗两用（参考数据闸 + K 线短路一起关）|
 | **QUADRANT** | 四量图（`calc_four_quadrant_boost`，~580 行）+ 6 指标（`QLevMACDLagD` / `ZenPivotLag` / `QuadBsTukLag` / `MsLeadinBf`/`x3`/`x5`）搬入 `analysis/quadrant.py` | ✅ **完成、与老树逐值对拍**（`DECISIONS.md` **D39**）—— 只搬**算术**（丢掉那段「删停牌伪 0」的**破坏性写**）；顺带搬 6 个 `BS_*` 包装；**零 QUANTAXIS、零管线**；全量 570 → **578 通过**。⏳ 三个下游（`calc_bs_before`/`calc_quadrant_bs_trunk_timing_lag`/`calc_pivot_timing_lag`）**吃输入列**，其上游（星线检测 / CZSC 中枢）未接 |
+| **RSRS** | RSRS **指标计算** `pre_rsrs_data_func`（5 列：beta / R² / zscore / 标准分 / 右偏）搬入 `analysis/rsrs.py` | ✅ **完成、与老树逐值对拍**（`DECISIONS.md` **D40**）—— `strided_app`/`rolling_zscore` 补进 `analysis/timing.py`；`FIELD` +5；**不向量化**（逐 bar `statsmodels.OLS`，动最低位会破对拍）。⚠️ 老树那 8 个**择时信号/策略**与**一个坏孪生**（`pre_rsrs_zscore_np_func`，`NameError`）**未搬** |
 
 ### ✅ `--save` 收口 + 参考数据 banner（2026-10-09）
 

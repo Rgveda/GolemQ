@@ -1717,3 +1717,37 @@ models 线用 `renko` 类的 `source_aligned`。
 （`array_equal` 语义，**不容差**，D36）；老树不在场整份跳过。对拍靠一层 shim 把
 `GolemQ_old/analysis/base.py` 载起来（照 `test_renko.py` 同一套手法），**用完清干净**。
 全量测试 **570 → 578 通过 / 0 失败**；doctest 3 条（`sma`/`ema`/`llv`）。
+
+---
+
+## D40. RSRS **只搬指标计算**：`pre_rsrs_data_func` 一条，那个坏孪生不搬 —— 2026-10-12
+
+**背景**：用户「继续搬运 RSRS 指标计算」。
+
+**勘查结论**：老树 `signal/rsrs.py` **995 行 / 14 个函数**，其中
+* **1 个是指标计算** `pre_rsrs_data_func`（滚动 OLS `high~low`，N=18 → beta/R² →
+  滚动 zscore M=252 → 「标准分」zscore×R² → 「右偏」×beta，产出 5 列）；
+* **8 个是择时信号/策略**（`rsrs1_signal_func` / `rsrs1-4_np` / `RSRS1-4` / `combine_*`）；
+* **1 个是坏的孪生** `pre_rsrs_zscore_np_func` —— 它用了 `idx_RSRS_ZSCORE`，而那名字
+  **只在 `pre_rsrs_data_func` 里是局部变量** ⇒ 一调就 `NameError`（同 `GQ_fix_daily_metadata`
+  那类**继承缺陷**，老树里它从未跑过）。
+
+**决策（用户定）**：**只搬指标计算**，即 `pre_rsrs_data_func` 一条 + 它的依赖
+`rolling_zscore`（老树 `analysis/timeseries.py:944`，其依赖 `strided_app` 一并搬）。
+
+**落点**：`GolemQ/analysis/rsrs.py`（新）；`strided_app` / `rolling_zscore` 进
+`GolemQ/analysis/timing.py`（那是老 `analysis/timeseries.py` 那一族的家，`rolling_sum`
+已在那儿）。`core/constants.py` 的 `FIELD` +5（`RSRS_BETA` / `_BETA_R2` / `_ZSCORE` /
+`_ZSCORE_R2`（值 `'RSRS_ZS_R2'`）/ `_RIGHT`）。
+
+**解耦**：删掉开头的 `if (ST.VERBOSE in data.columns): print(...)` 调试门控
+（新树**有意不补 `VERBOSE`**，用户 2026-10-10），连带 `QA_util_timestamp_to_str` 一起走；
+入参统一 `pd.DataFrame`（含 `high`/`low` 列），**不再支持 QUANTAXIS `DataStruct.add_func`**。
+
+**⚠️ 刻意不向量化**：回归是**逐 bar 一个 `statsmodels.OLS`**（`for i in range(len)[N:]`）。
+慢，但**逐字照搬** —— 换手写最小二乘会动最低位，而对拍判据是 `array_equal` **不容差**（D36）。
+
+**正确性证据**：`test_cases/test_rsrs.py` —— 3 条与老树 `signal/rsrs.py` **逐值对拍**
+（含 `indices=` 写回路径、`len<=M` 的短序列支线；老树不在场整份跳过）+ 2 条结构/报错。
+对拍靠 shim 载老树（照 `test_renko.py` / `test_quadrant.py` 同一套），**用完清干净**。
+doctest +1（`GolemQ.analysis.rsrs`）。

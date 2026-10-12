@@ -34,12 +34,13 @@ import traceback
 
 import numpy as np
 import pandas as pd
+import scipy.stats as scs
 
 __all__ = [
     'Timeline_Integral', 'Timeline_duration', 'calc_event_timing_lag',
     'calc_feature_event_timing_lag', 'calc_energy', 'calc_energy_f8',
     'calc_energy_f4', 'resample_multi_frequency_indices_func',
-    'rolling_sum',
+    'rolling_sum', 'strided_app', 'rolling_zscore',
 ]
 
 
@@ -262,6 +263,42 @@ def rolling_sum(a: np.ndarray, n: int = 4) -> np.ndarray:
         return np.r_[np.full(n - 1, np.nan), ret[n - 1:]]
     else:
         return np.full(len(a), np.nan)
+
+
+def strided_app(a, L, S):
+    """`pandas.rolling` 的 numpy 版：把一维数组切成 `(nrows, L)` 的滑窗视图。
+
+    逐字搬自老树 `analysis/timeseries.py:883`（窗口长 `L`、步长 `S`）。
+    ⚠️ 返回的是 `as_strided` **视图**（不复制）；`a.strides[0]` 假定沿轴 0 连续 ——
+    对 C 连续二维数组的**列切片**成立（`rolling_zscore` 正是这么调的）。
+
+    >>> strided_app(np.arange(5), 3, 1).tolist()
+    [[0, 1, 2], [1, 2, 3], [2, 3, 4]]
+    """
+    nrows = ((a.size - L) // S) + 1
+    n = a.strides[0]
+    return np.lib.stride_tricks.as_strided(a, shape=(nrows, L), strides=(S * n, n))
+
+
+def rolling_zscore(s: np.ndarray, w: int) -> np.ndarray:
+    """滚动标准分：每个窗口取**最后一个元素**的 zscore。
+
+    逐字搬自老树 `analysis/timeseries.py:944`（`RSRS` 指标要用）。前 `w-1` 个是 NaN；
+    `len(s) <= w` 时退化成**整段一次性** `zscore`。
+
+    >>> out = rolling_zscore(np.array([1., 2., 3., 2., 5.]), 3)
+    >>> [round(float(v), 4) for v in out[2:]]   # float() —— numpy 2.x 的标量 repr 会带 np.float64(...)
+    [1.2247, -0.7071, 1.3363]
+    """
+    def last_zscore(sx):
+        return scs.zscore(sx)[-1]
+
+    if (len(s) > w):
+        x = strided_app(s, w, 1)
+        return np.r_[np.full(w - 1, np.nan),
+                     np.array(list(map(last_zscore, x)))]
+    else:
+        return scs.zscore(s)
 
 
 def lineareg_intercept(slope1, y1, slope2, y2):

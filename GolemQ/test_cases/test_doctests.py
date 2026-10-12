@@ -110,6 +110,10 @@ DOCTEST_MODULES = (
     # 是**原地改 features** 的，不适合 doctest；它们的正确性证据是
     # `test_quadrant.py` 里与老树 `analysis/base.py` 的**逐值对拍**。
     'GolemQ.analysis.quadrant',
+    # RSRS（阻力支撑相对强度）**指标计算**（2026-10-12 搬）。只搬 `pre_rsrs_data_func`
+    # 一条（老树的 8 个择时信号与那个**坏掉的** `pre_rsrs_zscore_np_func` 都没搬）。
+    # 它的 doctest 钉两件事：**列序**（5 列，顺序即契约）与**索引对齐**。
+    'GolemQ.analysis.rsrs',
 )
 
 

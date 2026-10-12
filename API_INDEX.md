@@ -80,6 +80,24 @@
 | f | `plot_pivots_plotly(fig, pivots, x_last, row, col, box_color, edge_color, line_width, label, show_ggdd, strict)` | 在 Plotly K 线图上绘制中枢箱体（矩形 + GG/DD 因果台阶 + ZG/ZD 标注）。 |
 | f | `attach_pivot_features(features, symbol, max_bi_count, strict)` | 把中枢字段（ZD/ZG/GG/DD/direction）作为列附加到特征 DataFrame 上。 |
 
+### `quadrant`
+四量图（calc_four_quadrant_boost）与四象限体系的特征计算 —— 逐字搬自老树。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `clearup_compact_dataframe_float32(features_dummy, check_columns)` | 把 check_columns 里的 float64 列压成 float32。 |
+| f | `clearup_compact_dataframe_int16(features_dummy, check_columns)` | 把 check_columns 里的整型列压成 int16。 |
+| f | `sma(series, n, m)` | SMA 指标 —— 逐字搬自老树 analysis/base.py:2519（含其递归定义与 NaN 处理）。 `[dt]` |
+| f | `ema(series, n)` | EMA（ewm(span=n, adjust=False)）—— 逐字搬自老树 base.py:2540。 `[dt]` |
+| f | `llv(series, n)` | 滚动最低值（min_periods=1）—— 逐字搬自老树 base.py:2545。 `[dt]` |
+| f | `kdj(hight, low, close, fastk_period, slowk_matype, slowk_period, slowd_period)` | KDJ → np.c_[K, D, J] —— 逐字搬自老树 base.py:2550（走 talib.STOCH）。 |
+| f | `calc_four_quadrant_boost(code, features, ohlc_data, annual, market_type)` | 最牛四量图， |
+| f | `calc_quadrant_leverage_macd_timing_lag(features)` | QLevMACDLagD —— 四象限杠杆能量 × MACD 的合成 timing-lag。 |
+| f | `calc_quadrant_bs_trunk_timing_lag(features)` | QuadBsTuk / QuadBsTukLag —— 买卖星线结构与 MACD lag 的合成。 |
+| f | `calc_mainstream_feats(ohlc, features)` | 主力资金吸筹 —— 产出 MsLeadinBf / MsLeadinx3Bf / MsLeadinx5Bf。 |
+| f | `calc_bs_before(features)` | 8 个 BS*Bf* —— 买卖/星线信号的「距上一次」计数（Timeline_duration）。 |
+| f | `calc_pivot_timing_lag(features)` | ZenPivotLag —— 距出中枢（ZenPivotZD 变 NaN）以来的 lag。 |
+
 ### `regtree`
 回归树（CART）与 regtree 拟合线 —— 从旧树 analysis/regtree.py 搬运。
 
@@ -146,6 +164,13 @@ renko 的 numba 加速版（analysis/renko.py 的 jit 对照实现）。
 | f | `renko_in_cluster_group_jit(data, indices, maxlength)` | :func:renko.renko_in_cluster_group 的 jit 版 —— 只有目标函数不同。 |
 | f | `renko_trend_cross_func_jit(data, indices)` | :func:renko.renko_trend_cross_func 的 jit 版。 |
 
+### `rsrs`
+RSRS（阻力支撑相对强度）指标计算 —— 逐字搬自老树 signal/rsrs.py。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `pre_rsrs_data_func(data)` | 准备 RSRS 数据 —— 逐字搬自老树 signal/rsrs.py:54。 `[dt]` |
+
 ### `timeseries`
 时间序列工具 —— 多频重采样与时间轴对齐。
 
@@ -168,6 +193,8 @@ renko 的 numba 加速版（analysis/renko.py 的 jit 对照实现）。
 | f | `calc_energy(signal)` | 信号的绝对能量（同号连续累加、异号重启），按 dtype 选内核。 `[dt]` |
 | f | `resample_multi_frequency_indices_func(data)` | 把另一个频率算好的指标对齐到 data 的时间轴上（单标的）。 |
 | f | `rolling_sum(a, n)` | pandas.Series.rolling(n).sum() 的 numpy 版（前 n-1 个是 NaN）。 `[dt]` |
+| f | `strided_app(a, L, S)` | pandas.rolling 的 numpy 版：把一维数组切成 (nrows, L) 的滑窗视图。 `[dt]` |
+| f | `rolling_zscore(s, w)` | 滚动标准分：每个窗口取最后一个元素的 zscore。 `[dt]` |
 | f | `lineareg_intercept(slope1, y1, slope2, y2)` | 两条直线的交点横坐标：y = slope*x + y 两式相等解 x。 `[dt]` |
 
 ## GolemQ.cli
@@ -1049,6 +1076,7 @@ Model alias constants (stub — to be populated).
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | C | `LTT` | LTT alias constants (stub). |
+| C | `TRD` | 交易信号字段名 —— 只补了四量图链用到的那两条。 |
 | C | `ZEN` | 走势中枢（盘整箱体 / pivot）的字段名。 |
 
 ### `massive`
@@ -1899,6 +1927,24 @@ core/presentation.py 的状态 banner —— 纯渲染、显示宽度、光标�
 | f | `TestDimming.test_banner_head_line_is_dimmed_on_tty_only()` |  |
 | f | `TestDimming.test_banner_head_line_has_no_escape_on_a_pipe()` | 非 TTY 的头行是日志 —— 一个转义码都不许有。 |
 
+### `test_quadrant`
+analysis/quadrant.py（四量图 + 6 指标）的正确性测试。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestMatchesOldTree` | 与老树 analysis/base.py 逐值对拍。 |
+| f | `TestMatchesOldTree.setUpClass()` |  |
+| f | `TestMatchesOldTree.test_four_quadrant_boost()` |  |
+| f | `TestMatchesOldTree.test_four_quadrant_boost_with_virtual_pressure_line()` | 带 TRD.AROON_UPRISING_TIMING_LAG ⇒ 走 annual>512 的 virtual_pressure_line 分支。 |
+| f | `TestMatchesOldTree.test_mainstream_feats()` | #4/#5/#6 对拍 —— 预置 BS_BUY_BEFORE 让老树也不去调 calc_bs_signals。 |
+| C | `TestFormulaWiring` | 老树不在场也能跑：把每个函数的接线与它声明的公式对一遍。 |
+| f | `TestFormulaWiring.test_pivot_timing_lag()` |  |
+| f | `TestFormulaWiring.test_bs_before()` |  |
+| f | `TestFormulaWiring.test_quadrant_bs_trunk_timing_lag_matches_its_condition()` |  |
+| C | `TestDecoupled` | 用户 2026-10-11：「尽可能解耦，越少增加引用和管线越好」。 |
+| f | `TestDecoupled.test_module_source_has_no_quantaxis_or_db()` | 按 AST 查，不按文本 —— docstring 里故意写着这些名字（解释丢掉了什么）。 |
+| f | `TestDecoupled.test_import_does_not_pull_quantaxis()` |  |
+
 ### `test_realtime_read`
 读路径的「带 REALTIME」—— kline83._merge_realtime 的两道门。
 
@@ -2018,6 +2064,20 @@ analysis/renko_jit.py —— jit 版与 renko.py 的逐值对拍。
 | f | `TestSpeedup.test_jit_is_at_least_two_times_faster()` |  |
 | C | `TestStatusWithoutNumba` | renko_jit_status / available 不管 numba 在不在都要能答。 |
 | f | `TestStatusWithoutNumba.test_status_shape()` |  |
+
+### `test_rsrs`
+analysis/rsrs.py（RSRS 指标计算）的正确性测试。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestMatchesOldTree` | 与老树 signal/rsrs.py::pre_rsrs_data_func 逐值对拍。 |
+| f | `TestMatchesOldTree.setUpClass()` |  |
+| f | `TestMatchesOldTree.test_pre_rsrs_data_func()` |  |
+| f | `TestMatchesOldTree.test_pre_rsrs_data_func_with_indices()` | 给 indices= 时 5 列写回那个帧（而不是新建）。 |
+| f | `TestMatchesOldTree.test_pre_rsrs_data_func_short_series()` | len <= M ⇒ rolling_zscore 走整段 zscore 那支。 |
+| C | `TestShape` | 老树不在场也能跑：列序、索引、dtype。 |
+| f | `TestShape.test_columns_and_index()` |  |
+| f | `TestShape.test_missing_high_low_raises()` | 入参不再支持 QUANTAXIS DataStruct —— 缺 high/low 列要报错，不静默。 |
 
 ### `test_stock_cn`
 

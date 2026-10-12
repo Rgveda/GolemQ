@@ -551,6 +551,13 @@ class FIELD(metaclass=_StubMeta):
     KDJ_TREND_TIMING_LAG = 'KDJ_TRD_LAG'
     MACD = 'MACD'
     MACD_DELTA_MAJOR = 'MACD_diff_1T_MAJ'
+    # ⚠️ 下面 5 个是 2026-10-12 随「RSRS 指标计算」搬运补的（`analysis/rsrs.py` 要用）。
+    # 真值**逐字**取自老树 `utils/parameter.py` 的 `FIELD` 类。
+    RSRS_BETA = 'RSRS_BETA'
+    RSRS_BETA_R2 = 'RSRS_BETA_R2'
+    RSRS_ZSCORE = 'RSRS_ZSCORE'
+    RSRS_ZSCORE_R2 = 'RSRS_ZS_R2'
+    RSRS_RIGHT = 'RSRS_RIGHT'
     MACD_DELTA = 'MACD_diff_1T'
     MAPOWER120 = 'MPWR12'
     MAPOWER120_QUARTER = 'MPWR12_QTR'
