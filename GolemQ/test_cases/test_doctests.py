@@ -114,6 +114,12 @@ DOCTEST_MODULES = (
     # 一条（老树的 8 个择时信号与那个**坏掉的** `pre_rsrs_zscore_np_func` 都没搬）。
     # 它的 doctest 钉两件事：**列序**（5 列，顺序即契约）与**索引对齐**。
     'GolemQ.analysis.rsrs',
+    # ChartScan（CV）结果的落点（2026-10-13 搬）。⚠️ 模块里**有碰库的函数**
+    # （`save_reality_feat` / `fetch_reality_feat`），但按本文件的规矩**收不收是
+    # 逐函数的** —— 只有纯函数 `reality_feat_name` / `reality_feat_rows` 挂了
+    # doctest。它们钉的是**字段推导口径**（`time_stamp` 是「北京墙上时间当 UTC」
+    # 而**不是** 8.3 的 `ts`；日族不带 `datetime`），判错会静默写坏整张特征表。
+    'GolemQ.markets.StockCN.reality_save',
 )
 
 
