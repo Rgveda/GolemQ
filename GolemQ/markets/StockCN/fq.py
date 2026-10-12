@@ -192,6 +192,38 @@ def align_factors(data: pd.DataFrame, flat: dict, *,
     return factor.fillna(fill)
 
 
+def to_hfq_factor(factor: pd.Series, codes=None) -> pd.Series:
+    """前复权因子 → **后复权**因子：按每只标的**窗口内最早那根**归一。
+
+    `stock_adj` 的 `adj` 是**前复权**乘法因子（**最新一根恒 1.0、越早越小**），
+    故 ``hfq(t) = raw(t) × f(t) / f(t_min)`` —— 等价于把前复权结果再除以首根的
+    因子：**首根价格原样**，之后的价格按因子放大。
+
+    锚点是**本次窗口的首根**（用户 2026-10-13 定），**不是上市首根** —— 所以同一
+    标的在不同窗口下 hfq 的**绝对价位不同**，但同一窗口内的**比例关系一致**。
+
+    :param codes: 与 `factor` 同索引的行级代码 Series；``None`` = 单标的，
+        直接拿 ``factor.iloc[0]`` 当归一基准。
+
+    >>> import pandas as pd
+    >>> list(to_hfq_factor(pd.Series([0.5, 0.5, 1.0]), pd.Series(['A', 'A', 'A'])))
+    [1.0, 1.0, 2.0]
+
+    多标的时**逐标的**各自归一（不是整帧共用一个基准）—— 拿整帧首根当归一会把
+    第二只票整体缩放，那是错的：
+
+    >>> list(to_hfq_factor(pd.Series([0.5, 1.0, 0.25, 1.0]),
+    ...                    pd.Series(['A', 'A', 'B', 'B'])))
+    [1.0, 2.0, 1.0, 4.0]
+    """
+    factor = pd.Series(factor)
+    if codes is None:
+        return factor / factor.iloc[0]
+    base = pd.Series(factor.to_numpy(), index=factor.index).groupby(
+        pd.Series(codes).to_numpy(), sort=False).transform('first')
+    return factor / base
+
+
 def multiply_ohlc(data: pd.DataFrame, factor, *,
                   keep_factor_column: bool = True,
                   factor_name: str = 'adj') -> pd.DataFrame:

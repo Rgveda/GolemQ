@@ -134,5 +134,85 @@ class TestEdgeCases(unittest.TestCase):
         self.assertIsInstance(s, pd.Series)
 
 
+class TestHfqFactor(unittest.TestCase):
+    """`to_hfq_factor` —— 前复权因子 → **后复权**因子（锚**窗口首根**，用户 2026-10-13 定）。"""
+
+    def test_anchors_at_the_first_bar(self):
+        from GolemQ.markets.StockCN.fq import to_hfq_factor
+        f = pd.Series([0.5, 0.5, 1.0])
+        c = pd.Series(['A', 'A', 'A'])
+        self.assertEqual(list(to_hfq_factor(f, c)), [1.0, 1.0, 2.0])
+
+    def test_per_code_not_whole_frame(self):
+        """⚠️ **逐标的**归一 —— 拿整帧首根当归一基准会把第二只票整体缩放，那是错的。"""
+        from GolemQ.markets.StockCN.fq import to_hfq_factor
+        f = pd.Series([0.5, 1.0, 0.25, 1.0])
+        c = pd.Series(['A', 'A', 'B', 'B'])
+        self.assertEqual(list(to_hfq_factor(f, c)), [1.0, 2.0, 1.0, 4.0])
+
+    def test_no_codes_means_single_series(self):
+        from GolemQ.markets.StockCN.fq import to_hfq_factor
+        self.assertEqual(list(to_hfq_factor(pd.Series([2.0, 1.0]))), [1.0, 0.5])
+
+    def test_identity_holds(self):
+        """不变式：同一窗口上 `qfq/qfq[0] == hfq/hfq[0]`（这是「只差一个缩放」的判据）。"""
+        from GolemQ.markets.StockCN.fq import to_hfq_factor
+        f = pd.Series([0.3, 0.7, 0.9, 1.0])
+        c = pd.Series(['A'] * 4)
+        h = to_hfq_factor(f, c)
+        self.assertTrue(bool(((f / f.iloc[0]) - (h / h.iloc[0])).abs().max() < 1e-12))
+
+
+class TestIfFqComposition(unittest.TestCase):
+    """三种复权模式的**组装**：`apply_qfq` 就是 `align → [hfq 归一] → multiply`。
+
+    ⚠️ 本类**不碰 DB** —— 直接拿 `fq.py` 的纯函数按 `apply_qfq` 的同一步骤拼出来，
+    所以既能钉住三种模式的差别，又不用去 mock `stock_adj`。
+    """
+
+    def _frame(self):
+        # ⚠️ level-0 必须是 **datetime64** —— `row_dates` 认的是 dtype 不是层名
+        # （字符串日期会一路 `ValueError: 无法从帧中判定 (date, code)`）。
+        idx = pd.MultiIndex.from_tuples(
+            [(pd.Timestamp('2024-01-02'), 'A'),
+             (pd.Timestamp('2024-01-03'), 'A'),
+             (pd.Timestamp('2024-01-04'), 'A')],
+            names=['date', 'code'])
+        return pd.DataFrame({'open': [10.0] * 3, 'high': [10.0] * 3,
+                             'low': [10.0] * 3, 'close': [10.0] * 3}, index=idx)
+
+    def _factor(self):
+        from GolemQ.markets.StockCN.fq import align_factors
+        return align_factors(self._frame(), {'A|2024-01-02': 0.5,
+                                             'A|2024-01-03': 0.5,
+                                             'A|2024-01-04': 1.0},
+                             ffill_by_code=True)
+
+    def test_bfq_is_the_raw_frame(self):
+        df = self._frame()
+        self.assertEqual(df['close'].tolist(), [10.0, 10.0, 10.0])
+
+    def test_qfq_multiplies_by_the_factor(self):
+        from GolemQ.markets.StockCN.fq import multiply_ohlc
+        out = multiply_ohlc(self._frame(), self._factor(), keep_factor_column=True)
+        self.assertEqual(out['close'].tolist(), [5.0, 5.0, 10.0])   # 最新那根锚 1.0
+        self.assertEqual(out['adj'].tolist(), [0.5, 0.5, 1.0])
+
+    def test_hfq_anchors_the_first_bar(self):
+        from GolemQ.markets.StockCN.fq import multiply_ohlc, to_hfq_factor
+        f = self._factor()
+        codes = pd.Series(['A'] * 3)
+        out = multiply_ohlc(self._frame(), to_hfq_factor(f, codes),
+                            keep_factor_column=True)
+        self.assertEqual(out['close'].tolist(), [10.0, 10.0, 20.0])  # 首根原样、后根放大
+        self.assertEqual(out['adj'].tolist(), [1.0, 1.0, 2.0])
+
+    def test_volume_is_never_touched(self):
+        from GolemQ.markets.StockCN.fq import multiply_ohlc
+        df = self._frame().assign(volume=[7.0] * 3)
+        out = multiply_ohlc(df, self._factor(), keep_factor_column=False)
+        self.assertEqual(out['volume'].tolist(), [7.0] * 3)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -333,7 +333,7 @@ def _display_name(code, market):
 
 
 def get_kline_price_min(codelist, start=None, market_type=None, frequency='60min',
-                        verbose=True, end=None, realtime=True):
+                        verbose=True, end=None, realtime=True, if_fq='qfq'):
     """分钟线读取（8.3 时序）。返回 ``(KlineResult, codename)``。
 
     ⚠️ **`codename` 是标的的展示名**（``'301308'`` → ``'江波龙'``），**不是代码** ——
@@ -362,7 +362,7 @@ def get_kline_price_min(codelist, start=None, market_type=None, frequency='60min
     codename = _display_name(codelist[0] if isinstance(codelist, (list, tuple, set))
                              else codelist, market)
     result = KlineResult(_to_kline_frame(df))
-    _apply_adjustments(result, market, codelist, verbose=verbose)
+    _apply_adjustments(result, market, codelist, if_fq=if_fq, verbose=verbose)
     if realtime:
         # **带 REALTIME**（用户 2026-10-09：「我要做分析了，取行情，8.3库，带 REALTIME」）。
         # ⚠️ 本函数那个 `realtime=True` **从"空转"变成"真的合并"** —— 但不需要补数时
@@ -372,7 +372,7 @@ def get_kline_price_min(codelist, start=None, market_type=None, frequency='60min
 
 
 def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
-                       end=None, realtime=True):
+                       end=None, realtime=True, if_fq='qfq'):
     """日线读取（8.3 时序）。返回 ``(KlineResult | None, codename)``。
 
     ⚠️ **`codename` 是标的的展示名**（``'301308'`` → ``'江波龙'``），**不是代码**；
@@ -413,7 +413,7 @@ def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
                   f'返回 None。code={codelist} start={start} end={end}')
         return None, codename
     result = KlineResult(_to_kline_frame(df))
-    _apply_adjustments(result, market, codelist, verbose=verbose)
+    _apply_adjustments(result, market, codelist, if_fq=if_fq, verbose=verbose)
     if realtime:
         _merge_realtime(result, codelist, 'day', verbose=verbose)
     return result, codename
@@ -470,7 +470,7 @@ def _merge_realtime(result, codelist, frequency, verbose=False):
         return result
 
 
-def _apply_adjustments(result, market, codelist, verbose=False):
+def _apply_adjustments(result, market, codelist, if_fq='qfq', verbose=False):
     """给读取结果套上该市场的复权。两条**互斥**路径，与老树同构。
 
     - ``market == 'stock'`` → 股票前复权（因子表 ``stock_adj``）。
@@ -489,13 +489,16 @@ def _apply_adjustments(result, market, codelist, verbose=False):
     """
     if result is None or len(getattr(result, 'data', ())) == 0:
         return result
+    if if_fq == 'bfq':
+        # **不复权**：两支都跳（一次 Mongo 都不查）。容器的 `if_fq` 本就是 'bfq' 默认值。
+        return result
     if market == 'stock':
-        result.data = apply_qfq(result.data, verbose=verbose)
+        result.data = apply_qfq(result.data, if_fq=if_fq, verbose=verbose)
         try:
-            result.if_fq = 'qfq'
+            result.if_fq = if_fq
         except Exception:  # noqa: BLE001
             pass
-    GQ_apply_etf_qfq(result, codelist=codelist, verbose=verbose)
+    GQ_apply_etf_qfq(result, codelist=codelist, if_fq=if_fq, verbose=verbose)
     return result
 
 

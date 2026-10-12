@@ -75,6 +75,7 @@ from .fq import (
     multiply_ohlc,
     row_codes as _row_codes,
     row_dates as _row_dates,
+    to_hfq_factor,
 )
 from .symbol import is_stock_cn
 
@@ -168,7 +169,7 @@ def GQ_fetch_etf_adj(codelist, start=None, end=None,
     return out
 
 
-def GQ_apply_etf_qfq(data_day, codelist=None, verbose: bool = False):
+def GQ_apply_etf_qfq(data_day, codelist=None, if_fq='qfq', verbose: bool = False):
     """把 ETF 的 OHLC 换成前复权价，并**原样返回同一个对象**。
 
     （实现上由「就地改 `data` 的列」改为「换一个新帧并挂回 `data_day.data`」
@@ -205,8 +206,10 @@ def GQ_apply_etf_qfq(data_day, codelist=None, verbose: bool = False):
     :return: 传入的 ``data_day``（原地修改）；失败时原样返回。
     """
     try:
+        if if_fq == 'bfq':
+            return data_day          # 不复权：调用方通常已早退，这里再兜一道
         # 幂等早退。老树缺这一步（见 docstring 的 ⚠️），重复调用会把因子乘两遍。
-        if getattr(data_day, 'if_fq', 'bfq') == 'qfq':
+        if getattr(data_day, 'if_fq', 'bfq') == if_fq:
             return data_day
 
         data = getattr(data_day, 'data', None)
@@ -255,6 +258,10 @@ def GQ_apply_etf_qfq(data_day, codelist=None, verbose: bool = False):
         factor = align_factors(data, flatten_factor_map(adj_map),
                                ffill_by_code=False,
                                dates=dates, codes=codes_row)
+        if if_fq == 'hfq':
+            # 后复权 = 前复权因子按**窗口首根**归一（逐标的）。放在下面那个
+            # 「没有除权事件就早退」**之前** —— 二者都在 eq(1.0) 判断下等效。
+            factor = to_hfq_factor(factor, codes_row)
 
         if factor.eq(1.0).all():
             return data_day                       # 该区间没有除权事件
@@ -269,10 +276,11 @@ def GQ_apply_etf_qfq(data_day, codelist=None, verbose: bool = False):
         except Exception:  # noqa: BLE001
             pass
         if verbose:
-            print(f'[etf:qfq] {codes[0] if len(codes) == 1 else codes[0:5]} '
-                  f'{dates.min()}~{dates.max()} 已前复权 ({n_bars}/{len(factor)} 根调整)')
+            print(f'[etf:{if_fq}] {codes[0] if len(codes) == 1 else codes[0:5]} '
+                  f'{dates.min()}~{dates.max()} 已{"前复权" if if_fq == "qfq" else "后复权"}'
+                  f' ({n_bars}/{len(factor)} 根调整)')
         try:
-            data_day.if_fq = 'qfq'
+            data_day.if_fq = if_fq
         except Exception:  # noqa: BLE001
             pass
     except Exception as e:  # noqa: BLE001

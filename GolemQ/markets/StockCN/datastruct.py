@@ -80,6 +80,7 @@ from .fq import (
     multiply_ohlc,
     row_codes,
     row_dates,
+    to_hfq_factor,
 )
 
 __all__ = [
@@ -156,8 +157,13 @@ def _adj_frame(codes, dmin, dmax):
     return df
 
 
-def apply_qfq(data, verbose=False):
-    """就地把 OHLC 乘上前复权因子，**返回新的 DataFrame**（不改入参）。
+def apply_qfq(data, if_fq='qfq', verbose=False):
+    """把 OHLC 乘上复权因子，**返回新的 DataFrame**（不改入参）。
+
+    :param if_fq: ``'qfq'``（默认，前复权）或 ``'hfq'``（后复权）。
+        ⚠️ ``'bfq'``（不复权）**不在这里处理** —— 由调用方 `kline83._apply_adjustments`
+        直接早退，免得白算一次因子。三种模式的**唯一真正差别**是因子怎么摆：
+        前复权 ``f(t)``（最新恒 1.0）；后复权 ``f(t)/f(t_min)``（**窗口首根**锚定）。
 
     `adj` 列的来源是 8.3 的 `stock_adj` —— 预计算的**乘法**因子：最新交易日恒为
     `1.0`，越早越小。实测 8 只股票 × 全历史 **40,192 行**与 QUANTAXIS 的
@@ -201,6 +207,9 @@ def apply_qfq(data, verbose=False):
     # 这两点都与 ETF 侧不同，且都承重 —— 见 `fq.py` 的模块 docstring。
     flat = factor_dict_from_frame(adj)
     factor = align_factors(data, flat, ffill_by_code=True)
+    if if_fq == 'hfq':
+        # 后复权 = 前复权因子按**窗口首根**归一（**逐标的**，见 `fq.to_hfq_factor`）。
+        factor = to_hfq_factor(factor, codes)
     return multiply_ohlc(data, factor, keep_factor_column=True)
 
 

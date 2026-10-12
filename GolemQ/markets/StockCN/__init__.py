@@ -169,24 +169,30 @@ class StockCN(BaseMarket):
     # `markets/base_market.py` 的声明，两处**必须一致**。
 
     def get_kline_price_min(self, codelist, start=None, end=None,
-                            verbose=False, realtime=True, frequency=None):
+                            verbose=False, realtime=True, frequency=None,
+                            if_fq='qfq'):
         """分钟线（A 股）。见 `base_market.py` 的契约说明。
 
         `frequency=None` ⇒ **透传给 kline83 的那个默认**（当前 `'60min'`）。
         刻意用「只在给了才传」的写法：默认值只此一处（`kline83` 的函数签名），
         在这里再写一遍 `or '60min'` 就是第二份定义，会分叉。
+
+        `if_fq`：`'qfq'`（默认，前复权）/ `'hfq'`（后复权，锚**窗口首根**）/ `'bfq'`（不复权）。
         """
         from .kline83 import get_kline_price_min as _impl
         extra = {} if frequency is None else {'frequency': frequency}
         return _impl(codelist, start=start, end=end,
-                     verbose=verbose, realtime=realtime, **extra)
+                     verbose=verbose, realtime=realtime, if_fq=if_fq, **extra)
 
     def get_kline_price_v3(self, codelist, start=None, end=None,
-                           verbose=False, realtime=True):
-        """日线（A 股）。无数据返回 `None`，见 `base_market.py`。"""
+                           verbose=False, realtime=True, if_fq='qfq'):
+        """日线（A 股）。无数据返回 `None`，见 `base_market.py`。
+
+        `if_fq`：`'qfq'`（默认，前复权）/ `'hfq'`（后复权，锚**窗口首根**）/ `'bfq'`（不复权）。
+        """
         from .kline83 import get_kline_price_v3 as _impl
         return _impl(codelist, start=start, end=end,
-                     verbose=verbose, realtime=realtime)
+                     verbose=verbose, realtime=realtime, if_fq=if_fq)
 
     def get_stock_concept_kline(self, symbol, start=None, end=None, freq=None):
         """概念 K 线（A 股）。

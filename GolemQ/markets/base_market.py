@@ -106,7 +106,8 @@ class BaseMarket(ABC):
 
     @abstractmethod
     def get_kline_price_min(self, codelist, start=None, end=None,
-                            verbose=False, realtime=True, frequency=None):
+                            verbose=False, realtime=True, frequency=None,
+                            if_fq='qfq'):
         """分钟线。返回 `(结果对象, codename)`。
 
         **无数据时返回空结果对象，不是 None** —— `services/persistence/_stock.py:138`
@@ -117,12 +118,16 @@ class BaseMarket(ABC):
         否则就是把某一市场的口径泄漏进根层）。A 股的默认与可取值见其实现
         `markets/StockCN/kline83.py`（当前默认 `'60min'`，支持 1/5/15/30/60min）。
         ⚠️ **只有分钟线有这个形参**：`get_kline_price_v3` 是日线，频率写死为 `'day'`。
+
+        `if_fq`：`'qfq'` = 前复权（**默认，行为与 2026-10-13 之前一致**）；
+        `'hfq'` = 后复权（锚**本次窗口的首根** —— 同一标的在不同窗口下绝对价位不同，
+        比例关系一致）；`'bfq'` = 不复权。三种模式在 A 股由 `fq.to_hfq_factor` 一族统一实现。
         """
         pass
 
     @abstractmethod
     def get_kline_price_v3(self, codelist, start=None, end=None,
-                           verbose=False, realtime=True):
+                           verbose=False, realtime=True, if_fq='qfq'):
         """日线。返回 `(结果对象 | None, codename)`。
 
         **无数据时返回 None** —— `services/persistence/_daily.py:105` 有
