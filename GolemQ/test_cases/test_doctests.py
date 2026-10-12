@@ -125,6 +125,11 @@ DOCTEST_MODULES = (
     # 本模块**不连库**。doctest 钉的是 `etf` 那份硬编码码表的三条性质
     # （506 个 / 混着真指数 / 旧树语法疣吃掉了 `159531`）。
     'GolemQ.markets.StockCN.scopes',
+    # ChartScan 的渲染与权重路径（2026-10-13 搬）。⚠️ 两者**模块级都不 import 重依赖**
+    # （mplfinance / matplotlib / ultralytics 都在函数体里）⇒ 收集本模块**不需要 GolemAI env**，
+    # 在 GolemQ env 下也进得来。doctest 钉 `calculate_i` 的像素↔bar 标定与权重路径的形状。
+    'GolemQ.markets.StockCN.chartscan.render',
+    'GolemQ.markets.StockCN.chartscan.model',
 )
 
 
