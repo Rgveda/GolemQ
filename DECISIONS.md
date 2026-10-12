@@ -1788,3 +1788,89 @@ doctest +1（`GolemQ.analysis.rsrs`）。
 只改**右值字面量**、左名不动 ⇒ 所有消费方自动跟随。全量 600 通过 / 0 失败。
 
 ⚠️ **今后加/改这类常量照此办理**：先三查、再改；**在库的一律不改**。
+
+---
+
+## D42. ChartScan（CV 图形识别）并入 GolemQ：**代码进库、env 与 ZMQ 边界保留** —— 2026-10-13
+
+**背景**：`Y:\Projects\GolemAI` 是一条**独立分支**（**不是 git 仓库** —— `git status` 报
+`fatal: not a git repository`，所以「合并」只能是**拷文件**）：Django web + 一份**同名但不同**的
+`GolemQ` 包，跑 CV（mplfinance 画图 → YOLOv8 找形态 → 写库），用 ZeroMQ 做微服务边界，
+跑在**独立 conda env**（`GolemAI`，**Intel MKL**）。它读写的是 **4.4**。
+
+**决定（用户 2026-10-13）**：把 CV 那条链的**代码**并进 GolemQ，**数据全走 8.3**；Django 侧丢弃；
+**env 与 ZMQ 进程边界保留**（CV 要 torch，GolemQ env 是 NoMKL ⇒ BLAS 冲突，只能分环境）。
+
+**落地**（6 段，每段一个提交）：
+
+| 段 | 内容 | 提交 |
+|:--|:--|:--|
+| 0 | 删 `GolemQ/__init__.py` 里**急切**的 `from . import agents`（它让 `import GolemQ` 依赖钉钉 SDK；GolemAI env 没装）+ 往该 env 装 `alibabacloud-dingtalk` | `f5b7a5d` |
+| 1 | 两个读口加 `if_fq` 三模式（见 **D43**） | `af4c7c8` |
+| 2 | `markets/StockCN/reality_save.py` —— `*_reality_feat_*` 落 8.3 | `b4e418f` |
+| 3 | `markets/StockCN/scopes.py` —— 6 个 scan scope | `e40f04d` |
+| 4 | `markets/StockCN/chartscan/{render,model,predict}.py` —— CV 本体 | `4f0e2e0` |
+| 5 | `chartscan/{server,client}.py` + 三个 `.ps1` + 权重落位 | `bd124a7` |
+
+**四条子决定**（都写在各模块 docstring 里，此处只记结论）：
+
+1. **结果集合落 `golemq_stock_cn`**（与行情/参考数据同库，D5）。六个集合
+   `{stock,index}_reality_feat_{day,60min,15min}` 命名**照搬旧树**（D41：在库的不许改）。
+2. **照 `metadata_save.py` 的先例，写入口放 `markets/StockCN/`** ——
+   `CLAUDE.md` 的「DB 操作只能进 `services/`」与硬规定「**库名不外泄**」
+   （`GOLEMQ_STOCK_CN` 只能出现在 `markets/StockCN/` 内）在这里**直接冲突**。
+   树里已用同一办法解过（`metadata_save.py` 就在那儿、`_db()` 惰性 `from . import GOLEMQ_STOCK_CN`）。
+   **本条就是那个例外第一次被写下来** —— 免得两条规矩悄悄分叉。
+3. **只搬 6 个 scope**（`fast`/`block`/`etf`/`etc`/`etc_1`/`etc_2`）；旧函数另外 ~14 个分支
+   （`hs300`/`zz500`/`csindex`/`sector`/`gcd`/`test`…）是硬编码垃圾、多个已实测有缺陷，**不搬**。
+   `stock_cn_blacklist`（旧手工维护的退市/新股表）**弃用**：8.3 的 `stock_list` 成员即权威。
+4. **权重落 `<仓库根>/datastore/models/weights/custom_yolov8.pt`（52MB）**，
+   **`.gitignore` 加 `datastore/`**；`weights_path()` 按**文件位置**推仓库根
+   （旧实现用 `os.getcwd()`，所以脚本必须先 CD）。可用 `$GOLEMQ_CHARTSCAN_WEIGHTS` 覆盖。
+
+**取数解耦**：`QA_fetch_*` 全部换成 `get_kline_price_v3` / `get_kline_price_min`
+（`get_active_market()` 那条唯一入口）；`QA_fetch_stock_name` → **读口的第二个返回值 codename**。
+**两块整块删除**：`.to_qfq()`（新读口已复权一次 ⇒ 二次缩放；且 `KlineResult` 没这个方法）、
+实时补数（已折进读口的 `realtime=True`）。
+
+**对拍**（同 `(600519, 2026-01-05, 同一权重)`，老写 4.4 / 新写 8.3）：
+`ClsMaj` / `ConfidenceMaj` / `CoordinatesMaj` / `date_stamp` **逐值相同**（坐标差 **0.0 秒**）；
+唯一差异是 `created_at`（旧式带时区偏差、且无消费方读它 —— 刻意偏离，见 `reality_save` docstring）。
+
+**§ 未做**：`collections/align.py`（`--align ChartScan` 那条路，`*_reality_feat_*` 的另一个消费者）
+**没搬** —— 落本段前先 grep 谁还在调它。
+
+---
+
+## D43. 读口加 `if_fq` 三模式：**不复权 / 前复权 / 后复权** —— 2026-10-13
+
+**背景**：用户「新树的接口 `get_kline_price_v3` / `get_kline_price_min` 应该允许
+不复权、前复权、后复权」。
+
+**现状**：管道**其实已有** `if_fq`（容器带它、默认 `'bfq'`；`to_qfq()` 还带幂等护栏），
+**只是两个读口无条件套了前复权**。
+
+**决定**：读口加 `if_fq='qfq'`（**默认不变 ⇒ 现有调用方行为逐值不变**）。
+三种模式的**唯一真正差别是因子怎么摆**（`stock_adj` 的 `adj` 是前复权乘法因子：
+最新一根恒 `1.0`、越早越小）：
+
+| 模式 | 因子 |
+|:--|:--|
+| `'bfq'` | **跳过**（两支都跳，一次 Mongo 都不查） |
+| `'qfq'`（默认） | `f(t)` |
+| `'hfq'` | `f(t) / f(t_min)` —— **锚本次窗口首根**、**逐标的**归一（`fq.to_hfq_factor`） |
+
+⚠️ **hfq 的锚点是「窗口首根」不是「上市首根」**（用户定）⇒ 同一标的**在不同窗口下
+绝对价位不同**、比例关系一致；恒等式 `qfq/qfq[0] == hfq/hfq[0]` 成立（有测试钉）。
+
+⚠️ **不新造常量类** —— 模式值就是字符串 `'bfq'/'qfq'/'hfq'`（老树口径）。
+
+⚠️ **`fq.py` 那两条「不许统一」的策略不变**：股票 `ffill_by_code=True`、ETF **绝不 ffill**，
+`adj` 列股票留 / ETF 不留。hfq 只加一步缩放，**不碰对齐**。
+
+### ⚠️ 连带的一条**刻意行为变更**：指数/ETF 改走 qfq
+
+旧树对指数/ETF **不调 `to_qfq`**（即不复权），新读口对非股票一律前复权。
+ChartScan 那边**显式传 `if_fq='qfq'`**（用户定）—— 「模型该看复权后的图」是修正。
+**实测确认了影响面**：`510300` 同一 `(end_date, 权重)`，老（不复权）检出 **5 Buys**、
+新（qfq）检出 **3 Buys**（模型看到的蜡烛不同了）。
