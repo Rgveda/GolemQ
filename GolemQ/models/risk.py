@@ -27,10 +27,10 @@ class RSK(metaclass=_StubMeta):
     """Risk model feature constants (stub)."""
     _instance = None
 
-    CVaR_PEAK_PRICE = 'ES_PEAK_P'
-    CVaR_PEAK_LOW = 'ES_PEAK_LO'
-    CVaR_PEAK_LOW_PRICE = 'ES_PEAK_LO_P'
-    CVaR_PEAK_LOW_BEFORE = 'ES_PEAK_LO_BF'
+    CVaR_PEAK_PRICE = 'esPeakP'
+    CVaR_PEAK_LOW = 'esPeakLo'
+    CVaR_PEAK_LOW_PRICE = 'esPeakLoP'
+    CVaR_PEAK_LOW_BEFORE = 'esPeakLoBf'
 
     def __new__(cls):
         if cls._instance is None:
