@@ -43,6 +43,7 @@ from GolemQ.datasource import (  # noqa: F401  机制层再导出，便于调用
     ALL_COLLECTIONS,
     ETF_LIST,
     FINANCIAL,
+    INDEX_LIST,
     STOCK_BLOCK,
     STOCK_INFO,
     STOCK_LIST,
@@ -76,6 +77,14 @@ COLLECTION_SOURCE_PRIORITY = {
     STOCK_INFO: ['pytdx', 'tdxaidata', 'qmt'],
     ETF_LIST: ['akshare', 'tdxaidata'],
     FINANCIAL: ['akshare', 'tdxaidata'],
+    # ⚠️ **2026-10-12 补**：`INDEX_LIST` 原先**漏在这张表外** —— 它在
+    # `ALL_COLLECTIONS`、`REFDATA_BY_SOURCE['pytdx']`、`PytdxSource.collections`
+    # **三处都在**，唯独优先级表没有它 ⇒ `_pick_source` 走
+    # `COLLECTION_SOURCE_PRIORITY.get('index_list', [])` 拿到**空表**、返回 `None`，
+    # `--save tdx` 于是报「index_list 无可用源」（名字都齐了、只有这张表缺一行）。
+    # pytdx 走的是**同一份全量证券表**的另一套码段（见 `pytdx_source.INDEX_CODE_PREFIXES`），
+    # 所以它与 `STOCK_LIST` 同源互补；tdxaidata 作后备。
+    INDEX_LIST: ['pytdx', 'tdxaidata'],
 }
 
 __all__ = [

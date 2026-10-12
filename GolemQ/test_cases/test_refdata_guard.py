@@ -212,5 +212,45 @@ class TestRefdataTtlGate(unittest.TestCase):
         pick.assert_called_once()
 
 
+class TestEverySaveableCollectionHasASource(unittest.TestCase):
+    """⚠️ **结构守卫**：`REFDATA_BY_SOURCE` 里列出的每个集合，必须在
+    `COLLECTION_SOURCE_PRIORITY` 里有**非空**的源列表。
+
+    为什么值得钉：`index_list` 就是这么坏的（2026-10-12 用户实报「无可用源」）——
+    它同时加进了 `ALL_COLLECTIONS` / `REFDATA_BY_SOURCE['pytdx']` /
+    `PytdxSource.collections` **三处**，唯独**漏了优先级表**。`_pick_source` 走的是
+    `COLLECTION_SOURCE_PRIORITY.get(coll, [])` ⇒ 拿到**空表**就返回 `None` ⇒
+    `--save tdx` 报「index_list 无可用源」。
+
+    ⇒ **两边是两张平行清单；加集合时漏一张不会报错，只会静默不可用。**
+    本用例**不联网**，只核这两张表。
+    """
+
+    def test_every_collection_in_refdata_by_source_has_priority(self):
+        from GolemQ.markets.StockCN import refdata_save as rs
+        from GolemQ.markets.StockCN.datasource import COLLECTION_SOURCE_PRIORITY
+        missing = sorted({
+            c
+            for colls in rs.REFDATA_BY_SOURCE.values()
+            for c in colls
+            if not COLLECTION_SOURCE_PRIORITY.get(c)
+        })
+        self.assertEqual(
+            missing, [],
+            '这些集合列进了 REFDATA_BY_SOURCE，但 COLLECTION_SOURCE_PRIORITY 里没有源 '
+            '⇒ _pick_source 返回 None ⇒ 报「无可用源」: %s' % missing)
+
+    def test_every_priority_source_actually_supports_the_collection(self):
+        """反向：优先级表里写的源，必须**真的声明支持**该集合 —— 否则白列，
+        每次都要报一遍 `UnsupportedCollection`（`--save` 里表现为「无可用源」的另一种成因）。"""
+        from GolemQ.markets.StockCN.datasource import (COLLECTION_SOURCE_PRIORITY,
+                                                       get_source)
+        bad = [(coll, nm)
+               for coll, names in COLLECTION_SOURCE_PRIORITY.items()
+               for nm in names
+               if not get_source(nm).supports(coll)]
+        self.assertEqual(bad, [], '优先级表里列了不提供该集合的源: %s' % bad)
+
+
 if __name__ == '__main__':
     unittest.main()
