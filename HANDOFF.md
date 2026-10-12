@@ -63,6 +63,7 @@ ts   用 datetime → 7 行 ✓
 | **TTL** | 参考数据刷新闸（**按集合**分阈值：名单类盘中 5h/盘后 24h，`stock_info` 恒定 24h） | ✅ **代码完成、测试跑过**（`DECISIONS.md` D16）—— 复用 `supervisor` 的签到表 |
 | **SAVE-CLI** | `--save` 收口成 `<SOURCE>` + 参考数据 banner | ✅ **代码完成、测试跑过**（`DECISIONS.md` D14）／⏳ **真机看 banner 待做**（见下下节）|
 | **KLINE-SHORT** | K 线**短路**：集合自证探针 + 逐只水位 + TTL 兜底（三条缺一不可）| ✅ **完成、端到端验过**（`DECISIONS.md` **D25** / `PITFALLS.md` **P25**）—— 实跑 `index_day` 两遍：第①遍建连 3 次/写 2 行，**第②遍建连 1 次/写 0 行/skipped_fresh=2**。每集合探针 **0.02–0.15 s**（9 次），前沿与该 code 最新一根**逐秒相同**。⚠️ 复权四节点**只记账不开闸**；`--save-refresh` 一旗两用（参考数据闸 + K 线短路一起关）|
+| **QUADRANT** | 四量图（`calc_four_quadrant_boost`，~580 行）+ 6 指标（`QLevMACDLagD` / `ZenPivotLag` / `QuadBsTukLag` / `MsLeadinBf`/`x3`/`x5`）搬入 `analysis/quadrant.py` | ✅ **完成、与老树逐值对拍**（`DECISIONS.md` **D39**）—— 只搬**算术**（丢掉那段「删停牌伪 0」的**破坏性写**）；顺带搬 6 个 `BS_*` 包装；**零 QUANTAXIS、零管线**；全量 570 → **578 通过**。⏳ 三个下游（`calc_bs_before`/`calc_quadrant_bs_trunk_timing_lag`/`calc_pivot_timing_lag`）**吃输入列**，其上游（星线检测 / CZSC 中枢）未接 |
 
 ### ✅ `--save` 收口 + 参考数据 banner（2026-10-09）
 
@@ -2219,3 +2220,33 @@ moneyflow 爬到的数据写入 `stock_metadata_day`，而不是 `stock_ranking`
 
 **顺带确认**：`--moneyflow all --moneyflow-dry-run` 在**无代理**环境下**照常工作**
 （两源都干跑成功）—— 我的实现不依赖代理。
+
+---
+
+### ✅ 四量图 + 6 个指标搬入 `analysis/quadrant.py`（2026-10-11，`DECISIONS.md` **D39**）
+
+**用户**：「继续搬运，接下来搬运四量图和重要指标 `LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY`,
+`ZEN.PIVOT_TIMING_LAG`, `LTT.QUADRANT_BS_TRUNK_TIMING_LAG`, `LTT.MAINSTREAM_LEADIN_BEFORE`,
+`LTT.MAINSTREAM_LEADINx3_BEFORE`, `LTT.MAINSTREAM_LEADINx5_BEFORE`」，
+约束**「尽可能解耦的搬运，越少增加引用和管线越好」**。
+
+**三条推翻直觉的勘查结论**（详见 `DECISIONS.md` D39）：
+
+1. **「四量图」不是图，是特征计算** —— 名字只活在老树 docstring 里；真身
+   `GolemQ_old/analysis/base.py:119 calc_four_quadrant_boost`（~580 行）。
+2. **6 个指标在新树一个都没有**（3 个只有别名、3 个连常量都没有）；而它们锚的 4 个核函数
+   **早在 `analysis/timing.py`**（2026-10-10 随筹码分布搬回）—— 方案初稿误判为「要先补」。
+3. 四量图前 ~130 行**藏着一次破坏性 Mongo 写**：`GQ_SU_remove_stock_min_adv` 把疑似
+   **停牌伪 0** 的 bar 从 `stock_min` 移走。**用户定：丢掉它**（新树 `maintenance.GQ_purge_suspended`
+   已清过 3,908,747 行）⇒ 函数只做算术。
+
+**落点**：`GolemQ/analysis/quadrant.py`（新）+ `models/alias.py` 补 33 个 `LTT` 常量
+与**新建 `TRD` 类**（+2，只补用到的那两条）+ `core/constants.py` 的 `FIELD` +11 / `STATE` +1。
+函数体**用脚本从老树逐行切出**（保证算术没被转写走样），只做三处解耦编辑。
+
+**验收**：`test_quadrant.py` 8 条 —— `calc_four_quadrant_boost`（含 virtual_pressure_line 分支）
+与 `calc_mainstream_feats` **与老树逐值对拍**（`array_equal`，不容差）；`import` 后
+`sys.modules` 里**无 QUANTAXIS**。全量 **570 → 578 通过 / 0 失败**；doctest +3。
+⚠️ **三个下游吃输入列**：`calc_bs_before`（要 `BS_BUY/SELL/STAR_*`）、
+`calc_quadrant_bs_trunk_timing_lag`（要上面那 6 列）、`calc_pivot_timing_lag`（要 `ZenPivotZD`）
+—— 它们的**上游未接**（星线检测 `calc_bs_signals` / CZSC 中枢 `attach_pivot_features` 都没接管线）。

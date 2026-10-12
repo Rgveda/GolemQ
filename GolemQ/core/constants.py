@@ -538,6 +538,19 @@ class FIELD(metaclass=_StubMeta):
     MA30 = 'MA30'
     MA90 = 'MA90'
     MA90_SLOPE = 'MA90_SLOPE'
+    # ⚠️ 下面 10 个是 2026-10-11 随「四量图」搬运补的（`analysis/quadrant.py` 要用）。
+    # 真值**逐字**取自老树 `GolemQ_old/utils/parameter.py` 的 `FIELD` 类，未改一个字符。
+    MA60 = 'MA60'
+    MA120 = 'MA120'
+    MA250 = 'MA250'
+    MA250_MAJOR = 'MA250_MAJ'
+    ATR_UB_WEEKLY = 'ATR_UB_WEK'
+    KDJ_K = 'KDJ_K'
+    KDJ_D = 'KDJ_D'
+    KDJ_J = 'KDJ_J'
+    KDJ_TREND_TIMING_LAG = 'KDJ_TRD_LAG'
+    MACD = 'MACD'
+    MACD_DELTA_MAJOR = 'MACD_diff_1T_MAJ'
     MACD_DELTA = 'MACD_diff_1T'
     MAPOWER120 = 'MPWR12'
     MAPOWER120_QUARTER = 'MPWR12_QTR'
@@ -629,6 +642,8 @@ class STATE(metaclass=_StubMeta):
     """
     _instance = None
     MACD_COMPOUDED_BAND_RATIO = 'sMacdCpdBandRto'
+    #: 2026-10-11 随「四量图」搬运补；真值取自老树 `utils/parameter.py` 的 `STATE` 类。
+    CVaR_BOWL_CANDIDATE = 'ES_BOW_CAN'
 
     def __new__(cls):
         if cls._instance is None:

@@ -104,6 +104,12 @@ DOCTEST_MODULES = (
     # ⚠️ numba 是**惰性** import（`_nb()`），但这两条 doctest 真会调它 ——
     # 收集本模块不需要 numba 在场，**跑这两条**需要（与 `regtree_jit` 同理）。
     'GolemQ.analysis.renko_jit',
+    # 四量图 + 6 个下游指标的搬运（2026-10-11）。模块**只在模块级 import
+    # numpy/pandas/talib**（不碰 DB/网络），对其余全树零引用。只给三个纯助手
+    # （`sma`/`ema`/`llv`）挂了 doctest —— `calc_four_quadrant_boost` 那几个
+    # 是**原地改 features** 的，不适合 doctest；它们的正确性证据是
+    # `test_quadrant.py` 里与老树 `analysis/base.py` 的**逐值对拍**。
+    'GolemQ.analysis.quadrant',
 )
 
 

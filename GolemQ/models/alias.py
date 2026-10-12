@@ -22,6 +22,68 @@ class LTT:
     MAINSTREAM_LEADIN_BEFORE = 'MsLeadinBf'
     QUADRANT_TRIGGER_CREDIT = 'QuadTrgCred'
     QUADRANT_LEVERAGE_MACD_LEADIN_UB = 'QLevMACDLinUb'
+    # ── 以下 2026-10-11 随「四量图」搬运补（`analysis/quadrant.py` 要用）────────
+    # 真值**逐字**取自老树 `GolemQ_old/models/alias.py` 的 `LTT` 类 —— 全是 MongoDB
+    # 实际存储名，改一个字母就是另一个字段（PITFALLS P1：只填真值，不许造）。
+    QUADRANT_1 = 'Q1'
+    QUADRANT_2 = 'Q2'
+    QUADRANT_3 = 'Q3'
+    QUADRANT_4 = 'Q4'
+    QUADRANT_POWERLINE = '4QPwrln'
+    QUADRANT_POWERLINE_MINOR = '4QPwrlnMin'
+    QUADRANT_POWERLINE_MAJOR = '4QPwrlnMaj'
+    QUADRANT_LEVERAGE_ENERGY_MINOR = 'QLevEngMin'
+    QUADRANT_LEVERAGE_ENERGY = 'QLevEng'
+    QUADRANT_LEVERAGE_ENERGY_MAJOR = 'QLevEngMaj'
+    QUADRANT_LEVERAGE_ENERGY_DUMMY = 'QLevEngD'
+    QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY = 'QLevEngLagD'
+    QUADRANT_POWERLINE_LEADIN = '4QPwrlnLeIn'
+    QUADRANT_POWERLINE_LEADIN_BEFORE = '4QPwrlnLedInBf'
+    QUADRANT_POWERLINE_LEADOUT = '4QPwrlnLedOut'
+    QUADRANT_POWERLINE_LEADOUT_BEFORE = '4QPwrlnLedOutBf'
+    ONE_QUADRANT_UPRISING_TIMING_LAG = '1QUprLag'
+    TWO_QUADRANT_UPRISING_TIMING_LAG = '2QUprLag'
+    TWO_QUADRANT_DOWNRISK_TIMING_LAG = '2QDrLag'
+    THREE_QUADRANT_UPRISING_TIMING_LAG = '3QUprLag'
+    THREE_QUADRANT_DOWNRISK_TIMING_LAG = '3QDrLag'
+    FOUR_QUADRANT_UPRISING_TIMING_LAG = '4QUprLag'
+    FOUR_QUADRANT_PRE_PRELUDE_BEFORE = '4QPreludePreBf'
+    QUADRANT_DOWNRISK_TIMING_LAG = 'QuadDwnRskLag'
+    QUADRANT_STATUS = 'QuadSt'
+    CHOBITS = 'ChoBits'
+    QUADRANT_CODEX = 'QuadCodex'
+    # 四量图 ↔ BS/主力资金 链（`calc_mainstream_feats` / `calc_bs_before`）
+    QUADRANT_BS_TRUNK = 'QuadBsTuk'
+    QUADRANT_BS_TRUNK_TIMING_LAG = 'QuadBsTukLag'
+    MAINSTREAM_LEADIN_SHAKEOUT = 'MsLeadinSko'
+    MAINSTREAM_LEADINx3_BEFORE = 'MsLeadinx3Bf'
+    MAINSTREAM_LEADINx5_BEFORE = 'MsLeadinx5Bf'
+    BS_BUY = 'BSBu'
+    BS_SELL = 'BSSel'
+    BS_STAR_UP = 'BSStarUp'
+    BS_STAR_DOWN = 'BSStarDwn'
+    BS_BUY_MAJOR = 'BSBuMaj'
+    BS_SELL_MAJOR = 'BSSelMaj'
+    BS_STAR_UP_MAJOR = 'BSStarUpMaj'
+    BS_STAR_DOWN_MAJOR = 'BSStarDwnMaj'
+    BS_BUY_BEFORE = 'BSBuBf'
+    BS_SELL_BEFORE = 'BSSelBf'
+    BS_STAR_UP_BEFORE = 'BSStarUpBf'
+    BS_STAR_DOWN_BEFORE = 'BSStarDwnBf'
+    BS_BUY_BEFORE_MAJOR = 'BSBuBfMaj'
+    BS_SELL_BEFORE_MAJOR = 'BSSelBfMaj'
+
+
+class TRD:
+    """交易信号字段名 —— **只补了四量图链用到的那两条**。
+
+    ⚠️ 新树此前**没有这个类**（老树 `models/alias.py` 的 `TRD` 有 380+ 个常量）。
+    2026-10-11 随四量图搬运只补了 `AROON_UPRISING_TIMING_LAG(_MINOR)`（`calc_four_quadrant_boost`
+    的 `virtual_pressure_line` 分支要用）。**别把这里当成「TRD 搬完了」** ——
+    其余要用到的，仍须从老树取真值再补。
+    """
+    AROON_UPRISING_TIMING_LAG = 'AroUprsgLag'
+    AROON_UPRISING_TIMING_LAG_MINOR = 'AroUprsgLagMin'
 
 
 class ZEN:
