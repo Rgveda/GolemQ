@@ -120,6 +120,11 @@ DOCTEST_MODULES = (
     # doctest。它们钉的是**字段推导口径**（`time_stamp` 是「北京墙上时间当 UTC」
     # 而**不是** 8.3 的 `ts`；日族不带 `datetime`），判错会静默写坏整张特征表。
     'GolemQ.markets.StockCN.reality_save',
+    # ChartScan 的 scope 解析（2026-10-13 搬）。模块级只 import 常量，碰库的
+    # `focus_block_codes` / `perpar_symbol_range` 里才惰性 import `refdata` ⇒ 收集
+    # 本模块**不连库**。doctest 钉的是 `etf` 那份硬编码码表的三条性质
+    # （506 个 / 混着真指数 / 旧树语法疣吃掉了 `159531`）。
+    'GolemQ.markets.StockCN.scopes',
 )
 
 
