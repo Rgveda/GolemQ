@@ -130,6 +130,10 @@ DOCTEST_MODULES = (
     # 在 GolemQ env 下也进得来。doctest 钉 `calculate_i` 的像素↔bar 标定与权重路径的形状。
     'GolemQ.markets.StockCN.chartscan.render',
     'GolemQ.markets.StockCN.chartscan.model',
+    # 客户端的 `market_type_of`（逐码定市场类型，**对旧 CLI 的刻意更正**）。
+    # ⚠️ `server.py` / `client.py` **模块级不 import zmq**（只在 GolemAI env 有），
+    # 故本模块在 GolemQ env 下也收集得动；`server.py` 没有 doctest，不入列。
+    'GolemQ.markets.StockCN.chartscan.client',
 )
 
 

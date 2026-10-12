@@ -204,7 +204,16 @@ def fetch_reality_feat(codes, start, end, family='day', market_type=None):
     q = {'code': {'$in': codes}, key: {'$gte': lo, '$lte': hi}}
     cur = _db()[reality_feat_name(family, market_type)].find(q, {'_id': 0}).sort(key, 1)
     df = pd.DataFrame(list(cur))
-    return None if df.empty else df
+    if df.empty:
+        return None
+    # ⚠️ **必须把索引设成 `(date|datetime, code)`** —— 旧树的读口就是这么做的
+    # （`features.py:338-390`：`assign(date=pd.to_datetime(res.date))` →
+    # `drop_duplicates(['date','code'])` → `set_index(['date','code'], drop=False)`）。
+    # 下游 `calc_ChartScaned_persistence` 要 `index.get_level_values('date')` 与
+    # `reindex([(last_day, ticker)])`，**扁平帧会 `KeyError: Requested level (date)…`**。
+    lvl = 'date' if family == 'day' else 'datetime'
+    df[lvl] = pd.to_datetime(df[lvl])
+    return df.drop_duplicates([lvl, 'code']).set_index([lvl, 'code'], drop=False)
 
 
 #: ⚠️ **刻意不保留旧树那三个名字**（`GQ_save_metadata_reality` /

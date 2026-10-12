@@ -38,3 +38,9 @@ Thumbs.db
 #   python tools/dump_is_stock_cn_baseline.py           # 写基线
 #   python tools/dump_is_stock_cn_baseline.py --diff    # 与基线比对
 tools/_is_stock_cn_baseline.tsv
+
+# ChartScan 的本地数据目录 —— 里面是 **52MB 的 YOLO 权重**
+# (`datastore/models/weights/custom_yolov8.pt`)，**不入库**。
+# 换了权重就换一个新文件，别把它提交上去。
+# 想放到别处：设 `$GOLEMQ_CHARTSCAN_WEIGHTS` 指过去（见 markets/StockCN/chartscan/model.py）。
+datastore/
