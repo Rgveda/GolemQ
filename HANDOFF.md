@@ -66,6 +66,7 @@ ts   用 datetime → 7 行 ✓
 | **QUADRANT** | 四量图（`calc_four_quadrant_boost`，~580 行）+ 6 指标（`QLevMACDLagD` / `ZenPivotLag` / `QuadBsTukLag` / `MsLeadinBf`/`x3`/`x5`）搬入 `analysis/quadrant.py` | ✅ **完成、与老树逐值对拍**（`DECISIONS.md` **D39**）—— 只搬**算术**（丢掉那段「删停牌伪 0」的**破坏性写**）；顺带搬 6 个 `BS_*` 包装；**零 QUANTAXIS、零管线**；全量 570 → **578 通过**。⏳ 三个下游（`calc_bs_before`/`calc_quadrant_bs_trunk_timing_lag`/`calc_pivot_timing_lag`）**吃输入列**，其上游（星线检测 / CZSC 中枢）未接 |
 | **RSRS** | RSRS **指标计算** `pre_rsrs_data_func`（5 列：beta / R² / zscore / 标准分 / 右偏）搬入 `analysis/rsrs.py` | ✅ **完成、与老树逐值对拍**（`DECISIONS.md` **D40**）—— `strided_app`/`rolling_zscore` 补进 `analysis/timing.py`；`FIELD` +5；**不向量化**（逐 bar `statsmodels.OLS`，动最低位会破对拍）。⚠️ 老树那 8 个**择时信号/策略**与**一个坏孪生**（`pre_rsrs_zscore_np_func`，`NameError`）**未搬** |
 | **RT-FIX** | REALTIME 合成读路径**三处潜伏 bug**（`realtime.py` 的 `import time` 遮住 `datetime.time` ／ `analysis/timeseries.py` 的 `_MIN_CONVERSION_*` **未定义** ／ 合并代码用了老树的 `select_code`）| ✅ **已修 + 回归钉子 `test_realtime_merge.py`(11)** —— 三处被各自的 `except` 吞成静默，现象都是「`realtime=True` 与 `False` 结果一样」；**只有开盘时段手工验才暴露**。实测修后 1min/日线都补到今日。顺带：`get_kline_price_min 60min` 对 4.4 **17.6×**，且查清旧库那多出的 592 行是**脏数据**（`PITFALLS.md` **P33**）|
+| **CHARTSCAN** | CV 图形识别（YOLOv8 扫 K 线图 + ZeroMQ 微服务）从 `Y:\Projects\GolemAI` **并入** | ✅ **6 段全部落地**（`DECISIONS.md` **D42** / **D43**）—— 代码进库、**数据全走 8.3**、**env 与 ZMQ 边界保留**（CV 要 torch，本 env 是 NoMKL ⇒ BLAS 冲突）。落点 `markets/StockCN/{scopes,reality_save}.py` + `chartscan/`；启动脚本 `chartscan*.ps1`（**必须 GolemAI env**）。对拍：`(600519, 2026-01-05)` 与老树**逐值相同**（坐标差 **0.0 秒**）。⚠️ **指数/ETF 改走 qfq 是刻意变更**（实测 510300 检出 **5→3 Buys**）；`collections/align.py`（`--align ChartScan`）**未搬** |
 
 ### ✅ `--save` 收口 + 参考数据 banner（2026-10-09）
 
@@ -2252,3 +2253,41 @@ moneyflow 爬到的数据写入 `stock_metadata_day`，而不是 `stock_ranking`
 ⚠️ **三个下游吃输入列**：`calc_bs_before`（要 `BS_BUY/SELL/STAR_*`）、
 `calc_quadrant_bs_trunk_timing_lag`（要上面那 6 列）、`calc_pivot_timing_lag`（要 `ZenPivotZD`）
 —— 它们的**上游未接**（星线检测 `calc_bs_signals` / CZSC 中枢 `attach_pivot_features` 都没接管线）。
+
+---
+
+### ✅ ChartScan（CV）并入 GolemQ（2026-10-13，`DECISIONS.md` **D42** / **D43**）
+
+**用户**：「`Y:\Projects\GolemAI` 运行着这个项目一个分支功能，可以批量处理 CV 识别、写入数据库……
+能否将其代码全部合并到 GolemQ 下面，使用 MongoDB 8.3」；Django web「**可以删除，完全无关紧要**」。
+
+**🔴 一处必须知道的仓库外改动**：往 `conda env GolemAI` 装了 `alibabacloud-dingtalk`
+（`pip install --no-cache-dir`；默认 pip 缓存在本机报 `Permission denied`）。
+**没装它 `import GolemQ` 在那个 env 下直接 ImportError** —— 因为 `GolemQ/__init__.py:55` 有
+**急切**的 `from . import agents`（**它违背了同文件声明的惰性子包**，`'agents'` 就在
+`_LAZY_SUBPACKAGES` 里），而 `agents/messenger.py` 无条件 import 钉钉 SDK；且
+`markets/StockCN/__init__` 又牵进 `.realtime` → `supervisor.messenger` → 同一个 SDK。
+**严格说只要删那一句 + 装包这两件都做了才通**（删一句解开一半）。
+
+**五条自证**：
+1. **老树不是 git 仓库**（`fatal: not a git repository`）⇒ 只能拷文件，没有可挑的历史。
+2. **老代码里根本没有 xgboost**（全树 grep `xgboost|tree_method|gpu_hist` **零命中**；
+   当前 `GolemAI_py3.12.7.yaml` 里也没装它）—— 约束其实是 **torch/ultralytics + MKL**，
+   不是 xgboost。旧 env 导出里的 `py-xgboost=cuda120` 是**死重**。
+3. **「四量图」式的重新认识**：老的 `fast`/`block` 在 `perpar_symbol_range` 里**根本没有分支**
+   —— 它们落 `else` 兜底 = `focus_block`。旧 help 写「block=重要指标股(默认)」是这么来的。
+4. **`.to_qfq()` 必须删**（新读口已复权一次 ⇒ 二次缩放；且 `KlineResult` 没这个方法）。
+5. **`etf` scope 的 506 个码里混着 30 个真指数** ⇒ 旧 CLI 给整个 scope 传 `INDEX_CN`
+   会让 ETF 去读 `index_60min` 而**静默读空**；已改成**逐码** `is_stock_cn(code)[1]`。
+
+**往返/冒烟测试抓到并修掉的 5 个坑**（都不报错就静默错，故列全）：
+① `FontProperties` 在 `matplotlib.font_manager` 不在 `mplfinance`；
+② **实时合并的门丢了** —— 无条件 `realtime=True` 会把「今天那根」并进**历史日期**的取数
+（`end_date=2026-01-05` 的末根变成 `2026-10-12`）；旧代码是取完**之后**按三条判据决定
+（判据要用刚取回的 `last_date`）⇒ 改先 `realtime=False` 再按同一判据调 `_merge_realtime`；
+③ 新读口索引是 **2 层** `(ts, code)`，`index[i]` 给元组（旧树 QUANTAXIS 是单层）⇒ 取 `level=0`；
+④ `server.py` 漏了 **`pd.to_datetime`**（协议传字符串、下游按 Timestamp 用）；
+⑤ 读口漏了 **`set_index([date, code])`** ⇒ 下游 `get_level_values('date')` KeyError。
+
+**未做**：`collections/align.py`（`--align ChartScan` 那条路，是 `*_reality_feat_*` 的
+另一个消费者）；旧 `--eval` 给 notebook 文本 / 给原始代码串两条入口（用户定「只搬要用的」）。

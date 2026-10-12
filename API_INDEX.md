@@ -656,8 +656,8 @@ Feature review stubs (to be populated).
 | f | `BaseMarket.get_stock_codes()` | 获取该市场全部股票代码 |
 | f | `BaseMarket.get_kline_quotes(code, start, end, fq)` | 获取单只股票日线历史行情 |
 | f | `BaseMarket.get_kline_quotes_min(code, start, end, frequency, fq)` | 获取单只股票分钟线历史行情 |
-| f | `BaseMarket.get_kline_price_min(codelist, start, end, verbose, realtime, frequency)` | 分钟线。返回 (结果对象, codename)。 |
-| f | `BaseMarket.get_kline_price_v3(codelist, start, end, verbose, realtime)` | 日线。返回 (结果对象 | None, codename)。 |
+| f | `BaseMarket.get_kline_price_min(codelist, start, end, verbose, realtime, frequency, if_fq)` | 分钟线。返回 (结果对象, codename)。 |
+| f | `BaseMarket.get_kline_price_v3(codelist, start, end, verbose, realtime, if_fq)` | 日线。返回 (结果对象 | None, codename)。 |
 | f | `BaseMarket.get_stock_concept_kline(symbol, start, end, freq)` | 概念 K 线。未实现的市场应抛 NotImplementedError —— |
 | f | `BaseMarket.name()` | 返回市场名称 |
 
@@ -680,7 +680,7 @@ QUANTAXIS QA_DataStruct_* 的替身 —— 只覆盖实际被调用的接口。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
-| f | `apply_qfq(data, verbose)` | 就地把 OHLC 乘上前复权因子，返回新的 DataFrame（不改入参）。 |
+| f | `apply_qfq(data, if_fq, verbose)` | 把 OHLC 乘上复权因子，返回新的 DataFrame（不改入参）。 |
 | C | `GQ_DataStruct` | K 线容器。data 是以 (时间, code) 为 MultiIndex 的 DataFrame。 |
 | f | `GQ_DataStruct.new(data, type, if_fq)` |  |
 | f | `GQ_DataStruct.index()` | 透出 data.index。 |
@@ -723,7 +723,7 @@ ETF 复权（除权）读取侧支持。
 |:--|:--|:--|
 | f | `GQ_is_etf(code)` | 判断 6 位代码是否为场内 ETF。 |
 | f | `GQ_fetch_etf_adj(codelist, start, end, adj_collection)` | 读取逐日复权系数，返回 {code: {date: adj}}。 |
-| f | `GQ_apply_etf_qfq(data_day, codelist, verbose)` | 把 ETF 的 OHLC 换成前复权价，并原样返回同一个对象。 |
+| f | `GQ_apply_etf_qfq(data_day, codelist, if_fq, verbose)` | 把 ETF 的 OHLC 换成前复权价，并原样返回同一个对象。 |
 
 ### `fetch`
 
@@ -744,6 +744,7 @@ ETF 复权（除权）读取侧支持。
 | f | `flatten_factor_map(factor_map)` | {code: {date: adj}} → {code|date: adj}，供 :func:align_factors。 `[dt]` |
 | f | `factor_dict_from_frame(df, code_col, date_col, value_col)` | 因子 DataFrame → {code|date: adj}。 `[dt]` |
 | f | `align_factors(data, flat)` | 把因子对齐到 data 的每一行，返回与 data.index 同索引的 Series。 `[dt]` |
+| f | `to_hfq_factor(factor, codes)` | 前复权因子 → 后复权因子：按每只标的窗口内最早那根归一。 `[dt]` |
 | f | `multiply_ohlc(data, factor)` | 把 OHLC 乘上因子，返回新帧（不改入参）。 `[dt]` |
 | f | `xdxr_to_adj(dates, close, xdxr)` | 日线 + 除权除息事件 → 前复权因子（stock_adj 的 adj 列）。 `[dt]` |
 
@@ -756,8 +757,8 @@ A 股 K 线读取器 —— 走 MongoDB 8.3 时序库（golemq_stock_cn）。
 | f | `bj_date(x)` | 北京时间的裸值 → UTC-aware datetime（给 ts 字段用）。 |
 | f | `normalize_frequency(frequence)` | 频率别名 → 规范频率；不认识的值抛 ValueError。 |
 | f | `market_prefix(codelist, market_type)` | 决定读哪一族集合 —— 'stock' / 'index' / 'etf'。 `[dt]` |
-| f | `get_kline_price_min(codelist, start, market_type, frequency, verbose, end, realtime)` | 分钟线读取（8.3 时序）。返回 (KlineResult, codename)。 |
-| f | `get_kline_price_v3(codelist, start, market_type, verbose, end, realtime)` | 日线读取（8.3 时序）。返回 (KlineResult | None, codename)。 |
+| f | `get_kline_price_min(codelist, start, market_type, frequency, verbose, end, realtime, if_fq)` | 分钟线读取（8.3 时序）。返回 (KlineResult, codename)。 |
+| f | `get_kline_price_v3(codelist, start, market_type, verbose, end, realtime, if_fq)` | 日线读取（8.3 时序）。返回 (KlineResult | None, codename)。 |
 | f | `read_min_frame(codelist, start, end, frequence, market_type)` | 分钟线扁平帧（8.3 时序）。列含 datetime / code / volume。 |
 | f | `GQ_fetch_stock_day_adv(codelist, start, end, market_type, verbose)` | 日线 → GQ_DataStruct_*。替代 QUANTAXIS 的 QA_fetch_stock_day_adv。 |
 
@@ -875,6 +876,16 @@ stock_metadata_day —— 日频元数据的统一落点。
 | f | `StockCNQuotes.get_kline_quotes(code, start, end, fq)` | 获取A股单只股票日线历史行情（前复权） |
 | f | `StockCNQuotes.get_kline_quotes_min(code, start, end, frequency, fq)` | 获取A股单只股票分钟线历史行情（前复权） |
 
+### `reality_save`
+*_reality_feat_* —— ChartScan（CV）结果的落点。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `reality_feat_name(family, market_type)` | (族, 市场类型) → 集合名。 `[dt]` |
+| f | `reality_feat_rows(features, family, created_at)` | CV 结果帧 → *_reality_feat_* 文档列表。纯函数（不碰 DB）。 `[dt]` |
+| f | `save_reality_feat(features, family, market_type, verbose, echo, created_at)` | 取数（其实只组行）→ upsert_fields 落 golemq_stock_cn。 |
+| f | `fetch_reality_feat(codes, start, end, family, market_type)` | 读回 *_reality_feat_*；空结果返回 None（不是空帧）。 |
+
 ### `realtime`
 
 | | 名称 | 摘要 |
@@ -921,6 +932,15 @@ A 股参考集合的取数与落库编排 —— 对应 CLI 的 --save <SOURCE> 
 | f | `refdata_status()` | 各集合当前的源可用性与库存量 —— 排障用。 |
 | f | `format_status(report)` | 把 save_refdata 的结果或 refdata_status() 渲染成可读文本。 |
 
+### `scopes`
+ChartScan 的 scan scope 解析 —— 从旧树 perpar_symbol_range 搬来的 6 个分支。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `etf_scope_codes()` | etf scope 的码表（排序后的列表）。纯函数。 `[dt]` |
+| f | `focus_block_codes(verbose, echo)` | focus_block 的成分股（去重、6 位、排序）。 |
+| f | `perpar_symbol_range(eval_range, verbose, echo)` | --eval <scope> → 代码列表；解析不出来返回 False（沿用旧树约定）。 |
+
 ### `symbol`
 
 | | 名称 | 摘要 |
@@ -938,6 +958,53 @@ A 股参考集合的取数与落库编排 —— 对应 CLI 的 --save <SOURCE> 
 ### `utils`
 
 *(无公开成员)*
+
+## GolemQ.markets.StockCN.chartscan
+
+### `client`
+ChartScan 的 ZeroMQ REQ 客户端 —— 按 scope 解析出任务、逐条发给服务端。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `market_type_of(code)` | 逐码定市场类型 —— 见模块 docstring 的 ⚠️。 `[dt]` |
+| f | `build_jobs(code_list, verbose)` | 逐码问「要重扫什么」→ 任务列表 (ticker, market_type, mode, start, end)。 |
+| f | `run_client(scope, port, verbose)` | 解析 scope → 建任务 → 逐条 REQ。返回 (code_list, code_job)（便于测试）。 |
+| f | `main(argv)` |  |
+
+### `model`
+ChartScan 的 YOLO 权重路径与惰性加载。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `weights_path()` | YOLO 权重路径。解析顺序： `[dt]` |
+| f | `load_model(model)` | 取一个 YOLO 模型：给了 model 就原样返回，否则惰性 import ultralytics 载入。 |
+
+### `predict`
+ChartScan 的推理与编排 —— 搬自旧树 GolemAI/GolemQ/CV/charts.py:124-743。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `GQ_markup_daily_ChartScaned(code, kline_data, market_type, verbose)` | 「没探到」时在日族留一行只有 ChartScaned 的标记（照旧 :124-143）。 |
+| f | `GQ_markup_ChartScaned(code, kline_data, market_type, verbose)` | 「没探到」时在60min 族留一行只有 ChartScaned 的标记（照旧 :146-166）。 |
+| f | `GQ_predict_ChartScanAI(code, market_type, freq, end_date, chunk_size, model, if_fq, verbose)` | 单标的 × 单频率：取数 → 出图 → YOLO → 挑最近 end_date 的框 → 落库。 |
+| f | `calc_ChartScaned_persistence(ticker, market_type, start_date, end_date, ret_metadata)` | 读回已扫结果，决定该标的要重扫什么 —— 搬自旧树 charts.py:448-565。 |
+| f | `calc_ChartScanAI_reality(ticker, market_type, start_date, end_date, enforce, model, if_fq)` | 编排：读回已扫状态 → 取日线 baseline → 逐日 × 三频率跑预测。搬自 :568-742。 |
+
+### `render`
+ChartScan 的 K 线渲染（纯出图，不碰 DB、不做推理）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `GQ_generate_chart_stock(kline, ticker, chunk_size, figsize, dpi, freq)` | 把 kline 的最后 chunk_size 根画成蜡烛图，返回内存里的 PNG BytesIO。 |
+| f | `calculate_i(x, chunk_size)` | YOLO 框的像素 x → 第几根 bar（相对 kline.tail(chunk_size)）。 `[dt]` |
+
+### `server`
+ChartScan 的 ZeroMQ REP 服务端。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `run_server(port, is_thread)` | 在 port 上起一个 REP 服务端并永不返回（直到 ZMQ 错误 / Ctrl-C）。 |
+| f | `main(argv)` |  |
 
 ## GolemQ.markets.StockCN.datasource
 
@@ -1537,6 +1604,16 @@ markets/StockCN/fq.py 的复权因子 —— 重点是分段常数这条不变�
 | f | `TestEdgeCases.test_single_row()` |  |
 | f | `TestEdgeCases.test_event_after_the_last_bar_is_ignored()` |  |
 | f | `TestEdgeCases.test_index_is_the_input_dates_in_order()` |  |
+| C | `TestHfqFactor` | to_hfq_factor —— 前复权因子 → 后复权因子（锚窗口首根，用户 2026-10-13 定）。 |
+| f | `TestHfqFactor.test_anchors_at_the_first_bar()` |  |
+| f | `TestHfqFactor.test_per_code_not_whole_frame()` | ⚠️ 逐标的归一 —— 拿整帧首根当归一基准会把第二只票整体缩放，那是错的。 |
+| f | `TestHfqFactor.test_no_codes_means_single_series()` |  |
+| f | `TestHfqFactor.test_identity_holds()` | 不变式：同一窗口上 qfq/qfq[0] == hfq/hfq[0]（这是「只差一个缩放」的判据）。 |
+| C | `TestIfFqComposition` | 三种复权模式的组装：apply_qfq 就是 align → [hfq 归一] → multiply。 |
+| f | `TestIfFqComposition.test_bfq_is_the_raw_frame()` |  |
+| f | `TestIfFqComposition.test_qfq_multiplies_by_the_factor()` |  |
+| f | `TestIfFqComposition.test_hfq_anchors_the_first_bar()` |  |
+| f | `TestIfFqComposition.test_volume_is_never_touched()` |  |
 
 ### `test_heartbeat_fix`
 测试HeartbeatMonitor超时实例清理修复
@@ -1945,6 +2022,27 @@ analysis/quadrant.py（四量图 + 6 指标）的正确性测试。
 | f | `TestDecoupled.test_module_source_has_no_quantaxis_or_db()` | 按 AST 查，不按文本 —— docstring 里故意写着这些名字（解释丢掉了什么）。 |
 | f | `TestDecoupled.test_import_does_not_pull_quantaxis()` |  |
 
+### `test_realtime_merge`
+REALTIME 合成读路径（get_kline_price_* 的 realtime=True）的回归钉子。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestTimeNotShadowed` | bug ①：realtime.py 里 time 必须是 datetime.time，不是 time 模块。 |
+| f | `TestTimeNotShadowed.test_time_is_datetime_time()` |  |
+| f | `TestTimeNotShadowed.test_the_shadowing_module_is_still_reachable_under_its_aliases()` | 遮住的那个 time 模块仍要能拿到（timer.sleep / ts.time 在用）。 |
+| C | `TestMinResampleConstants` | bug ②：_MIN_CONVERSION_* 必须存在，否则两个重采样器全是死的。 |
+| f | `TestMinResampleConstants.test_constants_defined_and_differ_only_in_volume_column()` |  |
+| f | `TestMinResampleConstants.test_min_resample_runs()` | 真跑一次 —— 修之前这里 NameError。 |
+| C | `TestSelectCodeHelper` | bug ③：_select_code 只认 .data（KlineResult 没有 select_code）。 |
+| f | `TestSelectCodeHelper.test_selects_by_code_on_a_plain_dataframe()` |  |
+| f | `TestSelectCodeHelper.test_accepts_an_object_with_data_attr()` | KlineResult 只有 .data —— 这正是老代码 AttributeError 的来由。 |
+| f | `TestSelectCodeHelper.test_single_level_index_is_returned_as_is()` |  |
+| C | `TestMinRealtimeMergeBody` | GQ_fetch_stock_min_realtime_adv 的函数体：tick → 1min → 合并。 |
+| f | `TestMinRealtimeMergeBody.test_injected_ticks_land_in_the_result()` |  |
+| f | `TestMinRealtimeMergeBody.test_history_rows_are_preserved()` | 合并是追加，不是替换 —— 老 bar 一根都不许丢。 |
+| f | `TestMinRealtimeMergeBody.test_no_ticks_means_pure_history()` | tick 为空 ⇒ 返回原历史（这条反向钉住「不是无脑 append」）。 |
+| f | `TestMinRealtimeMergeBody.test_frozen_clock_really_freezes()` | 自检：_FrozenDT 若失效，上面几条会退回「只在开盘时段过」—— 钉住它。 |
+
 ### `test_realtime_read`
 读路径的「带 REALTIME」—— kline83._merge_realtime 的两道门。
 
@@ -1998,6 +2096,9 @@ analysis/quadrant.py（四量图 + 6 指标）的正确性测试。
 | f | `TestRefdataTtlGate.test_stale_is_fetched()` |  |
 | f | `TestRefdataTtlGate.test_never_succeeded_is_fetched()` | 从没成功过（age=None）按「该取」处理 —— 别把新库冻住。 |
 | f | `TestRefdataTtlGate.test_no_ttl_means_no_gate()` | 默认 ttl_hours=None = 不做闸，行为与从前逐字相同。 |
+| C | `TestEverySaveableCollectionHasASource` | ⚠️ 结构守卫：REFDATA_BY_SOURCE 里列出的每个集合，必须在 |
+| f | `TestEverySaveableCollectionHasASource.test_every_collection_in_refdata_by_source_has_priority()` |  |
+| f | `TestEverySaveableCollectionHasASource.test_every_priority_source_actually_supports_the_collection()` | 反向：优先级表里写的源，必须真的声明支持该集合 —— 否则白列， |
 
 ### `test_regtree_jit`
 analysis/regtree_jit.py —— jit 版与 regtree.py 的对拍。
