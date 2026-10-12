@@ -29,6 +29,14 @@ except ImportError:
 import unittest
 import unittest.mock
 
+# ⚠️ **必须在任何 `patch('builtins.print', ...)` 之前把 numba 导进来**（2026-10-12）。
+# `bootstrap.check_environment` 会**首次 import numba**，而 numba 的导入机制
+# （`numba/core/utils.py` 的 `_RedirectSubpackage`）会按 `__qualname__` **反查**
+# 被 patch 掉的函数 —— 本模块的 print spy 是**嵌套定义**（`...<locals>._spy_print`），
+# 反查剥成「模块常量名」就成了 `本模块._spy_print` ⇒ `AttributeError`。
+# 现象极误导：**单跑本模块必炸**，跑全量却绿（numba 早被别的测试模块导入过，导入有缓存）。
+import numba  # noqa: F401
+
 from GolemQ.cli import bootstrap
 from GolemQ.cli.commands._registry import EXIT_FAILURE
 from GolemQ.core.presentation import (

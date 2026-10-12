@@ -28,6 +28,17 @@ from GolemQ.cli.commands import COMMANDS
 from GolemQ.cli.commands import _registry
 from GolemQ.cli.commands._registry import Command
 
+#: ⚠️ **每条驱动 `run_save` 的用例都必须带上它**（2026-10-12 补）。
+#:
+#: `run_save` 在 tdx 侧非干跑时会调 `refresh_turnover` —— 而它**读真实的 4.4 Mongo**
+#: （`metadata_save.SOURCES` 指向 `stock_ranking` / `stock_valuation`）。用例测的是
+#: **复权闸 / banner**，与换手率无关，却因此每条白等 ~14 秒真库读。
+#: 实测：`test_cli_commands` 单模块 200s，其中 30 条 `run_save` 用例占绝大部分；
+#: 全量套件 871s 里约 420s 是它。patch 成 `{}`（`'unavailable' not in {}` ⇒
+#: 走 `mark('turnover', DONE)`，不额外打印，与真实成功路径同形）。
+_NO_TURNOVER = unittest.mock.patch(
+    'GolemQ.markets.StockCN.metadata_save.refresh_turnover', return_value={})
+
 
 class TestCommandRegistry(unittest.TestCase):
     def test_build_parser_succeeds(self):
@@ -273,6 +284,7 @@ class TestXdxrRefreshGate(unittest.TestCase):
 
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf), \
+                _NO_TURNOVER, \
                 unittest.mock.patch.object(rs, 'save_refdata', return_value={}), \
                 unittest.mock.patch.object(ks, 'save_kline_tdx',
                                            return_value={'kline': {}, 'universe': {}}), \
@@ -358,6 +370,7 @@ class TestAdjNodeMarking(unittest.TestCase):
                 return super().mark(name) if state is None else super().mark(name, state)
 
         with contextlib.redirect_stdout(io.StringIO()), \
+                _NO_TURNOVER, \
                 unittest.mock.patch.object(presentation, 'Banner', _Spy), \
                 unittest.mock.patch.object(rs, 'save_refdata', return_value={}), \
                 unittest.mock.patch.object(ks, 'save_kline_tdx',
@@ -429,6 +442,7 @@ class TestSaveStageStartDoneLines(unittest.TestCase):
         kw = {'side_effect': side} if boom else {'return_value': {}}
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf), \
+                _NO_TURNOVER, \
                 unittest.mock.patch.object(presentation, 'ansi_enabled', return_value=False), \
                 unittest.mock.patch.object(rs, 'save_refdata', **kw), \
                 unittest.mock.patch.object(ks, 'save_kline_tdx',

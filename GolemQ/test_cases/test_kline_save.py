@@ -514,7 +514,15 @@ class TestColdStartVerifiesInsteadOfFetching(unittest.TestCase):
     def _run(self, *, frontier, cold=True, last_bar_ts='default'):
         """⚠️ `last_bar_ts` 的默认值**不能是 `None`** —— 我第一版写 `last_bar_ts or D_TS`，
         于是传 `None` 时被 `or` 换成了 `D_TS`，「无水位」那条**根本没被模拟**，
-        用例却看着像在测它（实测：`skipped_fresh` 断言失败才发现）。"""
+        用例却看着像在测它（实测：`skipped_fresh` 断言失败才发现）。
+
+        ⚠️ **必须把 `intraday_blocks_shortcircuit` patch 掉（2026-10-12 修）**：
+        `save_kline_tdx` 内部用**真实时钟**（`_now = datetime.now()`）判「盘中×分钟」，
+        而本用例拿 `1min` 验短路 ⇒ **交易时段跑必然 `skipped_fresh == 0`**，用例只在
+        非交易时段绿（周末跑全绿、周一盘中跑就红 —— 实测踩过，且**干净树上同样红**，
+        故与任何一次改动无关）。「盘中×分钟」是**另一个关注点**，已由
+        `test_kline_shortcircuit.TestIntradayBlocksMinuteShortcircuit` 覆盖；
+        同文件 `:396/:433` 也是这么 patch 的。"""
         from GolemQ.markets.StockCN import kline_save as ks
         src = MagicMock()
         db = MagicMock()
@@ -528,6 +536,8 @@ class TestColdStartVerifiesInsteadOfFetching(unittest.TestCase):
                 unittest.mock.patch.object(ks, 'universe', return_value=['600519']), \
                 unittest.mock.patch.object(ks, '_resolve_bj_market', return_value=None), \
                 unittest.mock.patch.object(ks, 'fast_skip_reason', return_value=None), \
+                unittest.mock.patch.object(ks, 'intraday_blocks_shortcircuit',
+                                           return_value=False), \
                 unittest.mock.patch.object(ks, 'kline_sweep_age_hours',
                                            return_value=None if cold else 0.5), \
                 unittest.mock.patch.object(ks, 'alive_threshold', return_value=D_TS), \
