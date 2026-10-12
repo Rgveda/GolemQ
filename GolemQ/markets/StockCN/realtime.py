@@ -28,6 +28,7 @@ import pandas as pd
 import numpy as np
 from datetime import (
     datetime as dt,
+    time,
     timedelta,
     timezone,
 )
@@ -46,7 +47,6 @@ from GolemQ.core.constants import (
     FIELD as FLD,
 )
 import time as timer
-import time
 import requests
 import json
 import time as ts
@@ -1040,6 +1040,26 @@ def GQ_data_tick_resample_1min(tick, type_='1min', if_drop=True, stack_vol=True)
     return resx.reset_index().drop_duplicates().set_index(['datetime', 'code'])
 
 
+def _select_code(obj, code):
+    """从读口返回的对象里取**单只标的**的帧 —— 与 `datastruct.select_code` 同口径。
+
+    ⚠️ **2026-10-12 补**：下面两条合并路径原先写的是 `data_X.select_code(code)` ——
+    那是**老树 QUANTAXIS DataStruct 的 API**，而新树读口返回的是 `KlineResult`，
+    它按设计**只有 `.data`**（见其 docstring「调用方只取 `.data`」）⇒
+    一调就 `AttributeError`，又被 `_merge_realtime` 的兜底 `except` 吞掉 ⇒
+    **分钟线的 REALTIME 合成一直是死的**（实测才暴露）。
+    本帮手只认 `.data`，多标的时按 `code` 层切片，单标的原样返回。
+    """
+    data = getattr(obj, 'data', obj)
+    idx = data.index
+    if isinstance(idx, pd.MultiIndex) and 'code' in (idx.names or []):
+        try:
+            return data.loc[(slice(None), code), :]
+        except KeyError:
+            return data.iloc[0:0]
+    return data
+
+
 def GQ_fetch_stock_day_realtime_adv(
     codelist,
     data_day,
@@ -1105,11 +1125,16 @@ def GQ_fetch_stock_day_realtime_adv(
             for code in codelist:
                 # 顺便检查股票行情长度，发现低于30天直接砍掉。
                 try:
-                    if (len(data_day.select_code(code[:6])) < 30):
-                        print(u'{} 行情只有{}天数据，新股或者数据不足，不进行择时分析。'.format(code, 
-                                                                   len(data_day.select_code(code[:6]))))
-                        data_day.data.drop(data_day.select_code(code).data, 
-                                           inplace=True)
+                    if (len(_select_code(data_day, code[:6])) < 30):
+                        print(u'{} 行情只有{}天数据，新股或者数据不足，不进行择时分析。'.format(code,
+                                                                   len(_select_code(data_day, code[:6]))))
+                        # ⚠️ **刻意不删行**：老树这里写的是 `data_day.data.drop(
+                        # data_day.select_code(code).data)` —— 把一个 DataFrame 当
+                        # labels 传给 `drop` 会 **TypeError**，而它外面那层 `except`
+                        # 把异常吞成 `continue` ⇒ **老树的有效行为就是「警告 + 跳过」**。
+                        # 2026-10-12 我一度改成 `.drop(index)`，那**真把该 code 的行删光**
+                        # 了（实测 `get_kline_price_v3` 从 23 行变 0 行）—— 与提示语
+                        # 「不进行择时分析」不符（该跳过的是分析，不是把数据抹掉）。
                         continue
                 except Exception:
                     pass
@@ -1354,7 +1379,7 @@ def GQ_fetch_stock_min_realtime_adv(
                                                                   data_realtime_1min[AKA.HIGH][1:].min(), 
                                                                   data_realtime_1min[AKA.CLOSE][1:].min(),)
 
-                        if (data_min.select_code(code[:6]).index.get_level_values(level=0)[-1] != data_realtime_mins.index.get_level_values(level=0)[-1]):
+                        if (_select_code(data_min, code[:6]).index.get_level_values(level=0)[-1] != data_realtime_mins.index.get_level_values(level=0)[-1]):
                             log_msg = u'追加实时实盘数据 {}，股票代码：{}({}) 开盘 {}：价格：{}'.format(
                                 len(data_realtime_mins),
                                 code, data_realtime_mins.index[0][1],

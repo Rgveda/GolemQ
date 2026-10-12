@@ -27,6 +27,21 @@ import numpy as np
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
 
+# ⚠️ **2026-10-12 补**：这两个常量原先**被引用却从未定义** —— `_min_conversion()` 一调就
+# `NameError`，于是 `GQ_data_min_resample` / `GQ_data_min_to_day` **两个重采样器一直是死的**
+# （回迁时只抄了 `CONVERSION` 的**用法**，漏抄了它的**定义**）。
+# 真值逐字取自 QUANTAXIS `QAData/data_resample.py::QA_data_min_resample` 里那个
+# 三元表达式（`'vol' in min_data.columns` 决定用哪一支）—— 键序也是原样，因为
+# `list(CONVERSION.keys())` 同时是**输出的列集合**。
+_MIN_CONVERSION_VOL = {
+    'code': 'first', 'open': 'first', 'high': 'max', 'low': 'min',
+    'close': 'last', 'vol': 'sum', 'amount': 'sum',
+}
+_MIN_CONVERSION_VOLUME = {
+    'code': 'first', 'open': 'first', 'high': 'max', 'low': 'min',
+    'close': 'last', 'volume': 'sum', 'amount': 'sum',
+}
+
 
 def _min_conversion(min_data):
     """按帧里是 `vol` 还是 `volume` 选口径。
