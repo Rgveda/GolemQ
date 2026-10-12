@@ -38,6 +38,11 @@ from GolemQ.cli.commands._registry import Command
 #: 走 `mark('turnover', DONE)`，不额外打印，与真实成功路径同形）。
 _NO_TURNOVER = unittest.mock.patch(
     'GolemQ.markets.StockCN.metadata_save.refresh_turnover', return_value={})
+#: 同一段的**第二件事**：`run_save` 的「元数据」段现在还抓**资金流**（同花顺，走**真网络
+#: HTTP**）。用例测的是复权闸/banner，与它无关 ⇒ 一并 patch
+#: （返回 `{'written': 1}` ⇒ `mf_ok=True` ⇒ banner 点白，与真实成功路径同形）。
+_NO_MONEYFLOW = unittest.mock.patch(
+    'GolemQ.markets.StockCN.moneyflow_save.save_moneyflow', return_value={'written': 1})
 
 
 class TestCommandRegistry(unittest.TestCase):
@@ -285,6 +290,7 @@ class TestXdxrRefreshGate(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf), \
                 _NO_TURNOVER, \
+                _NO_MONEYFLOW, \
                 unittest.mock.patch.object(rs, 'save_refdata', return_value={}), \
                 unittest.mock.patch.object(ks, 'save_kline_tdx',
                                            return_value={'kline': {}, 'universe': {}}), \
@@ -371,6 +377,7 @@ class TestAdjNodeMarking(unittest.TestCase):
 
         with contextlib.redirect_stdout(io.StringIO()), \
                 _NO_TURNOVER, \
+                _NO_MONEYFLOW, \
                 unittest.mock.patch.object(presentation, 'Banner', _Spy), \
                 unittest.mock.patch.object(rs, 'save_refdata', return_value={}), \
                 unittest.mock.patch.object(ks, 'save_kline_tdx',
@@ -443,6 +450,7 @@ class TestSaveStageStartDoneLines(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf), \
                 _NO_TURNOVER, \
+                _NO_MONEYFLOW, \
                 unittest.mock.patch.object(presentation, 'ansi_enabled', return_value=False), \
                 unittest.mock.patch.object(rs, 'save_refdata', **kw), \
                 unittest.mock.patch.object(ks, 'save_kline_tdx',

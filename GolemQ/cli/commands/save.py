@@ -119,6 +119,7 @@ def run_save(args) -> None:
             save_refdata,
         )
         from GolemQ.markets.StockCN.metadata_save import refresh_turnover
+        from GolemQ.markets.StockCN.moneyflow_save import save_moneyflow
 
         # 源名决定整条流程。**K 线只有 pytdx 供得了**（`kline_save` 全模块只走
         # tdx 适配器），故非 tdx 侧一律跳过 K 线/xdxr/adj，只做参考数据。
@@ -160,14 +161,13 @@ def run_save(args) -> None:
         # 表在 CLI 拼，`refdata_save` / `kline_save` 都不认识 UI：它们只负责
         # `on_progress` 回调与 `echo` 输出汇。标题报**真实源名**而非 SOURCE 取值
         # （`--save tdx` 走的源就叫 pytdx，报 `source: pytdx` 才不误导）。
-        # 元数据（换手率）增量刷新：只有 tdx 侧的非干跑才做，且 4.4 不可达会自行降级
+        # 元数据刷新：只有 tdx 侧的非干跑才做。**它一个闸管两件事** ——
+        # 换手率（读 4.4）与资金流（同花顺当日快照）。
         do_turnover = tdx_like and not args.save_dry_run
 
         rows = []
         if do_refdata:
             rows.append(('参考数据', None, requested))
-        if do_turnover:
-            rows.append(('元数据', None, ['turnover']))
         for tgt in (k_targets if tdx_like and k_targets else ()):
             rows.append(('K线', tgt,
                          [target_collection_name(tgt, f) for f in k_freqs]))
@@ -175,6 +175,12 @@ def run_save(args) -> None:
             # 股票与 ETF 各一对：xdxr（事件）→ adj（由其重算的前复权因子）。
             rows.append(('复权', None,
                          ['stock_xdxr', 'stock_adj', 'etf_xdxr', 'etf_adj']))
+        # ⚠️ **元数据排最后**（2026-10-12 用户要求：应在 xdxr 之后）。
+        # 理由不只是次序好看：它取的都是**当日快照**（换手率读 4.4、资金流走同花顺），
+        # 与 K线/复权那条**历史回填**链没有依赖 ⇒ 放最后，前面任何一段跑挂了都不
+        # 影响它；而它本来就是「收盘后」那一步。
+        if do_turnover:
+            rows.append(('元数据', None, ['turnover', 'moneyflow']))
 
         # `数据源` 一行：与阶段名**对齐成一列**，取代旧 banner 自己那条头行
         # `source: pytdx`（2026-10-09 改版，见 `core.presentation.identity`）。
@@ -223,26 +229,6 @@ def run_save(args) -> None:
                     name, RUNNING if phase == 'start' else (
                         DONE if (entry.get('rows') or entry.get('cached'))
                         else PENDING)))
-
-        # —— 换手率（元数据）增量刷新 ——
-        # ⚠️ **它读 4.4**（同局域网 Mongo 读，**没有频次限制**）。选它而不是
-        # 东财/baostock 的在线接口做刷新，正是因为**后两者都有访问频次限制**
-        # （用户 2026-10-10 明确）。等 4.4 下线，换源只改
-        # `metadata_save.SOURCES` 那一处。
-        # ⚠️ **不可达时降级**：报警 + 跳过，不拖垮整个 `--save` —— 换手率是加分项，
-        # 不该让 K 线取数跟着失败。
-        if do_turnover:
-            if banner is not None:
-                # 阻塞调用**之前**先点亮（`PITFALLS.md` P22；同 `xdxr_node` 那条）
-                banner.mark('turnover', RUNNING)
-            turnover = refresh_turnover(days=args.save_turnover_days,
-                                        verbose=args.verbose, echo=say)
-            if banner is not None:
-                banner.mark('turnover',
-                            DONE if 'unavailable' not in turnover else PENDING)
-            if 'unavailable' in turnover:
-                # 降级要**说出来**（上面 `refresh_turnover` 在非 verbose 下是静默的）
-                say('[metadata_day] 换手率刷新跳过：{}'.format(turnover['unavailable']))
 
         if not tdx_like:
             say('[save] 源 {}：K 线/xdxr/adj 只有 pytdx 供得了，本命令跳过'.format(value))
@@ -338,6 +324,41 @@ def run_save(args) -> None:
                         banner.mark(adj_node, DONE)
                         if codes is None:
                             mark_kline_sweep(adj_node)
+
+        # —— 元数据（换手率 + 资金流）——
+        # ⚠️ **排在复权之后**（2026-10-12 用户要求），理由见上面 `rows` 那处。
+        # 两件事都**不可达时降级**：它们是加分项，不该拖垮整条 `--save`。
+        if do_turnover:
+            # ① 换手率：**读 4.4**（同局域网 Mongo 读，**没有频次限制**）。选它而不是
+            #    东财/baostock 的在线接口做刷新，正是因为**后两者都有访问频次限制**
+            #    （用户 2026-10-10 明确）。等 4.4 下线，换源只改 `metadata_save.SOURCES`。
+            if banner is not None:
+                # 阻塞调用**之前**先点亮（`PITFALLS.md` P22；同 `xdxr_node` 那条）
+                banner.mark('turnover', RUNNING)
+            turnover = refresh_turnover(days=args.save_turnover_days,
+                                        verbose=args.verbose, echo=say)
+            if banner is not None:
+                banner.mark('turnover',
+                            DONE if 'unavailable' not in turnover else PENDING)
+            if 'unavailable' in turnover:
+                # 降级要**说出来**（`refresh_turnover` 在非 verbose 下是静默的）
+                say('[metadata_day] 换手率刷新跳过：{}'.format(turnover['unavailable']))
+
+            # ② 资金流向：**同花顺当日全市场快照**（一次调用 ~5210 行）。
+            #    ⚠️ **不是东财** —— 东财那条**逐只**资金流接口已死
+            #    （`PITFALLS.md` P32 / `DECISIONS.md` D37），能用的只有同花顺。
+            #    ⚠️ **只有当日、没有历史** ⇒ 只能从今天起一天天攒。
+            if banner is not None:
+                banner.mark('moneyflow', RUNNING)
+            try:
+                mf = save_moneyflow(source='ths', verbose=args.verbose, echo=say)
+                mf_ok = bool(mf.get('written'))
+            except Exception as exc:      # noqa: BLE001 网络失败不该拖垮 --save
+                mf, mf_ok = {'error': '{}: {}'.format(type(exc).__name__, exc)}, False
+            if banner is not None:
+                banner.mark('moneyflow', DONE if mf_ok else PENDING)
+            if not mf_ok:
+                say('[metadata_day] 资金流本次未落库：{}'.format(mf.get('error') or mf))
 
         if banner is not None:
             banner.close()
