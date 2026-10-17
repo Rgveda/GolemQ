@@ -282,6 +282,34 @@ CV_COLUMNS = {
 _CV_META = ('code', 'date', 'datetime', 'date_stamp', 'time_stamp',
             'created_at', 'updated_at', 'ChartScaned')
 
+#: **每个族实际要搬的列 = 该族 + 所有**上卷**到它的族**（2026-10-18 实测修正）
+#: =====================================================================
+#: 旧树是**逐级上卷**写的（`predict.py`）：
+#:
+#: ==========  ==========  ==========  ==========
+#: 扫描频率     `_day`      `_60min`    `_15min`
+#: ==========  ==========  ==========  ==========
+#: day          ✔           —           —
+#: 60min        ✔           ✔           —
+#: 15min        ✔           ✔（收盘）    ✔
+#: ==========  ==========  ==========  ==========
+#:
+#: 所以同一份文档里会**并存不同族的列**。实测 4.4：
+#:
+#: * `stock_reality_feat_day`：`ClsMaj` 231 万 / **`ClsMin` 511 万** / **`Class` 487 万**
+#: * `stock_reality_feat_60min`：抽样 3000 里 **916 行带的是 `ClsMin`**（15min 的列）、
+#:   49 行带 `Class`；时刻**全部落在** `CLOSE_TIMES`（10:30/11:30/14:00/15:00）
+#:
+#: ⇒ 只按自己那套列搬，会把上卷过来的**整批丢掉**。后果不是"少几列"：
+#: `calc_ChartScaned_persistence` 读日族的 `CoordinatesMin` / `Coordinates`
+#: 判「要不要重扫」—— 一空 ⇒ `all_nat_min` 恒真 ⇒ **几乎每只都判 mode=1，
+#: 全扫 1008 天**（用户 2026-10-18 跑批量扫描时发现"范围太大"的直接原因）。
+_CV_COLUMNS_BY_FAMILY = {
+    'day': tuple(dict.fromkeys(CV_COLUMNS['day'] + CV_COLUMNS['60min'] + CV_COLUMNS['15min'])),
+    '60min': tuple(dict.fromkeys(CV_COLUMNS['60min'] + CV_COLUMNS['15min'])),
+    '15min': CV_COLUMNS['15min'],
+}
+
 
 def migrate_reality_feat_from44(families=('day', '60min', '15min'),
                                 sources=('stock', 'index'), limit=None,
@@ -296,6 +324,9 @@ def migrate_reality_feat_from44(families=('day', '60min', '15min'),
     它搬什么 / 不搬什么
     ==================
     * **只搬 CV 列**（`CV_COLUMNS`）+ 元字段；`ChartScaned` 标记也搬。
+      ⚠️ **「只有 `ChartScaned`、没有任何 CV 列」的行也要搬** —— 旧树「没探到」的
+      标记路径就只写这一列。漏了它 ⇒ `calc_ChartScaned_persistence` 判不出
+      「已扫过」⇒ 整段 1008 天全量重扫（2026-10-18 实测踩到，见下方查询处的说明）。
     * **不搬** 4.4 那张表里的**指标列**（`stock_reality_feat_day` 有 136 个：
       `MA30` / `poly9MajR` / `ATR_LB` …）—— 与 D49「**指标全部重算**」一致，
       且避免把 10.4M × 136 的指标矩阵灌进来。
@@ -334,13 +365,22 @@ def migrate_reality_feat_from44(families=('day', '60min', '15min'),
     out: dict = {}
 
     for family in families:
-        cv_cols = CV_COLUMNS[family]
+        # ⚠️ 日族用**三族之并**（见 `_CV_COLUMNS_BY_FAMILY` 的说明）——
+        # 迁移与核对**必须同一个判据**，否则「核对通过」证明不了标记行也在。
+        cv_cols = _CV_COLUMNS_BY_FAMILY[family]
         keys = list(UNIQUE_KEYS[family])
         for src_prefix in sources:
             src_name = f'{src_prefix}_reality_feat_{family}'
             src = g44[src_name]
             # 只取**带 CV 的行** —— 源表里绝大多数是不带 CV 的指标行
-            query = {'$or': [{c: {'$exists': True}} for c in cv_cols]}
+            # ⚠️ **`ChartScaned` 单独成一项**（2026-10-18 补）：旧树「没探到」的那条路径
+            # (`GQ_markup_*ChartScaned`) 只写 `ChartScaned`、**不写任何 CV 列**。
+            # 只按 CV 列过滤会把这类行整批漏掉 —— 实测 4.4 的 600519 有 966 行
+            # `ChartScaned=2`，首轮只搬过去 436 行。漏掉的后果不是"少几条数据"：
+            # `calc_ChartScaned_persistence` 靠这个旗标判「要不要重扫」，旗标一缺
+            # ⇒ `all_nat` 恒真 ⇒ **整段 1008 天全量重扫**（扫描范围暴涨）。
+            query = {'$or': [{c: {'$exists': True}} for c in cv_cols]
+                             + [{'ChartScaned': {'$exists': True}}]}
             proj = {'_id': 0, **{c: 1 for c in cv_cols}, **{c: 1 for c in _CV_META}}
             cursor = src.find(query, proj, no_cursor_timeout=True)
             if limit:
@@ -413,11 +453,16 @@ def verify_reality_feat_migration(families=('day', '60min', '15min'),
     out = {'checked': 0, 'missing': 0, 'mismatch': 0, 'examples': []}
 
     for family in families:
-        cv_cols = CV_COLUMNS[family]
+        # ⚠️ 日族用**三族之并**（见 `_CV_COLUMNS_BY_FAMILY` 的说明）——
+        # 迁移与核对**必须同一个判据**，否则「核对通过」证明不了标记行也在。
+        cv_cols = _CV_COLUMNS_BY_FAMILY[family]
         keys = list(UNIQUE_KEYS[family])
         for src_prefix in sources:
             src = g44[f'{src_prefix}_reality_feat_{family}']
-            query = {'$or': [{c: {'$exists': True}} for c in cv_cols]}
+            # 与迁移**同一个判据**（含只有 `ChartScaned` 的标记行）—— 否则
+            # 「核对通过」只证明了带 CV 的那些，标记行会悄悄漏在核对之外。
+            query = {'$or': [{c: {'$exists': True}} for c in cv_cols]
+                             + [{'ChartScaned': {'$exists': True}}]}
             for doc in src.find(query, {'_id': 0}).sort('$natural', -1).limit(int(sample)):
                 if not all(k in doc for k in keys):
                     continue

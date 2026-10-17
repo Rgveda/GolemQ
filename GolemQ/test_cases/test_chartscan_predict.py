@@ -200,13 +200,31 @@ class _ChartScanWriteTest(unittest.TestCase):
     # ---- 逐码路由（D51 的 `etf_` 前缀）-----------------------------------
 
     def test_market_type_routes_prefix(self):
+        """逐码路由：`stock_cn → stock_*` / `etf_cn → etf_*` / `index_cn → index_*`。
+
+        2026-10-18 端到端实测过 ETF（510300）：三族全部落在 `etf_*`，
+        日族文档带齐 9 列 CV（`ClsMaj`/`ClsMin`/`Class` 三套 + 各自 Coordinates）。
+        """
         for mt, prefix in ((MARKET_TYPE.STOCK_CN, 'stock'),
                            (MARKET_TYPE.INDEX_CN, 'index'),
                            (MARKET_TYPE.ETF_CN, 'etf')):
             with self.subTest(market_type=mt):
                 self.rec.calls.clear()
-                self._run('day', '2026-10-16', market_type=mt)
-                self.assertEqual(self.rec.names, [f'{prefix}_reality_feat_day'])
+                self._run('60min', '2026-10-16 15:00', market_type=mt)
+                self.assertEqual(self.rec.names,
+                                 [f'{prefix}_reality_feat_day',
+                                  f'{prefix}_reality_feat_60min'])
+
+    def test_market_type_routes_prefix_all_families(self):
+        """三个频率都要按 market_type 路由（不只 day）。"""
+        for freq, last in (('day', '2026-10-16'), ('60min', '2026-10-16 15:00'),
+                           ('15min', '2026-10-16 15:00')):
+            with self.subTest(freq=freq):
+                self.rec.calls.clear()
+                self._run(freq, last, market_type=MARKET_TYPE.ETF_CN)
+                self.assertTrue(self.rec.names, msg=freq)
+                for name in self.rec.names:
+                    self.assertTrue(name.startswith('etf_'), name)
 
     # ---- 「探到但太远」：标记路径 -----------------------------------------
 
@@ -243,6 +261,49 @@ class _ChartScanWriteTest(unittest.TestCase):
         with mock.patch.object(predict, 'traceback') as tb:
             self._run('15min', '2026-10-16 15:00')
             tb.print_exc.assert_not_called()
+
+
+class TestPersistenceReadsAcrossFamilies(unittest.TestCase):
+    """**读**的一侧：重扫判定读**日族**、按 `market_type` 取表，并把三套坐标一起转时间戳。
+
+    `calc_ChartScaned_persistence` 依赖日族里的 `Coordinates`（60min）/
+    `CoordinatesMaj`（day）/ `CoordinatesMin`（15min）—— 三套缺一套就会误判成全扫
+    （2026-10-18 实测：迁移丢列时 36/40 变成全扫，补齐后 0/40）。
+    """
+
+    @staticmethod
+    def _frame():
+        idx = pd.MultiIndex.from_tuples(
+            [(pd.Timestamp('2026-10-16'), '510300')], names=['date', 'code'])
+        return pd.DataFrame({
+            'Coordinates': [1792134000000.0],
+            'CoordinatesMaj': [1790697600000.0],
+            'CoordinatesMin': [1792134000000.0],
+            'ChartScaned': [2],
+        }, index=idx)
+
+    def test_reads_day_family_with_market_type(self):
+        from GolemQ.markets.StockCN.chartscan import predict
+        with mock.patch('GolemQ.markets.StockCN.reality_save.fetch_reality_feat',
+                        return_value=self._frame()) as fetch:
+            predict.calc_ChartScaned_persistence('510300', market_type='etf_cn')
+        args = fetch.call_args[0]
+        self.assertEqual(args[3], 'day', '重扫判定必须读日族（三族结果都在那儿）')
+        self.assertEqual(args[4], 'etf_cn', '必须按市场类型取表，否则静默读空')
+
+    def test_coords_are_converted_to_datetime(self):
+        from GolemQ.markets.StockCN.chartscan.predict import _coords_to_datetime
+        out = _coords_to_datetime(self._frame())
+        for col in ('Coordinates', 'CoordinatesMaj', 'CoordinatesMin'):
+            self.assertTrue(pd.api.types.is_datetime64_any_dtype(out[col]), col)
+
+    def test_missing_coord_columns_do_not_raise(self):
+        """缺列的旧文档不能炸 —— 缺的那套按 None 处理（否则整只标的读不动）。"""
+        from GolemQ.markets.StockCN.chartscan.predict import _coords_to_datetime
+        frame = self._frame().drop(columns=['Coordinates', 'CoordinatesMin'])
+        out = _coords_to_datetime(frame)
+        self.assertIn('Coordinates', out.columns)
+        self.assertIn('CoordinatesMin', out.columns)
 
 
 class TestHeadlessRendering(unittest.TestCase):
