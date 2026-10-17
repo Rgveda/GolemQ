@@ -8,17 +8,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 顺序 | 文档 | 读它干什么 |
 |:--|:--|:--|
-| 0 | [`HANDOFF.md`](HANDOFF.md) | **当前进度与下一步**（含待用户决定的事项）。跨会话的进度载体，**接手先读它** |
+| 0 | [`HANDOFF.md`](HANDOFF.md) | **当前进度与下一步**（未完成 / 待你决定 / 纪律）。跨会话的进度载体，**接手先读它** |
 | 1 | [`PITFALLS.md`](PITFALLS.md) | **已知陷阱。看起来像 bug 的刻意设计，勿"修正"** |
-| 2 | [`DECISIONS.md`](DECISIONS.md) | 已定的架构决定与**弃案理由**，别重新论证 |
+| 2 | [`DECISIONS.md`](DECISIONS.md) | **决策索引表**（由 `tools/gen_docs_index.py` 生成）。正文在 [`docs/decisions/D<n>.md`](docs/decisions/)，**一份决策一文件**；按编号查，别整份读 |
 | 3 | [`GLOSSARY.md`](GLOSSARY.md) | 行话。第四节的词**几乎全是老代码继承**，别当拼写错误改 |
 | 4 | [`RESTRUCTURE_PLAN.md`](RESTRUCTURE_PLAN.md) | 两层模型、Active Market、portfolio 方案 |
 | 5 | [`MIGRATION_STATUS.md`](MIGRATION_STATUS.md) | 重构遗留缺陷清单（含修复顺序建议）|
 | 6 | [`API_INDEX.md`](API_INDEX.md) | **导航索引**（模块 / 名称 + 一行摘要，由 `tools/gen_api_index.py` 生成）。找东西先查它，比逐个 `Read` 源文件省一个数量级 |
+| — | [`docs/worklog/`](docs/worklog/) | **历史**（每轮做了什么、为什么）。**不是指南、只增不改** —— 按需 `grep`，**别通读** |
 
 **改代码前先查 `PITFALLS.md` 与 `GLOSSARY.md`。**
 **加函数前先走「[新增函数前的思维链](#新增函数前的思维链任何情况下都要走一遍)」。**
 **每告一段落就更新 `HANDOFF.md`** —— 进度写进文件才算存下来，留在对话里会随上下文一起丢。
+**历史写 `docs/worklog/`，决策写 `docs/decisions/D<n>.md`**（写完跑 `python tools/gen_docs_index.py`
+刷新索引；`--check` 可验漏跑）—— `HANDOFF.md` / `DECISIONS.md` **保持短**，别把只增内容塞回去。
 
 另：`git log --oneline -30` 的 commit message 记录了当时的决定、弃案与验证方式 ——
 它们是事实上的 ADR，成本为零且已有内容。
@@ -66,7 +69,7 @@ python -m unittest GolemQ.test_cases.test_doctests -v
 **① 放哪层？** 根层（`pipeline/` `portfolio/` `analysis/` `services/` `datasource/`
 `core/`）= **各交易系统共用**；`markets/<Market>/` = **该市场专有**。
 **数据库操作只能进 `services/`**（本文件「Coding Conventions」的硬规定，无例外）。
-将超 `services/` 的 300 行上限时，按 `services/features/` 的先例**拆子模块**，
+将超 `services/` 的 300 行上限时**拆子模块**（⚠️ **别再引 `services/features/` 当先例** —— 那个包已随 D12 删除；拆法是：建同名包 + `__init__.py` 重导出 + 各子模块，**并同时删掉同名的 `.py`**），
 不是放宽行数。
 
 **② 命名怎么跟同级对齐？** 决定放进哪个模块后，**先看那个模块里已有的函数名** ——
@@ -154,6 +157,17 @@ $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
 PowerShell 7+ already defaults to UTF-8; this matters mainly for Windows
 PowerShell 5.1.
 
+⚠️ **`.ps1` 文件本身也有编码问题，而且不只是乱码 —— 是语法错。**
+`powershell.exe`（5.1）读**无 BOM 的 UTF-8** 会按 ANSI(cp936) 解，中文注释被解成
+错位的双字节序列，**可能把后面的引号一起吃掉** ⇒
+`字符串缺少终止符` / `new-tab : 术语不被识别` 之类莫名其妙的报错。
+所以：**含中文的 `.ps1` 存成 UTF-8 with BOM**（或 ANSI/GBK），别用无 BOM 的 UTF-8。
+验证（不执行，只解析）：
+
+```powershell
+[System.Management.Automation.Language.Parser]::ParseFile('x.ps1',[ref]$null,[ref]$e) | Out-Null; $e
+```
+
 **Python source** — always pass `encoding` explicitly when touching files:
 
 ```python
@@ -224,7 +238,6 @@ python -m GolemQ.cli --stop-heartbeat-monitor  # Stop all monitoring
 # CLI - subscriptions & watchlists
 python -m GolemQ.cli --sub l1_tencent           # Run L1 Tencent data subscription
 python -m GolemQ.cli --sub tencent              # Same subscriber (legacy key from GolemQ_old)
-python -m GolemQ.cli --sub l2_tencent           # Run L2 order-book subscription (Tencent)
 python -m GolemQ.cli --eneloop-add --symbols "000001,000002"
 python -m GolemQ.cli --eneloop-remove --symbols "000001,000002"
 python -m GolemQ.cli --eneloop-list
@@ -236,6 +249,20 @@ python -m GolemQ.cli --save pytdx              # 同上，完全等价（适配�
 python -m GolemQ.cli --save qmt                # 只做参考数据(qmt 源)；K线跳过。⚠️ QMT 源当前恒不可用
 python -m GolemQ.cli --save tdx --save-dry-run # 只取数不写库，与库内重叠窗口逐字段对拍
 python -m GolemQ.cli --save-coverage           # 只读：K线覆盖缺口报告（不写库）
+
+# CLI - ChartScan（CV 图形识别；**自动切换 conda env 到 GolemAI**，见 D51）
+python -m GolemQ.cli --server ChartScan --port 5555        # ZeroMQ REP 服务端（载 YOLOv8）
+python -m GolemQ.cli --scan ChartScan --eval fast --port 5555  # 客户端：按 scope 解析 → 逐条 REQ
+# scope: fast / block / etf / etc / etc_1 / etc_2
+# ⚠️ 两条命令都在 GolemQ env 里敲即可 —— 它们会用 GolemAI 的 python 重起子进程
+#    （torch/CUDA 只装在那儿；GolemQ env 是 NoMKL）。$GOLEMQ_CV_PYTHON 可覆盖解释器路径。
+# ⚠️ 反过来，**在 GolemAI env 里直接敲 `GolemQ.cli` 会被环境自检拦住**（围栏没有豁免）。
+
+# CLI - 换手率补齐（写 stock_reality_feat_day；不连 4.4、不抓外网）
+# `analysis/ChipDistribution_jit.py` 缺换手率会直接抛 ⇒ 用这条补回来（DECISIONS.md D44）
+python -m GolemQ.cli --fill-turnover                        # 默认全市场、最近 7 个自然日
+python -m GolemQ.cli --fill-turnover --fill-turnover-codes 600519,000001
+python -m GolemQ.cli --fill-turnover --fill-turnover-start 2026-09-01 --fill-turnover-end 2026-10-13
 ```
 
 ## Architecture
@@ -251,7 +278,7 @@ python -m GolemQ.cli --save-coverage           # 只读：K线覆盖缺口报告
 |--------|---------|
 | `markets/` | Market abstraction layer. `base_market.py` defines the `BaseMarket` ABC. `StockCN/` is the A-share implementation (singleton via `__new__`). `StockHK/` is a stub. Markets self-register into the global `GQMARKETS` dict. |
 | `gateway/xtquant/` | XTQuant trading gateway（**已停用**，`DECISIONS.md` D13：仅保留代码，入口已删）。`trader.py` wraps `XtQuantTrader`; `xtquant_tools.py` provides position export, available volume queries. |
-| `services/` | Data operations layer. `features.py` saves/fetches feature metadata to/from MongoDB. `align.py` provides checkpoint logging, kline alignment, and missing-data detection. `iwencai.py` interfaces with iWenCai queries. `persistence/` (package) provides general-purpose MongoDB CRUD helpers. |
+| `services/` | Data operations layer. ⚠️ **2026-10-08 起基本清空**（`DECISIONS.md` **D12**）：`features/`（8 子模块）、`align/`、`persistence/` **三块整包都已随 QUANTAXIS 解耦删除** —— 它们当时只服务老树 / 4.4 路径。**现存只有 `iwencai.py`**。⚠️ 本层那条「**DB 操作只能进 `services/`**」的旧约定与现实**已分叉**（行情侧读写实际在 `markets/StockCN/`）—— 这条张力记在 `docs/worklog/2026-10.md` |
 | `analysis/` | Analysis modules. `timeseries.py` provides multi-frequency resampling and timeline utilities. |
 | `pipeline/` | Stock processing pipeline. `base.py` has abstract pipeline classes with joblib parallelization. Sub-modules: `mainstream_benchmark.py`, `poolcoef_benchmark.py`, `compact_benchmark.py`. |
 | `agents/` | External communication. `messenger.py` handles DingTalk bot (alibabacloud_dingtalk SDK) and Server酱 push notifications. |

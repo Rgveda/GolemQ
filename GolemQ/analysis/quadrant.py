@@ -896,3 +896,91 @@ def calc_pivot_timing_lag(features: pd.DataFrame) -> pd.DataFrame:
     features[ZEN.PIVOT_TIMING_LAG] = calc_event_timing_lag(
         np.where(~features[ZEN.PIVOT_ZD].isna(), 1, -1))
     return features
+
+
+def inv_nums(series) -> int:
+    """序列的**逆序数**（inversion count）—— 前面比后面大的对数。
+
+    逐字搬自老树 `features/base.py:1822`（原为 `@nb.jit('int16(f4[:])')`；
+    本模块**不带 numba** —— 加速版见 `analysis/quadrant_jit.py`，`DECISIONS.md` D36）。
+
+    ⚠️ **调用方是 :func:`mapower_np_vXIIs`，传进去的是「25 个 MA 窗口」那条切片**
+    （不是整个价格序列）—— 所以这里的 O(n²) 是 **25² 量级**，不是价格序列长度的平方。
+    别因为看到双重循环就以为它是整个算法的瓶颈。
+
+    >>> inv_nums(np.array([3, 1, 2], dtype=np.float32))
+    2
+    >>> inv_nums(np.array([1, 2, 3], dtype=np.float32))   # 已升序 ⇒ 无逆序对
+    0
+    >>> inv_nums(np.array([3, 2, 1], dtype=np.float32))   # 完全逆序
+    3
+    """
+    cnt = 0
+    for i in range(len(series)):
+        val = series[i]
+        for j in range(i):
+            if val < series[j]:
+                cnt += 1
+    return cnt
+
+
+def mapower_np_vXIIs(price, range_list=None):
+    """MA 均线**多头排列能量强度**（`POLYNOMIAL9_NORM` 的生产核）—— 输出 `0..1`。
+
+    逐字搬自老树 `features/base.py:1843`（原为 `@nb.jit('f4[:](f4[:], int16[:])')`）。
+
+    它算什么
+    ========
+    对每个 bar，取该 bar 上**各条均线**（`range_list` 默认 5..29 共 25 条）的值，
+    数它们的**逆序数** —— 逆序数越大，说明**越短的均线反而越低**，即均线是
+    「短上长下」的多头排列。再把它归一化：
+
+        ratio = 逆序数 / (窗口数 × (窗口数 − 1)) × 2        ∈ [0, 1]
+
+    分母就是完全逆序的对数上界（`C(25,2)=300` → `300/600*2 = 1`），所以 1.0 = 完美多头排列。
+
+    ⚠️ **前 `max(range_list) − 1` 个 bar 恒为 0**：最长的均线还没成型，无从判断。
+    默认 `range_list=5..29` ⇒ **前 28 个 bar 是 0**（不是 NaN）。下游若把它当
+    "无信号" 用没问题，但**别当"无数据"**去 drop。
+
+    ⚠️ **`range_list` 里不能有 1**：`r=1` 时 `np.convolve(...)[0:0]` 是**空数组**，
+    而左端 `ma_np[0:, k]` 有 `len(price)` 个位置 ⇒ 形状不匹配直接抛。默认值从 5 起，安全。
+
+    >>> import numpy as np
+    >>> y = mapower_np_vXIIs(np.arange(40, dtype=np.float32) + 1.0)
+    >>> len(y)                                     # 与输入等长
+    40
+    >>> bool((y[:29] == 0).all())                  # 最长均线成型前恒 0
+    True
+    >>> round(float(y[-1]), 6)                     # 严格上行 ⇒ 完美多头排列
+    1.0
+    >>> round(float(mapower_np_vXIIs(np.arange(40, dtype=np.float32)[::-1] + 1.0)[-1]), 6)
+    0.0
+
+    :param price: 价格序列（会先转 `float32` —— 老树的 jit 签名 `f4[:]` 就强制了这点）
+    :param range_list: 均线窗口列表；`None` = 老树默认的 `5..29`
+    :returns: `float32` 数组，与 `price` 等长，值域 `[0, 1]`
+    """
+    price = np.asarray(price, dtype=np.float32)
+    if range_list is None:
+        range_list = np.array(range(5, 30)).astype(np.int16)
+    else:
+        range_list = np.asarray(range_list, dtype=np.int16)
+
+    ma_np = np.empty((len(price), len(range_list)), dtype=np.float32)
+    ma_count = 0
+    for r in range_list:
+        # 手动实现 talib 的 MA：等权卷积。`[r-1 : -r+1]` 取「窗口填满」的那段。
+        weights = np.ones(r) / r
+        ma_np[r - 1:, ma_count] = np.convolve(weights, price)[r - 1:-r + 1]
+        ma_count = ma_count + 1
+
+    ma_max = max(range_list)
+    len_range_list = len(range_list)
+    num = np.zeros(len(price), dtype=np.float32)
+    ratio = np.zeros(len(price), dtype=np.float32)
+    for i in range(ma_max, len(price)):
+        num[i] = inv_nums(ma_np[i, :])
+        ratio[i] = num[i] / (len_range_list * (len_range_list - 1)) * 2
+
+    return ratio

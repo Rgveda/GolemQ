@@ -1,5 +1,5 @@
 # coding:utf-8
-"""`stock_metadata_day` —— 日频元数据的**统一落点**。
+"""`stock_reality_feat_day` —— 日频元数据的**统一落点**。
 
 为什么要有一张统一的表
 ======================
@@ -11,7 +11,7 @@
 
 命名法（2026-10-10 定）
 ======================
-* ``stock_metadata_day``   —— **日频**（本模块）
+* ``stock_reality_feat_day``   —— **日频**（本模块）
 * ``stock_metadata_60min`` —— 小时频，**相当于旧库的 `stock_metadata`**
 
 ⚠️ 与本项目其它表的四处**刻意不同**
@@ -69,12 +69,27 @@ from __future__ import annotations
 
 import time
 
-from GolemQ.core.constants import AKA, FIELD
+from GolemQ.core.constants import AKA, FIELD, MARKET_TYPE
 
 from .kline83 import bj_date
+from .reality_save import reality_feat_name
 
-#: 统一的日频元数据集合。库句柄见 :func:`_db`（不在本模块硬编码库名）。
-METADATA_DAY_COLL = 'stock_metadata_day'
+#: 日频元数据**落哪张表** —— ⚠️ **唯一出处是 `reality_save.reality_feat_name`**
+#: （那个函数有 doctest，且 `*_reality_feat_*` 六族的命名规则都归它管）。
+#: **本模块不再自己拼这个名字** —— 拼法分叉的症状是**静默写到另一张表**。
+#:
+#: ⚠️ **2026-10-16 起改名**（原名 `METADATA_DAY_COLL`，值 `'stock_metadata_day'`）：
+#: 日频元数据与日频 reality 特征**同住这一张表**（`DECISIONS.md` D50）。
+#: 改名的理由：常量名与值必须一致 —— 一个叫 `REALITY_FEAT_DAY_COLL` 却等于
+#: `'stock_reality_feat_day'` 的常量就是**撒谎的常量**，比不改更坏。
+REALITY_FEAT_DAY_COLL = reality_feat_name('day', MARKET_TYPE.STOCK_CN)
+
+#: 合并**之前**的旧集合名。
+#: ⚠️ **该集合已于 2026-10-17 drop（D50）—— 它现在不存在了。**
+#: 本常量保留只是给 :func:`merge_metadata_into_feat` / :func:`verify_metadata_merge`
+#: 作记录；**重跑那两个函数会读到空表**。新代码里**不许**用它 ——
+#: 读要读 :data:`REALITY_FEAT_DAY_COLL`。
+LEGACY_METADATA_DAY_COLL = 'stock_metadata_day'
 
 #: 换手率：东财口径（4.4 `stock_ranking.TurnoverRate`）。**旧树筹码分布的输入**。
 TURNOVER_DC = FIELD.TURNOVER_RATE
@@ -166,7 +181,7 @@ def day_date(date_str) -> str:
     """源端日期 → ``'%Y-%m-%d'``。
 
     4.4 的 `stock_ranking.date` 带时分秒（``'2018-12-20 00:00:00'``），
-    而 `stock_metadata_day.date` 不带（``'2017-01-04'``）。**两个格式混进同一列
+    而 `stock_reality_feat_day.date` 不带（``'2017-01-04'``）。**两个格式混进同一列
     会让按 date 的 join 静默失配**，所以在入口统一。
 
     >>> day_date('2018-12-20 00:00:00')
@@ -182,7 +197,7 @@ def day_date(date_str) -> str:
 
 
 def metadata_day_doc(code, day, field, rate, created_at=None) -> dict:
-    """一行元数据 → `stock_metadata_day` 文档（**只带一列载荷**）。
+    """一行元数据 → `stock_reality_feat_day` 文档（**只带一列载荷**）。
 
     字段集**照 4.4 的 `stock_metadata_day`**（`code` / `date` / `date_stamp` /
     `datetime` / `created_at`）+ 载荷列。额外多一个 `ts`（UTC-aware datetime）——
@@ -212,7 +227,7 @@ def metadata_day_doc(code, day, field, rate, created_at=None) -> dict:
 def metadata_day_doc_multi(code, day, fields, created_at=None) -> dict:
     """一行**多列**元数据 → 文档。:func:`metadata_day_doc` 是它的单列特例。
 
-    存在的理由：`stock_metadata_day` 是「一行 = 一标的 × 一交易日，**列就是字段**」，
+    存在的理由：`stock_reality_feat_day` 是「一行 = 一标的 × 一交易日，**列就是字段**」，
     而爬来的数据一次就有多列（千股千评一次 9 列）。单列版要写 9 次文档、
     `$set` 9 遍同一行的公共键 —— 多列版一条文档解决。
 
@@ -265,7 +280,7 @@ def _db():
 
 
 def turnover_rows(rows, src_field, dst_field, created_at=None) -> tuple:
-    """某个源的源行 → `stock_metadata_day` 文档列表。
+    """某个源的源行 → `stock_reality_feat_day` 文档列表。
 
     **纯函数**（不碰 DB），所以整条搬运的正确性可以在没有 4.4 的情况下测。
 
@@ -337,7 +352,7 @@ def _flush_batch(out, dst, buf, src_field, dst_field, upsert_fields, created_at)
 
 def save_turnover(since=None, until=None, batch: int = 5000, verbose: bool = True,
                   echo=None, created_at=None, dry_run: bool = False) -> dict:
-    """把 4.4 两源的换手率搬进 8.3 `stock_metadata_day`（**两列，各写各的**）。
+    """把 4.4 两源的换手率搬进 8.3 `stock_reality_feat_day`（**两列，各写各的**）。
 
     **一次性搬运**（走 :mod:`GolemQ.core.migrate44` 那条只读通道）。
     ⚠️ 运行时路径**不许**调它 —— 它连 4.4。
@@ -357,7 +372,7 @@ def save_turnover(since=None, until=None, batch: int = 5000, verbose: bool = Tru
 
     say = echo or print
     g44 = db44('golemq')
-    dst = None if dry_run else _db()[METADATA_DAY_COLL]
+    dst = None if dry_run else _db()[REALITY_FEAT_DAY_COLL]
 
     out = {}
     for coll_name, src_field, dst_field, date_fmt in SOURCES:
@@ -421,3 +436,306 @@ def refresh_turnover(days: int = 7, verbose: bool = True, echo=None, **kwargs) -
         if verbose:
             say('[metadata_day] 4.4 不可达，跳过换手率刷新 —— {}'.format(reason))
         return {'unavailable': reason}
+
+
+# --------------------------------------------------------------------------- #
+# 补齐换手率：`成交量 / 流通股本` **现算**
+# --------------------------------------------------------------------------- #
+#: 补算换手率的**公式出处**：老树 `analysis/ChipDistribution_jit.py` 的三处内联
+#: （`:785` / `:819` / `:865`）与 `markets/StockCN/realtime.py` 的实时分支。
+#: 2026-10-13 起**只此一份** —— 筹码分布那段自补逻辑已删（`DECISIONS.md` D44），
+#: `realtime.py` 改调本函数。
+#:
+#: ⚠️ **老树那三处公式多除了一个 100，是错的**（见 :func:`turnover_from_volume` 的
+#: 「量纲」一节）。这里给的是**修正后**的式子 —— 不是照搬。
+#:
+#: 口径：按**流通**股本 —— 与表里 `turnover`（baostock）**同一个量**，与
+#: `TurnoverRate`（东财，按**自由**流通股本）**不是**。所以补算值写 `turnover` 那列。
+FILL_THRESHOLD = 0.96
+
+
+def turnover_from_volume(vol, liutongguben, threshold: float = FILL_THRESHOLD):
+    """`成交量(手) / 流通股本(股)` → 换手率。**纯函数**。
+
+    量纲（实测，不是推的）
+    ====================
+    `kline83` 的日线 `volume` 以**手**计（`amount / volume` 恒是股价的 100 倍），
+    而 `stock_info.liutongguben` 以**股**计（600519 = 1,250,081,562.5）⇒ 换算成股是 ``vol * 100``。
+
+    用 600519 六个交易日对拍 baostock 的 `turnover`（`stock_reality_feat_day`）逐位相同：
+
+    ==========  =======  ==========  ==================
+    日           volume   本函数       baostock `turnover`
+    ==========  =======  ==========  ==================
+    2026-09-28   28218    0.002257     0.0022572926
+    2026-09-29   26366    0.002109     0.0021091423
+    2026-09-30   38330    0.003066     0.0030662799
+    ==========  =======  ==========  ==================
+
+    ⚠️ **老树写的是 `(vol * 100 / liutongguben) / 100`，多除了一个 100 ⇒ 恒小 100 倍**
+    （同一天它给 2.3e-05，而真值是 0.002257）。三处内联（`ChipDistribution_jit.py:785`
+    / `:819` / `:865`）与 `realtime.py` 那份**全都是这个式子**。没被发现是因为
+    进 `get_data` 的唯一路径 `calc_stock_chip_distribution_jit` **全树无人调用**
+    （2026-10-13 核；那段自补逻辑随之删掉，见 `DECISIONS.md` D44）。
+    **这里不照搬它** —— 照搬等于把一条已知错误落进库里。
+
+    :param threshold: 超阈值就判「`vol` 已经是**股**」（而不是手），改用 ``vol / liutongguben``。
+        老树的阈值不一致（`:786` 用 `0.96`、`:820`/`:866` 用 `1.0618`、`realtime.py` 用 `0.96`），
+        这里取 `0.96` —— 与「缺今天」那条主路径、以及实时分支一致。
+
+    >>> turnover_from_volume(28218, 1250081562.5)          # 600519 / 2026-09-28
+    0.002257
+
+    `vol` 已经是**股**时（值会大 100 倍）触发修正：
+
+    >>> turnover_from_volume(1e6, 1e9, threshold=0.01)     # 0.1 超阈值 ⇒ 去掉 ×100
+    0.001
+
+    股本取不到时**返 `None`，不编一个数出来**（调用方负责跳过）：
+
+    >>> turnover_from_volume(1e7, 0), turnover_from_volume(1e7, float('nan'))
+    (None, None)
+    """
+    if not liutongguben or liutongguben <= 0 or liutongguben != liutongguben:
+        return None
+    rate = round(vol * 100 / liutongguben, 6)      # vol 以**手**计
+    if rate > threshold:                           # vol 以**股**计 ⇒ 去掉那个 ×100
+        rate = round(vol / liutongguben, 6)
+    return rate
+
+
+def fill_turnover(codes, start=None, end=None, verbose: bool = True, echo=None,
+                  created_at=None) -> dict:
+    """把「成交量 ÷ 流通股本」**现算**的换手率补进 `stock_reality_feat_day`。
+
+    为什么要它：`analysis/ChipDistribution_jit.py` 现在**不再自己补算**换手率
+    （缺就抛，见 `DECISIONS.md` D44），补齐这件事归这里。最典型的场景是
+    「`--save` 先写 K 线、后写元数据」之间那段窗口 —— 盘中跑筹码分布必然缺当日换手率。
+
+    只补**真的缺**的日子：`TurnoverRate`（东财）与 `turnover`（baostock）**任一列有值**
+    就算覆盖（两列口径与覆盖期都不同，取并集才是「这天有换手率」的正解）。
+
+    **补算值写 `turnover` 那列**（不是 `TurnoverRate`），两个理由：
+
+    1. **口径同源** —— :func:`turnover_from_volume` 按**流通**股本，与 baostock 的
+       `turnover` 是同一个量（实测逐位相同，见该函数的对拍表）；写进按**自由**流通股本
+       的东财列就是混口径。
+    2. **筹码分布先读它** —— `ChipDistribution.get_data` 的**第一读**取的就是 `turnover`
+       （再 rename 进内存的 `TurnoverRate`），第二读才拿东财列补缺口。
+
+    日后 `refresh_turnover` 从 4.4 / 在线源拿到真值会自然覆盖它。
+
+    :param codes: 6 位代码或列表。**`None` ⇒ 全市场**（`refdata.GQ_fetch_stock_list`）——
+        「全市场是哪些」属于市场层，不该由 CLI 或调用方自己拼。显式给**空列表**仍报错：
+        那是调用方的 bug，不是「全市场」的意思。
+    :param start,end: ``'YYYY-MM-DD'``（**含**当日）。``None`` = 不设边界。
+    :param created_at: 统一写入的 `created_at`（秒）；``None`` = 当前时刻。
+    :returns: ``{'codes','filled','skipped','upserted','modified'}``
+        （`filled` 是**写进去的天数**，`skipped` 是缺量/缺股本/越界而没写的天数）
+    """
+    from GolemQ.core.market_registry import get_active_market
+    from GolemQ.datasource.writer import upsert_fields
+
+    from .refdata import GQ_fetch_stock_info, GQ_fetch_stock_list, GQ_fetch_stock_reality_feat_day
+
+    say = echo or print
+    if codes is None:
+        df = GQ_fetch_stock_list()
+        codes = [] if df is None or len(df) == 0 else [str(c)[:6] for c in df['code']]
+        if not codes:
+            raise ValueError('全市场名单为空 —— 先跑一次 `--save tdx` 灌 `stock_list`')
+    if isinstance(codes, str):
+        codes = [codes]
+    codes = [str(c)[:6] for c in codes]
+    if not codes:
+        raise ValueError('fill_turnover 的 `codes` 是空列表：不知道补谁就无从补起'
+                         '（要全市场请传 `None`）')
+
+    market = get_active_market()
+    dst = _db()[REALITY_FEAT_DAY_COLL]
+    out = {'codes': len(codes), 'filled': 0, 'skipped': 0, 'upserted': 0, 'modified': 0}
+
+    for code in codes:
+        # ① 现有覆盖：两列任一有值就算这天有了
+        have = GQ_fetch_stock_reality_feat_day(code, start=start, end=end)
+        covered = set()
+        cols = [c for c in (TURNOVER_DC, TURNOVER_BS)
+                if have is not None and len(have) > 0 and c in have.columns]
+        if cols:
+            ok = have[cols].notna().any(axis=1).to_numpy()
+            covered = {str(d)[:10] for d in have.index.get_level_values(0)[ok]}
+
+        # ② 流通股本：补算的分母，取不到就只能整只跳过（不编数）
+        info = GQ_fetch_stock_info([code])
+        guben = None
+        if info is not None and len(info) > 0 and 'liutongguben' in info.columns:
+            guben = info['liutongguben'].iloc[0]
+        if guben is None or guben != guben or guben <= 0:
+            out['skipped'] += 1
+            if verbose:
+                say(f'[fill_turnover] {code}: 取不到 liutongguben，跳过')
+            continue
+
+        # ③ 日线（`realtime=True` —— 要补的常常正是**今天**那根）
+        result, _name = market.get_kline_price_v3(
+            code, start=start, end=end, verbose=False, realtime=True)
+        frame = None if result is None else getattr(result, 'data', None)
+        if frame is None or len(frame) == 0:
+            out['skipped'] += 1
+            if verbose:
+                say(f'[fill_turnover] {code}: 取不到日线，跳过')
+            continue
+
+        docs = []
+        for row in frame.reset_index().to_dict('records'):
+            day = str(row.get('ts'))[:10]
+            if day in covered:
+                continue
+            rate = turnover_from_volume(row.get(AKA.VOLUME), guben)
+            if rate is None or rate < 0 or rate > MAX_TURNOVER_RATIO:
+                out['skipped'] += 1
+                continue
+            doc = metadata_day_doc(code, day, TURNOVER_BS, rate, created_at)
+            if TURNOVER_BS in doc:
+                docs.append(doc)
+            else:
+                out['skipped'] += 1
+
+        if docs:
+            stats = upsert_fields(dst, docs, list(UNIQUE_KEYS))
+            out['filled'] += len(docs)
+            out['upserted'] += stats['upserted']
+            out['modified'] += stats['modified']
+        if verbose:
+            say('[fill_turnover] {}: 补 {} 天 / 未覆盖共 {} 天'.format(
+                code, len(docs), len(covered)))
+    return out
+
+
+def merge_metadata_into_feat(batch: int = 5000, limit=None, dry_run: bool = False,
+                             verbose: bool = True, echo=None) -> dict:
+    """把 :data:`LEGACY_METADATA_DAY_COLL` 的行**原样**搬进 :data:`REALITY_FEAT_DAY_COLL`。
+
+    **一次性**（`DECISIONS.md` D50）。⚠️ 这是 **8.3 内部**的合并，**不连 4.4** ——
+    与同目录的 :func:`save_turnover`（4.4 → 8.3）不是一回事。
+
+    幂等
+    ====
+    只 `$set`（走 :func:`GolemQ.datasource.writer.upsert_fields`），键是
+    :data:`UNIQUE_KEYS` = `(code, date_stamp)` —— 两表的唯一索引**同名同键**
+    （实测都是 `code_1_date_stamp_1`），所以**重跑不会插重复行**。
+    **中途挂了直接再跑一遍即可**，不需要断点续传。
+
+    ⚠️ **绝不能用 `save_collection`**（`ReplaceOne` 整文档替换）—— 目标表里
+    已有 reality 特征列（`ClsMaj` 等，2026-10-13 起由 `reality_save` 写），
+    整文档替换会把它们**静默抹掉**。这正是 `upsert_fields` 存在的理由。
+
+    :param batch: 每批 upsert 多少行
+    :param limit: 只搬前 N 行（**试跑用**；`None` = 全量）
+    :param dry_run: 只读源、只计数，**不写目标表**
+    :param verbose: 报进度
+    :param echo: 输出汇（默认 `print`）—— 见 CLI 那条「banner 活跃时输出要走 echo」
+    :returns: ``{'read': n, 'written': n, 'skipped': n, 'upserted': n, 'modified': n}``
+    """
+    from GolemQ.datasource.writer import upsert_fields
+
+    say = echo or print
+    db = _db()
+    src = db[LEGACY_METADATA_DAY_COLL]
+    dst = None if dry_run else db[REALITY_FEAT_DAY_COLL]
+
+    stats = {'read': 0, 'written': 0, 'skipped': 0, 'upserted': 0, 'modified': 0}
+    # ⚠️ `no_cursor_timeout=True`：全量 1,700 万行要跑几十分钟，默认游标
+    # （MongoDB 10 分钟空闲超时）会**在跑到一半时**把游标掐掉。
+    # ⚠️ **只投影掉 `_id`**，其余字段**一个不改名、不换算** —— 这是"原样搬"。
+    cursor = src.find({}, {'_id': 0}, no_cursor_timeout=True)
+    if limit:
+        cursor = cursor.limit(int(limit))
+    try:
+        chunk = []
+        for doc in cursor:
+            stats['read'] += 1
+            if not all(k in doc for k in UNIQUE_KEYS):
+                stats['skipped'] += 1      # 缺键 ⇒ 落进去会插出无键文档
+                continue
+            chunk.append(doc)
+            if len(chunk) >= batch:
+                stats['written'] += len(chunk)
+                if dst is not None:
+                    r = upsert_fields(dst, chunk, list(UNIQUE_KEYS), verbose=False)
+                    stats['upserted'] += r['upserted']
+                    stats['modified'] += r['modified']
+                chunk = []
+                if verbose and stats['written'] % (batch * 20) == 0:
+                    say('[merge] 已搬 {:,} / 读 {:,}'.format(
+                        stats['written'], stats['read']))
+        if chunk:
+            stats['written'] += len(chunk)
+            if dst is not None:
+                r = upsert_fields(dst, chunk, list(UNIQUE_KEYS), verbose=False)
+                stats['upserted'] += r['upserted']
+                stats['modified'] += r['modified']
+    finally:
+        cursor.close()
+
+    if verbose:
+        say('[merge] {} → {}{}：读 {:,} / 写 {:,} / 丢弃 {:,}'.format(
+            LEGACY_METADATA_DAY_COLL, REALITY_FEAT_DAY_COLL,
+            '（**干跑，没有写库**）' if dry_run else '',
+            stats['read'], stats['written'], stats['skipped']))
+    if stats['skipped']:
+        say('[merge] ⚠️ 丢弃 {} 行（缺 {}）'.format(stats['skipped'], UNIQUE_KEYS))
+    return stats
+
+
+def verify_metadata_merge(sample: int = 20000, verbose: bool = True, echo=None) -> dict:
+    """**只读**核对：抽样比对源表与目标表在 `(code, date_stamp)` 上是否逐字段相同。
+
+    ⚠️ 合并跑完**必须**跑这个再谈 drop —— 「搬完了」这句话得有依据。
+
+    抽样的取法：**从源表尾部取** `sample` 行（`$natural:-1`）。为什么不用随机：
+    尾部是最近写入的、也是最可能被后搬覆盖的；而随机抽样在 1,700 万行上要走全表。
+    两种都能漏，但尾部抽样**至少覆盖到边界那一批**。
+
+    :returns: ``{'checked': n, 'missing': n, 'mismatch': n, 'examples': [...]}``
+    """
+    say = echo or print
+    db = _db()
+    src, dst = db[LEGACY_METADATA_DAY_COLL], db[REALITY_FEAT_DAY_COLL]
+
+    out = {'checked': 0, 'missing': 0, 'mismatch': 0, 'examples': []}
+    # 源表**不含** `_id`/`ts` 之外的目标表独有列比对 —— 这里只比**源表有的字段**
+    for doc in src.find({}, {'_id': 0}).sort('$natural', -1).limit(int(sample)):
+        key = {k: doc[k] for k in UNIQUE_KEYS if k in doc}
+        if len(key) != len(UNIQUE_KEYS):
+            continue
+        out['checked'] += 1
+        got = dst.find_one(key, {'_id': 0})
+        if got is None:
+            out['missing'] += 1
+            if len(out['examples']) < 5:
+                out['examples'].append(('missing', key))
+            continue
+        for field, want in doc.items():
+            if field not in got:
+                out['mismatch'] += 1
+                if len(out['examples']) < 5:
+                    out['examples'].append(('field-absent', key, field))
+                break
+            have = got[field]
+            # ⚠️ 浮点**按位**比：搬家不该动任何一个 bit。差一个 bit 就是搬错了。
+            if isinstance(want, float) or isinstance(have, float):
+                same = (want == have) or (want != want and have != have)
+            else:
+                same = want == have
+            if not same:
+                out['mismatch'] += 1
+                if len(out['examples']) < 5:
+                    out['examples'].append(('value', key, field, want, have))
+                break
+    if verbose:
+        say('[verify] 抽 {:,} 行：缺 {:,} / 不符 {:,}'.format(
+            out['checked'], out['missing'], out['mismatch']))
+        for ex in out['examples']:
+            say('    {}'.format(ex))
+    return out

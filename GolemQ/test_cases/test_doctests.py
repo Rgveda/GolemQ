@@ -66,6 +66,13 @@ DOCTEST_MODULES = (
     # CLI 环境自检里的**纯函数**（版本比较）。模块本身会 lazily import
     # `core.presentation` / `core.mongo`，但那些都在函数体内，收集时不会跑。
     'GolemQ.cli.bootstrap',
+    # `datetime64` → 秒的**系数查表**（`epoch_divisor`）。判错只会**静默**把
+    # `date_stamp` / `time_stamp` 写成另一个数量级（D52 / P35），所以把单位口径钉进 doctest。
+    'GolemQ.core.constants',
+    # ChartScan 的**换 env 路径推导**（`cv_python`）。纯字符串运算，只看
+    # `sys.executable` 与 `$GOLEMQ_CV_PYTHON` —— 不碰 DB / 不起子进程。
+    # 判错会**静默用错解释器**（GolemQ env 跑 torch 直接 BLAS 冲突），值得钉住。
+    'GolemQ.cli.commands.chartscan',
     # 服务器池的**纯函数**（回环判据）。模块本身 lazily import pytdx，
     # 收集时不会碰网络。
     'GolemQ.markets.StockCN.datasource.tdx_hosts',
@@ -77,7 +84,7 @@ DOCTEST_MODULES = (
     # ⚠️ czsc 是在函数体内 lazily import 的（`bi_confirm_map` / `attach_pivot_features`），
     # 所以收集本模块**不需要** czsc 在场 —— 上面那三条 doctest 也确实是 czsc-free 的。
     'GolemQ.analysis.pivot',
-    # `stock_metadata_day` 的**日频元数据契约**：`date_stamp` 口径（墙上时间当 UTC，差 8 小时也查得出来）、单位换算、行构造都是纯函数；`upsert_fields` 的语义也在这里有 doctest（多列共用文档时只 $set 自己的列）。
+    # `stock_reality_feat_day` 的**日频元数据契约**：`date_stamp` 口径（墙上时间当 UTC，差 8 小时也查得出来）、单位换算、行构造都是纯函数；`upsert_fields` 的语义也在这里有 doctest（多列共用文档时只 $set 自己的列）。
     'GolemQ.markets.StockCN.metadata_save',
     # 时序累积器与金叉/死叉间隔：纯函数（numpy/pandas），从旧树 `analysis/timeseries.py`
     # 搬回的真实现。⚠️ 其中 `Timeline_duration` 曾是本树 stub 并被当死代码删过 ——
@@ -110,6 +117,15 @@ DOCTEST_MODULES = (
     # 是**原地改 features** 的，不适合 doctest；它们的正确性证据是
     # `test_quadrant.py` 里与老树 `analysis/base.py` 的**逐值对拍**。
     'GolemQ.analysis.quadrant',
+    # 指标搬迁（2026-10-16，`DECISIONS.md` D49）新增的三个模块。
+    # ⚠️ 三条都只给**纯函数**挂了 doctest：
+    #   * `stages` 的 `garident_bands_to_ratio`/`_from_ratio`（比值 ↔ 绝对价互转）；
+    #     `sklearn`/`kneed` 已改成**函数内惰性 import**，收集本模块不需要它们在场。
+    #   * `timeseries` 的 `rolling_poly9_v2`（递归折半，输出与输入等长）。
+    #   * `indicators` 的 `TA_HMA`（暖机 11 根 —— 那个数字与 `period=10` 绑死）。
+    'GolemQ.analysis.stages',
+    'GolemQ.analysis.timeseries',
+    'GolemQ.analysis.indicators',
     # RSRS（阻力支撑相对强度）**指标计算**（2026-10-12 搬）。只搬 `pre_rsrs_data_func`
     # 一条（老树的 8 个择时信号与那个**坏掉的** `pre_rsrs_zscore_np_func` 都没搬）。
     # 它的 doctest 钉两件事：**列序**（5 列，顺序即契约）与**索引对齐**。
@@ -120,11 +136,14 @@ DOCTEST_MODULES = (
     # doctest。它们钉的是**字段推导口径**（`time_stamp` 是「北京墙上时间当 UTC」
     # 而**不是** 8.3 的 `ts`；日族不带 `datetime`），判错会静默写坏整张特征表。
     'GolemQ.markets.StockCN.reality_save',
-    # ChartScan 的 scope 解析（2026-10-13 搬）。模块级只 import 常量，碰库的
-    # `focus_block_codes` / `perpar_symbol_range` 里才惰性 import `refdata` ⇒ 收集
-    # 本模块**不连库**。doctest 钉的是 `etf` 那份硬编码码表的三条性质
-    # （506 个 / 混着真指数 / 旧树语法疣吃掉了 `159531`）。
-    'GolemQ.markets.StockCN.scopes',
+    # scan scope 解析（2026-10-13 从 `markets/StockCN/` **归位到根层**，见 D44）。
+    # 模块级**零市场依赖**（数据经 `ScanDataset` 注入），碰库的默认路径
+    # `_active_dataset()` 只在真调 `perpar_symbol_range()` 且不传 dataset 时才走。
+    # doctest 喂一个**假 dataset**，钉的是「六个 scope 各自怎么切」。
+    'GolemQ.analysis.cv.scopes',
+    # 那份 `etf` 硬编码码表（506 个）随 D44 从 `scopes.py` 挪到本模块，与 `focus_block`
+    # 并列 —— 它是 **A 股名单字面量**。模块级只 import 常量/pandas，不连库。
+    'GolemQ.markets.StockCN.symbol',
     # ChartScan 的渲染与权重路径（2026-10-13 搬）。⚠️ 两者**模块级都不 import 重依赖**
     # （mplfinance / matplotlib / ultralytics 都在函数体里）⇒ 收集本模块**不需要 GolemAI env**，
     # 在 GolemQ env 下也进得来。doctest 钉 `calculate_i` 的像素↔bar 标定与权重路径的形状。

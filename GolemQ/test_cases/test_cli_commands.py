@@ -506,3 +506,58 @@ class TestSaveStageStartDoneLines(unittest.TestCase):
     def test_no_escape_codes_when_not_a_tty(self):
         out = self._run(['--save', 'tdx'])
         self.assertNotIn('\033', out)
+
+
+class TestFillTurnoverCli(unittest.TestCase):
+    """`--fill-turnover`：CLI 只做参数校验 + 委托（`DECISIONS.md` D44）。
+
+    干活的 `metadata_save.fill_turnover` 在这里被 patch 掉 —— 这条用例测的是
+    **参数怎么解析、边界怎么挡、委托出去的是什么**，不是补算逻辑本身
+    （那个在 `test_metadata_save.TestFillTurnover`）。
+    """
+
+    TARGET = 'GolemQ.markets.StockCN.metadata_save.fill_turnover'
+
+    def _run(self, **kw):
+        from datetime import date, timedelta
+        from GolemQ.cli.commands.fill_turnover import run_fill_turnover
+        args = _ns(fill_turnover=True, fill_turnover_codes=None,
+                   fill_turnover_start=None, fill_turnover_end=None)
+        for k, v in kw.items():
+            setattr(args, k, v)
+        with unittest.mock.patch(self.TARGET, return_value={
+                'codes': 1, 'filled': 0, 'skipped': 0, 'upserted': 0,
+                'modified': 0}) as m, \
+                contextlib.redirect_stdout(io.StringIO()):
+            run_fill_turnover(args)
+        today = date.today()
+        return m, today, (today - timedelta(days=7)).isoformat()
+
+    def test_defaults_are_the_last_seven_days(self):
+        """不给边界 ⇒ 与 `--save-turnover-days` 同口径：今天往前 7 个自然日。"""
+        m, today, week_ago = self._run()
+        self.assertIsNone(m.call_args[0][0], '不给 codes ⇒ 交给数据层解析全市场')
+        self.assertEqual(m.call_args[1], {'start': week_ago,
+                                          'end': today.isoformat()})
+
+    def test_codes_are_split_on_commas(self):
+        m, _, _ = self._run(fill_turnover_codes='600519, 000001 ,')
+        self.assertEqual(m.call_args[0][0], ['600519', '000001'])
+
+    def test_codes_without_any_code_is_a_usage_error(self):
+        with self.assertRaises(SystemExit) as cm, \
+                contextlib.redirect_stderr(io.StringIO()):
+            self._run(fill_turnover_codes=',,,')
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_start_after_end_is_a_usage_error(self):
+        with self.assertRaises(SystemExit) as cm, \
+                contextlib.redirect_stderr(io.StringIO()):
+            self._run(fill_turnover_start='2026-10-13',
+                      fill_turnover_end='2026-09-01')
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_explicit_bounds_win_over_the_default(self):
+        m, _, _ = self._run(fill_turnover_start='2026-09-01',
+                            fill_turnover_end='2026-10-13')
+        self.assertEqual(m.call_args[1], {'start': '2026-09-01', 'end': '2026-10-13'})

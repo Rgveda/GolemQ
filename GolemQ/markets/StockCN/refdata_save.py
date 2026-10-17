@@ -45,8 +45,13 @@ __all__ = [
     'REFDATA_BY_SOURCE',
     'UNIQUE_KEYS',
     'DELTA_DELETE',
+    'MIN_STOCK_CODES',
+    'SNAPSHOT_COLLECTIONS',
+    'SNAPSHOT_BLOCKED_PREFIXES',
+    'snapshot_universe',
     'save_refdata',
     'save_index_list_from44',
+    'refresh_stock_codes_cache',
     'refdata_status',
     'format_status',
 ]
@@ -341,6 +346,159 @@ def _authoritative_codes(verbose: bool = False, echo=None) -> list:
     if verbose:
         (echo or print)(f'[refdata] 以 stock_list 为准的标的宇宙: {len(codes)} 只')
     return codes
+
+
+#: 码表缓存**拒绝写入**的下限。`stock_list` 取到的码数低于它就不覆盖缓存文件。
+#: 理由：缓存是 `easyquotation` 全市场快照的**枚举源** —— 表空了，
+#: `market_snapshot()` 就一台标的都不取，而症状是**实时集合每天是空的**，
+#: 不报错、不告警（订阅器照样在跑、照样签到）。宁可留着旧表。
+MIN_STOCK_CODES = 1000
+
+#: 进快照码表的参考集合。**顺序即拼接顺序**（最终会去重排序）。
+#: * `stock_list` —— 5,580 只（含北交所；腾讯不供那 352 只，但不值得为它们特判）
+#: * `etf_list` —— 1,696 只，实测腾讯 **1,696/1,696 全供**
+#: * `index_list` —— 1,291 只，实测腾讯供 **590**（见 `SNAPSHOT_BLOCKED_PREFIXES`）
+SNAPSHOT_COLLECTIONS = ('stock_list', 'etf_list', 'index_list')
+
+#: 腾讯**不供**的号段 —— 实测（2026-10-15）`880xxx` **689/689 全返回
+#: `v_pv_none_match`**：那是**通达信自编指数**（总市值、平均股价这类），
+#: 不是交易所发布的指数，故腾讯的行情端没有它们。
+#: 留着它们每轮白占 689 个名额（约一整页 800），而且**永远不会返回数据**。
+#:
+#: ⚠️ 这是**实测出来的排除**，不是"大概没有"。若哪天腾讯供了，去掉这个元组即可 ——
+#: 但**加之前先重新量一遍**：同族的 `399xxx` 供 360/365、`395xxx` 供 14/21，
+#: 说明"深市指数"不是整体供或不供，得逐族看。
+SNAPSHOT_BLOCKED_PREFIXES = ('880',)
+
+
+def snapshot_universe(verbose: bool = False, echo=None) -> list:
+    """8.3 的 `stock_list` ∪ `etf_list` ∪ `index_list` → **带交易所前缀**的码表。
+
+    为什么前缀**必须**带上（这条是陷阱，不是风格）
+    ============================================
+    `easyquotation` 的 ``_gen_stock_prefix`` 对**裸 6 位**码用
+    `helpers.get_stock_type()` 猜交易所。猜法对股票和 ETF 都对，**对指数是错的**：
+
+    * `000001` 在 `stock_list` 里是**平安银行**（深市），在 `index_list` 里是
+      **上证指数**（沪市）—— 两个集合**共用这个号**。
+    * `get_stock_type('000001')` 判 `sz` ⇒ 去问腾讯要 **`sz000001` = 平安银行**，
+      而 `index_list` 那行要的是 **`sh000001`**。**静默取错标的**，不报错。
+
+    带上前缀之后两个都能取对（实测 `normalize_code('sh000001')` → `000001.XSHG`、
+    `normalize_code('sz000001')` → `000001.XSHE`，互不干扰）。
+
+    ⚠️ 前缀**顺带修好了另一个坑**：ETF 的 `158xxx` 那批，**裸码**过
+    `normalize_code` 会打警告并**原样返回 6 位**（`_write_ts_rows` 要求带后缀，
+    裸码会让两条流在同一 `(code, ts)` 上错配）；**带前缀**就正常归一化成
+    `158000.XSHE`（实测）。
+
+    `sse` 取**库里的字段**而不是再猜一遍号段 —— 三个集合都带这个字段，
+    它是源端（pytdx/akshare）给的，比我们的启发式权威。
+
+    :returns: 去重排序后的列表，形如 ``['sh000001', 'sh600519', 'sz000001', ...]``
+    """
+    say = echo or print
+    out, per = set(), {}
+    for name in SNAPSHOT_COLLECTIONS:
+        n = 0
+        for r in GOLEMQ_STOCK_CN[name].find({}, {'_id': 0, 'code': 1, 'sse': 1}):
+            code, sse = r.get('code'), r.get('sse')
+            if not code or not sse:
+                # `sse` 缺失的行**跳过而不是猜**：猜错就是静默取错标的（见 docstring）
+                continue
+            if code.startswith(SNAPSHOT_BLOCKED_PREFIXES):
+                continue
+            out.add(sse + code)
+            n += 1
+        per[name] = n
+    codes = sorted(out)
+    if verbose:
+        say('[snapshot] 码表宇宙：{} 只 —— {}'.format(
+            len(codes), ' + '.join(f'{k} {v}' for k, v in per.items())))
+    return codes
+
+
+def refresh_stock_codes_cache(verbose: bool = False, echo=None) -> dict:
+    """把 8.3 `stock_list` 的码表**导出**到 easyquotation 的本地缓存文件。
+
+    为什么需要这一步
+    ================
+    `easyquotation` 的全市场快照（`BaseQuotation.market_snapshot`，即
+    `--sub l1_tencent` 的数据源）枚举的不是什么"白名单"，
+    而是 `~/.GolemQ/datastore/cache/stock_cn/stock_codes.conf` 这份**本地码表**。
+    它此前**全树无人写** —— 唯一的上游刷新口 `helpers.update_stock_codes()`
+    零调用。后果是**新股永远收不到、退市股永远在收，且完全静默**：
+
+    * 实测量（2026-10-15，**改之前**）：缓存里 **5,186** 码，8.3 `stock_list` 有 **5,580** 码，
+      差的正是 2026 年新上的那批；缓存里还留着 `300114`（已退市/换码）。
+
+    为什么不复用 `helpers.update_stock_codes()`（**判成「新增」的留痕**）
+    ==================================================================
+    那个函数敲的是 `shdjt.com`，实测 **19.1 秒**才回来（15s 超时下时好时坏，
+    `https://` 那道门直接拒绝连接）。而 `--save tdx` 刚刚把 `stock_list` 刷进
+    8.3 —— 那份才是**本次的权威名单**（pytdx 主源 + `_supplement_stock_list`
+    用 tdxaidata 补上 pytdx 枚举不到的北交所）。从库里导出 = **零网络**、
+    与本流程同源、且绝不会与刚写进去的名单打架。故新增本函数，
+    并把 `update_stock_codes()` 的写法收敛到 `helpers.save_stock_codes`（保留为上游 API）。
+
+    为什么是**三个集合的并集**
+    ========================
+    见 :func:`snapshot_universe` —— `stock_list` ∪ `etf_list` ∪ `index_list`，
+    一律**带交易所前缀**（不带前缀会让 `000001` 静默取成平安银行而不是上证指数）。
+    实测腾讯：ETF **1,696/1,696 全供**、指数供 **590/1,291**（`880xxx` 那 689 只
+    是通达信自编，不供）。
+
+    写盘时机（调用方的契约）
+    ======================
+    **只在「本次真的取到并写成功」且「码表有增减」时才落盘** ——
+    每日跑的大多数天码表是不变的，无谓的写盘只是多一次原子替换。
+    判据由调用方给（见 `cli/commands/save.py` 的 `status == 'ok'`），
+    本函数自己再做一次增删判定。
+
+    :returns: ``{'changed': bool, 'total': n, 'added': [...], 'removed': [...],
+        'path': str, 'refused': str|None}``
+    """
+    # 唯一出处是 `helpers.STOCK_CODE_PATH` —— 不在这里复制一份路径常量。
+    # 路径一旦分叉，症状是**订阅器读的是另一张表**（静默读到空/读到旧表）。
+    # 用**模块属性**而不是 `from ... import STOCK_CODE_PATH`：后者在 import 期
+    # 就把值抄走了，测试没法替换。
+    from .easyquotation import helpers
+
+    say = echo or print
+    out = {'changed': False, 'total': 0, 'added': [], 'removed': [],
+           'path': helpers.STOCK_CODE_PATH, 'refused': None}
+
+    codes = snapshot_universe(verbose=verbose, echo=echo)
+    out['total'] = len(codes)
+    if len(codes) < MIN_STOCK_CODES:
+        out['refused'] = ('码表宇宙只有 {} 只（< {}），拒绝覆盖码表缓存'
+                          .format(len(codes), MIN_STOCK_CODES))
+        say(f'[stock_codes] {out["refused"]}')
+        return out
+
+    current = set(helpers.get_stock_codes())
+    new = set(codes)
+    added, removed = sorted(new - current), sorted(current - new)
+    if not added and not removed:
+        if verbose:
+            say(f'[stock_codes] 码表无增减（{len(codes)} 只），不写盘')
+        return out
+
+    helpers.save_stock_codes(codes)
+    out.update(changed=True, added=added, removed=removed)
+    # ⚠️ **只在 `-v` 下打**（用户 2026-10-15 定）—— 与参考数据的刷新闸那句、
+    # 逐集合状态表**同一口径**：「更新了几只」是实现细节，不是每次运行都要看的东西。
+    # 非 `-v` 下**成功就是静默的**。
+    # ⚠️ 但**拒写**（上面 `refused`）与**失败**（调用方 `except`）**不跟 `-v` 走** ——
+    # 那两种情况意味着"这次没写/写坏了"，静默会让人以为写成功了。
+    if verbose:
+        say('[stock_codes] 码表缓存已更新：{} 只（+{} / -{}）→ {}'.format(
+            len(codes), len(added), len(removed), out['path']))
+        for label, diff in (('新增', added), ('移除', removed)):
+            if diff:
+                head = ','.join(diff[:20]) + ('...' if len(diff) > 20 else '')
+                say(f'    {label}: {head}')
+    return out
 
 
 def save_index_list_from44(dry_run: bool = False, verbose: bool = True,

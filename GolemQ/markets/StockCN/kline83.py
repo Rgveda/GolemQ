@@ -75,7 +75,7 @@ import datetime as dt
 
 import pandas as pd
 
-from GolemQ.core.constants import MARKET_TYPE
+from GolemQ.core.constants import MARKET_TYPE, epoch_divisor
 
 from .datastruct import apply_qfq, frame_to_datastruct
 from .etf_fq import GQ_apply_etf_qfq
@@ -114,7 +114,7 @@ def bj_date(x):
     """北京时间的裸值 → **UTC-aware datetime**（给 ``ts`` 字段用）。
 
     时区处理的唯一入口（**公开**，因为实时落库那条路也要用同一个换算 ——
-    `realtime.py` 的 `_l2_row` / L1 订阅器都调它）。裸时间一律先
+    `realtime.py` 的 L1 订阅器调它）。裸时间一律先
     ``tz_localize('Asia/Shanghai')`` 再转 UTC，避免 pymongo 把 naive 当 UTC
     造成的静默 8 小时偏移。
     """
@@ -128,6 +128,51 @@ def bj_date(x):
 
 # 旧名保留为别名（本模块历史上叫 _bj_date）。
 _bj_date = bj_date
+
+
+def epoch_seconds(series):
+    """**tz-aware** 时间 Series → 秒级 epoch（`int64`）。**与 pandas 版本无关**。
+
+    ⚠️ 为什么要这个函数（2026-10-17 实测踩到）
+    =========================================
+    **pandas 3.0 把默认 datetime 精度从 ns 改成 µs**（本机 3.0.6 实测
+    `pd.to_datetime(...).dtype == datetime64[us]`）。于是老写法
+
+    ```python
+    series.astype(np.int64) // 10 ** 9
+    ```
+
+    在 pandas 3 上算出来**少 1000 倍**（拿到的是微秒再除 1e9），而且**不报错**
+    —— 只是把 `date_stamp` / `time_stamp` 这一类**键**写成另一个数量级。
+    实测当场红了 `reality_feat_rows` 的 doctest（`1767596` vs `1767596400`）。
+
+    **除数不写死、也不是一个全局标量**：用 `constants.epoch_divisor(series.dtype)`
+    **按这条序列自己的精度**查表（s / ms / us / ns ⇒ 1 / 1e3 / 1e6 / 1e9）。
+    单标量会算错 —— pandas 3 会按输入推不同精度：`pd.to_datetime(date 对象)` 得到
+    `datetime64[s]`，而字符串/Series 得到 `datetime64[us]`，两者并存（实测）。
+    全树做「datetime → 秒」只准走这里（有 `test_epoch_divisor` 守着）。
+
+    tz-aware → 先 `tz_convert('UTC')` 再 `tz_localize(None)`（**顺序不能反**：
+    `tz_localize(None)` 只丢时区、保留墙上时间）。
+
+    >>> import pandas as pd
+    >>> s = pd.Series(pd.to_datetime(['2026-01-05 15:00'])).dt.tz_localize('Asia/Shanghai')
+    >>> int(epoch_seconds(s).iloc[0])          # 北京 15:00 = 07:00Z
+    1767596400
+    >>> epoch_seconds(s).dtype.name
+    'int64'
+
+    **`Series` 与 `DatetimeIndex` 都收**（`reality_save` 那边 `day_dt` 是 index、
+    `full_dt` 是 Series；`.dt` 只有 Series 有 —— 所以先统一成 Series）：
+
+    >>> idx = pd.DatetimeIndex(['2026-01-05 15:00']).tz_localize('Asia/Shanghai')
+    >>> int(epoch_seconds(idx).iloc[0])
+    1767596400
+    """
+    if not isinstance(series, pd.Series):
+        series = pd.Series(series)
+    naive = series.dt.tz_convert('UTC').dt.tz_localize(None)
+    return naive.astype('int64') // epoch_divisor(naive.dtype)
 
 
 #: 频率别名 → 8.3 集合名里的规范频率。集合名是 ``f'{market}_{frequency}'``，

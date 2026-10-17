@@ -38,10 +38,13 @@ upsert、也不让建唯一索引，且 `ensure_indexes` 会把那个失败**吞
 1. ``created_at`` 旧树写 ``int(time.mktime(dt.now().utctimetuple()))`` —— 那是
    「本机当前时间**当 UTC** 再转 epoch」，**带时区偏差**。8.3 里本表**一行都还没有**，
    且**没有任何消费方读它** ⇒ 改用规规矩矩的 ``int(time.time())``。
-2. ``time_stamp`` **不加** `ts` 字段。它是本表的**唯一键**，口径是「北京墙上时间
-   当 UTC 再取 epoch」（旧树 `features.py:122` 的原公式），**必须逐字复现**；
-   与 8.3 别处 `ts` 的「UTC-aware」口径**不是一回事**。要 8.3 那条轴的话，
-   另**加**一列，别改名。
+2. ``time_stamp`` **不加** `ts` 字段。它是本表的**唯一键**，口径是
+   **真实 UTC epoch**（北京 15:00 → 07:00Z）。
+   ⚠️ **2026-10-17 更正**：本处原写「北京墙上时间当 UTC」（照抄旧树 `features.py:122`
+   的说法），**那是错的** —— 实测两边都是真实 UTC：
+   `2026-01-05 15:00` 北京 → `1767596400`（= 07:00Z），而「墙上当 UTC」会给
+   `1767625200`；4.4 存量同口径（`2021-10-13 10:30` → `1634092200`）。
+   本函数的 doctest 值也一直是真实 UTC —— **注释与它自己的 doctest 相矛盾，以 doctest 为准**。
 """
 from __future__ import annotations
 
@@ -50,7 +53,7 @@ import time
 import numpy as np
 import pandas as pd
 
-from .kline83 import bj_date
+from .kline83 import bj_date, epoch_seconds
 
 #: 三个族。集合名 = ``{stock|index}_reality_feat_{family}``。
 REALITY_FAMILIES = ('day', '60min', '15min')
@@ -69,20 +72,33 @@ _META_FIELDS = ('code', 'date', 'datetime', 'date_stamp', 'time_stamp', 'created
 def reality_feat_name(family: str, market_type=None) -> str:
     """``(族, 市场类型)`` → 集合名。
 
-    ⚠️ **除股票外一律落 ``index_`` 前缀** —— 与旧树 `charts.py` 的
-    ``if market_type == QA.MARKET_TYPE.STOCK_CN`` 选择**逐字一致**。
+    ⚠️ **ETF 2026-10-17 起独立成 ``etf_`` 前缀**（原与指数共用 ``index_``）
+    ================================================================
+    这一条**与 K 线侧对齐**：`kline83.market_prefix` 早在 **2026-09** 就把 ETF 拆到
+    ``etf_*`` 了，而本函数当时没跟上 —— 于是**同一个 ETF 的 K 线在 ``etf_*``、
+    它的 CV 结果却在 ``index_*``**。这里补上，修掉那个分叉。
+
+    ⚠️ **``FUND_CN`` 仍走 ``index_``** —— 与 `market_prefix` **同一条纪律**
+    （``50x`` 封基/LOF/分级，本就不在 ``etf_*`` 里）。**别顺手"统一"进来。**
 
     >>> reality_feat_name('day', 'stock_cn')
     'stock_reality_feat_day'
     >>> reality_feat_name('60min', 'index_cn')
     'index_reality_feat_60min'
-    >>> reality_feat_name('15min', 'etf_cn')     # ETF 与指数同前缀（旧树如此）
-    'index_reality_feat_15min'
+    >>> reality_feat_name('15min', 'etf_cn')     # ⚠️ 2026-10-17 起是 etf_，不再是 index_
+    'etf_reality_feat_15min'
+    >>> reality_feat_name('day', 'fund_cn')      # fund 仍与指数同前缀
+    'index_reality_feat_day'
     """
     if family not in REALITY_FAMILIES:
         raise ValueError(f'未知的 reality 族 {family!r}；可用: {REALITY_FAMILIES}')
     from GolemQ.core.constants import MARKET_TYPE
-    prefix = 'stock' if market_type == MARKET_TYPE.STOCK_CN else 'index'
+    if market_type == MARKET_TYPE.STOCK_CN:
+        prefix = 'stock'
+    elif market_type == MARKET_TYPE.ETF_CN:
+        prefix = 'etf'
+    else:                       # INDEX_CN / FUND_CN / None …
+        prefix = 'index'
     return f'{prefix}_reality_feat_{family}'
 
 
@@ -112,16 +128,28 @@ def reality_feat_rows(features: pd.DataFrame, family: str, created_at=None) -> l
     >>> d['code'], d['date'], d['datetime'], d['Class']
     ('600519', '2026-01-05', '2026-01-05 15:00:00', 'Buy')
 
-    `time_stamp` 是**北京墙上时间当 UTC** 的 epoch（15:00 → 15:00Z），不是 8.3 的 `ts` 口径；
+    `time_stamp` / `date_stamp` 都是**真实 UTC** epoch（北京 15:00 → 07:00Z；
+    ⚠️ 别信旧注释说的"墙上时间当 UTC"，见模块 docstring 的更正条）；
 
     >>> d['time_stamp'], d['date_stamp']
     (1767596400, 1767542400)
 
-    日族**不带** `datetime` / `time_stamp`（与旧树 `GQ_save_daily_metadata_reality` 一致）：
+    日族**不新增** `datetime` / `time_stamp`（与旧树 `GQ_save_daily_metadata_reality` 一致）：
 
     >>> d2 = reality_feat_rows(df, 'day', created_at=0)[0]
     >>> 'datetime' in d2, 'time_stamp' in d2, d2['date_stamp'] == d['date_stamp']
     (False, False, True)
+
+    但调用方**自带** `datetime` 列时要**格式化成字符串**再透传 —— 15min / 60min 的检出
+    会同时往日族写一笔，那个 `datetime` 是 `Timestamp`；不转就会以 **BSON date** 落库，
+    与 4.4 存量（字符串）成为同一列的两种类型：
+
+    >>> idx2 = pd.MultiIndex.from_tuples(
+    ...     [(pd.Timestamp('2026-01-05 15:00'), '600519')], names=['datetime', 'code'])
+    >>> df3 = df.assign(datetime=pd.Timestamp('2026-01-05 15:00')).set_index(idx2)
+    >>> d3 = reality_feat_rows(df3, 'day', created_at=0)[0]
+    >>> d3['datetime']
+    '2026-01-05 15:00:00'
     """
     if family not in REALITY_FAMILIES:
         raise ValueError(f'未知的 reality 族 {family!r}；可用: {REALITY_FAMILIES}')
@@ -137,11 +165,22 @@ def reality_feat_rows(features: pd.DataFrame, family: str, created_at=None) -> l
     # `tz_localize('Asia/Shanghai')` 后再取整数 epoch。
     day_dt = pd.to_datetime(ts0.date).tz_localize('Asia/Shanghai')
     out['date'] = day_dt.strftime('%Y-%m-%d').to_numpy()
-    out['date_stamp'] = (day_dt.astype(np.int64) // 10 ** 9).to_numpy()
+    # ⚠️ 用 `kline83.epoch_seconds`，**别写 `astype(np.int64) // 10**9`** ——
+    # pandas 3.0 起默认精度是 µs，那样写会静默少 1000 倍（见该函数的 docstring）。
+    out['date_stamp'] = epoch_seconds(day_dt).to_numpy()
     if family != 'day':
         full_dt = pd.Series(ts0, index=out.index).dt.tz_localize('Asia/Shanghai')
         out['datetime'] = full_dt.dt.strftime('%Y-%m-%d %H:%M:%S')
-        out['time_stamp'] = full_dt.astype(np.int64) // 10 ** 9
+        out['time_stamp'] = epoch_seconds(full_dt)
+    elif 'datetime' in out.columns:
+        # ⚠️ 日族**不新增** `datetime`，但调用方自带了这个列要**统一成字符串**：
+        # 15min / 60min 的检出会**同时往日族写一笔**（见 `predict.py`），它们带的
+        # `datetime` 是 `Timestamp`；不转换就会以 **BSON date** 落库，
+        # 而 4.4 那边日族写口是 `dt.strftime(...)` 成**字符串**的
+        # （`GQ_save_daily_metadata_reality`），分钟族这边也是字符串
+        # ⇒ 同一列两种类型。2026-10-17 端到端实跑时暴露（迁移来的 400 行是 str，
+        # 新写入的 2 行是 datetime），此前只看代码看不出来。
+        out['datetime'] = pd.to_datetime(out['datetime']).dt.strftime('%Y-%m-%d %H:%M:%S')
     out['created_at'] = int(created_at)
 
     # 载荷列照原样（`NaN` → 不写该列，而不是写 `None` —— 与 `metadata_save` 同口径）
@@ -226,3 +265,190 @@ __all__ = [
     'REALITY_FAMILIES', 'UNIQUE_KEYS',
     'reality_feat_name', 'reality_feat_rows', 'save_reality_feat', 'fetch_reality_feat',
 ]
+
+
+#: 每张 `*_reality_feat_*` 表里**真正的 CV 载荷列**（= 新树 writer 写的那套，见
+#: `chartscan/predict.py:218-231`）。⚠️ **4.4 的同名表里混着三套命名**
+#: （`ClsMaj` / `ClsMin` / `Class`），但实测**同一行上多套并存**
+#: （60min 表：带 CV 的 1,340 行里 1,242 行两套都有，日期范围完全相同）
+#: ⇒ 按本表挑一套**不丢数据**。
+CV_COLUMNS = {
+    'day':   ('ClsMaj', 'ConfidenceMaj', 'CoordinatesMaj'),
+    '60min': ('Class', 'Confidence', 'Coordinates'),
+    '15min': ('ClsMin', 'ConfidenceMin', 'CoordinatesMin'),
+}
+
+#: 除键之外的元字段 —— 原样搬。
+_CV_META = ('code', 'date', 'datetime', 'date_stamp', 'time_stamp',
+            'created_at', 'updated_at', 'ChartScaned')
+
+
+def migrate_reality_feat_from44(families=('day', '60min', '15min'),
+                                sources=('stock', 'index'), limit=None,
+                                dry_run=False, verbose=True, echo=None) -> dict:
+    """把 4.4 的 CV 检出结果搬进 8.3（**一次性**，`DECISIONS.md` D51）。
+
+    为什么必须搬而不是重算
+    ====================
+    那些列是**买卖点 CV 识别事件**（GolemAI 环境下 CUDA + YOLOv8 跑出来的），
+    重算要显卡、且是对全历史逐日扫 —— 用户明确「很难重头重新计算」。
+
+    它搬什么 / 不搬什么
+    ==================
+    * **只搬 CV 列**（`CV_COLUMNS`）+ 元字段；`ChartScaned` 标记也搬。
+    * **不搬** 4.4 那张表里的**指标列**（`stock_reality_feat_day` 有 136 个：
+      `MA30` / `poly9MajR` / `ATR_LB` …）—— 与 D49「**指标全部重算**」一致，
+      且避免把 10.4M × 136 的指标矩阵灌进来。
+
+    逐码路由
+    =======
+    4.4 的 `index_reality_feat_*` 里 **94–98% 是 ETF**（用新树的 `is_stock_cn` 实测）。
+    所以**不按源表名照搬**，而是逐码分类后落对应前缀（`reality_feat_name`）：
+    `etf_cn` → `etf_reality_feat_*`、`index_cn`/`fund_cn` → `index_*`、
+    `stock_cn` → `stock_*`。
+
+    ⚠️ **必须显式带 `market_type`**：裸码有歧义（`000001` = 上证指数 or 平安银行），
+    一律经 `is_stock_cn` 判 —— 与 K 线侧 `market_prefix` 同一条纪律。
+
+    幂等
+    ====
+    只 `$set`、键是各族自己的 `UNIQUE_KEYS`（日族 `(code, date_stamp)`、
+    分钟族 `(code, time_stamp)`）⇒ **重跑不会插重复行**，中途挂了直接再跑。
+
+    :param families: 要搬的族
+    :param sources: 要读的 4.4 源表前缀（`'stock'` / `'index'`）
+    :param limit: 每个源表最多读多少行（试跑用）
+    :param dry_run: 只读只统计，**不写 8.3**
+    :returns: ``{目标集合: {'read','written','upserted','modified','skipped'}}``
+    """
+    from GolemQ.core.migrate44 import db44
+    from GolemQ.core.constants import MARKET_TYPE
+    from GolemQ.datasource.writer import upsert_fields
+    from .symbol import is_stock_cn
+    # ⚠️ 写库**复用** `upsert_fields`，不为本次搬运另写一个 upsert 帮手 ——
+    # 平行实现不会报错、只会分叉（`helpers.save_stock_codes` 那一课）。
+    # 本函数只负责「取数 → 组行 → 路由 → 分批」。
+
+    say = echo or print
+    g44 = db44('golemq')
+    out: dict = {}
+
+    for family in families:
+        cv_cols = CV_COLUMNS[family]
+        keys = list(UNIQUE_KEYS[family])
+        for src_prefix in sources:
+            src_name = f'{src_prefix}_reality_feat_{family}'
+            src = g44[src_name]
+            # 只取**带 CV 的行** —— 源表里绝大多数是不带 CV 的指标行
+            query = {'$or': [{c: {'$exists': True}} for c in cv_cols]}
+            proj = {'_id': 0, **{c: 1 for c in cv_cols}, **{c: 1 for c in _CV_META}}
+            cursor = src.find(query, proj, no_cursor_timeout=True)
+            if limit:
+                cursor = cursor.limit(int(limit))
+
+            # 按**目标集合**分批攒 —— 一批里混多个目标时不能一次 upsert
+            buckets: dict = {}
+            try:
+                for doc in cursor:
+                    if not all(k in doc for k in keys):
+                        continue
+                    try:
+                        mt = is_stock_cn(doc['code'])[1]
+                    except Exception:            # noqa: BLE001 认不出的码跳过并计数
+                        mt = MARKET_TYPE.STOCK_CN
+                    dst_name = reality_feat_name(family, mt)
+                    st = out.setdefault(dst_name,
+                                        {'read': 0, 'written': 0, 'upserted': 0,
+                                         'modified': 0, 'skipped': 0})
+                    st['read'] += 1
+                    buckets.setdefault(dst_name, []).append(doc)
+
+                    if sum(len(v) for v in buckets.values()) >= 4000:
+                        if not dry_run:
+                            for name, rows in buckets.items():
+                                r = upsert_fields(_db()[name], rows, keys,
+                                                  verbose=False)
+                                out[name]['upserted'] += r['upserted']
+                                out[name]['modified'] += r['modified']
+                        for name, rows in buckets.items():
+                            out[name]['written'] += len(rows)
+                        buckets = {}
+                if buckets and not dry_run:
+                    for name, rows in buckets.items():
+                        r = upsert_fields(_db()[name], rows, keys, verbose=False)
+                        out[name]['upserted'] += r['upserted']
+                        out[name]['modified'] += r['modified']
+                for name, rows in buckets.items():
+                    out[name]['written'] += len(rows)
+            finally:
+                cursor.close()
+            if verbose:
+                say(f'[reality44] {src_name} 读完'
+                    f'（{sum(v["read"] for v in out.values()):,} 行累计）')
+
+    if verbose:
+        say('[reality44] 汇总{}：'.format('（**干跑，没写库**）' if dry_run else ''))
+        for name in sorted(out):
+            s = out[name]
+            say('    {:30s} 读 {:>10,} / 写 {:>10,} / 新增 {:>9,} / 更新 {:>9,}'.format(
+                name, s['read'], s['written'], s['upserted'], s['modified']))
+    return out
+
+
+def verify_reality_feat_migration(families=('day', '60min', '15min'),
+                                  sources=('stock', 'index'), sample=20000,
+                                  verbose=True, echo=None) -> dict:
+    """**只读**核对：4.4 的 CV 行是否都在 8.3 的对应表里、且**逐值相同**。
+
+    抽样从**每个源表尾部**取（`$natural:-1`）—— 尾部是最可能被漏搬的那一批。
+    逐字段比，浮点**按位**比（搬运不该动任何一个 bit）。
+
+    :returns: ``{'checked','missing','mismatch','examples'}``
+    """
+    from GolemQ.core.migrate44 import db44
+    from .symbol import is_stock_cn
+
+    say = echo or print
+    g44 = db44('golemq')
+    out = {'checked': 0, 'missing': 0, 'mismatch': 0, 'examples': []}
+
+    for family in families:
+        cv_cols = CV_COLUMNS[family]
+        keys = list(UNIQUE_KEYS[family])
+        for src_prefix in sources:
+            src = g44[f'{src_prefix}_reality_feat_{family}']
+            query = {'$or': [{c: {'$exists': True}} for c in cv_cols]}
+            for doc in src.find(query, {'_id': 0}).sort('$natural', -1).limit(int(sample)):
+                if not all(k in doc for k in keys):
+                    continue
+                out['checked'] += 1
+                dst_name = reality_feat_name(family, is_stock_cn(doc['code'])[1])
+                got = _db()[dst_name].find_one({k: doc[k] for k in keys}, {'_id': 0})
+                if got is None:
+                    out['missing'] += 1
+                    if len(out['examples']) < 5:
+                        out['examples'].append(('missing', dst_name, keys))
+                    continue
+                bad = None
+                for c in cv_cols:
+                    if c not in doc:
+                        continue
+                    if c not in got:
+                        bad = (dst_name, keys, c, 'absent')
+                    else:
+                        a, b = doc[c], got[c]
+                        same = (a == b) or (a != a and b != b)
+                        if not same:
+                            bad = (dst_name, keys, c, a, b)
+                    if bad:
+                        out['mismatch'] += 1
+                        if len(out['examples']) < 5:
+                            out['examples'].append(bad)
+                        break
+
+    if verbose:
+        say('[verify44] 抽 {:,} 行：缺 {:,} / 不符 {:,}'.format(
+            out['checked'], out['missing'], out['mismatch']))
+        for ex in out['examples']:
+            say('    {}'.format(ex))
+    return out

@@ -1,5 +1,5 @@
 # coding:utf-8
-"""把 `stock_metadata_day` 的列**对齐到任意频率的 K 线**。
+"""把 `stock_reality_feat_day` 的列**对齐到任意频率的 K 线**。
 
 从哪来（以及**为什么不是照搬**）
 ================================
@@ -12,10 +12,10 @@
   **xtquant**（`GQ_featch_stock_valuation_from_xtquant`，而 **MiniQMT 自 2026-10-01
   已停服**）与 **4.4 的 `stock_valuation`**（已随 4.4 停用）。
 * 它同时**写** `stock_ranking` / `stock_valuation` —— 而新树那两列已经在
-  `stock_metadata_day` 里了。
+  `stock_reality_feat_day` 里了。
 
 ⇒ 用户 2026-10-11 定：**保留「对齐」这个能力，数据源换成 8.3 自己的
-`stock_metadata_day`**。本模块就是那个能力，且**只读**（写元数据是
+`stock_reality_feat_day`**。本模块就是那个能力，且**只读**（写元数据是
 `--moneyflow` 与 `refresh_turnover` 的事）。
 
 ⚠️ **为什么落在 `markets/StockCN/` 而不叫 `align.py`**
@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .metadata_save import METADATA_DAY_COLL, _db, day_date, day_stamp
+from .metadata_save import REALITY_FEAT_DAY_COLL, _db, day_date, day_stamp
 
 __all__ = ['align_metadata_frame', 'align_metadata_to_kline',
            'METADATA_ALIGN_COLUMNS']
@@ -117,7 +117,7 @@ def align_metadata_frame(kline: pd.DataFrame, meta: pd.DataFrame,
 
 def align_metadata_to_kline(kline: pd.DataFrame, columns=None, database=None
                             ) -> pd.DataFrame:
-    """读 `stock_metadata_day` 并把它对齐到 `kline`（见 :func:`align_metadata_frame`）。
+    """读 `stock_reality_feat_day` 并把它对齐到 `kline`（见 :func:`align_metadata_frame`）。
 
     ⚠️ **只读**。不写库、不回填 —— 缺的日子就是缺（NaN），
     要补是 `--moneyflow` / `refresh_turnover` 的事。
@@ -138,7 +138,7 @@ def align_metadata_to_kline(kline: pd.DataFrame, columns=None, database=None
     want = list(columns) if columns is not None else list(METADATA_ALIGN_COLUMNS)
     proj = {'_id': 0, 'date': 1, 'code': 1}
     proj.update({c: 1 for c in want})
-    rows = list(_db()[METADATA_DAY_COLL].find(q, proj))
+    rows = list(_db()[REALITY_FEAT_DAY_COLL].find(q, proj))
     if not rows:
         return pd.DataFrame(index=kline.index,
                             columns=[c for c in want], dtype='float64')

@@ -50,11 +50,10 @@ from GolemQ.core.constants import (
 #     → 新：**门面层已删**（2026-10-10），改经市场实例取。调用点见 `_read_ohlc`。
 from GolemQ.core.market_registry import get_active_market
 # 老：GolemQ.fetch.StockCN.GQ_fetch_stock_ranking（读 4.4 的 stock_valuation/stock_ranking）
-#     → 新：**改读本树的 `stock_metadata_day`**（换手率两列就落在那儿）。
+#     → 新：**改读本树的 `stock_reality_feat_day`**（换手率两列就落在那儿）。
 #       这正是「先把换手率落库」的原因 —— 没有它这个模块跑不了。
 from GolemQ.markets.StockCN.refdata import (
-    GQ_fetch_stock_info,
-    GQ_fetch_stock_metadata_day,
+    GQ_fetch_stock_reality_feat_day,
 )
 # 老：calc_feature_event_timing_lag 在 features/base.py、
 #     resample_multi_frequency_indices_func / Timeline_duration 在 analysis/timeseries.py
@@ -64,19 +63,20 @@ from GolemQ.analysis.timing import (
     calc_feature_event_timing_lag,
     resample_multi_frequency_indices_func,
 )
-# 老：GolemQ.utils.base.GQ_util_get_last_day
-#     → 新：真实现一直在 markets/StockCN/date_utils.py（老树 utils/base.py 那份是阉割版）
-from GolemQ.markets.StockCN.date_utils import GQ_util_get_last_day
+# ⚠️ `GQ_fetch_stock_info` 与 `GQ_util_get_last_day` 两条 import 已随自补换手率那段
+#    一起删掉（2026-10-13，D44）—— 删完之后本文件对它们**零引用**。补齐换手率要
+#    流通股本，那件事现在在 `markets/StockCN/metadata_save.fill_turnover` 里。
 import traceback
 import warnings
 
 # ⚠️ **老树的 `import QUANTAXIS as QA` 已删** —— 它在本文件里**一处都没用到**
 #    （实测 `QA.` 零命中），是个死 import。全树 QUANTAXIS 已剔除（`DECISIONS.md` D12）。
 #
-# ⚠️ **老树的 `GQ_stock_a_spot_em` 没有对应物**：它是「当日全市场快照」，
-#    用来补**当天**缺的换手率。新树没有这个源，而换手率已落库 ⇒ 那条分支删掉，
-#    走它的**兜底**（`vol / liutongguben`，用 `GQ_fetch_stock_info`，那个有）。
-#    见 `_fill_today_turnover`。
+# ⚠️ **换手率的"缺了怎么办"整条链已从本模块移走**（2026-10-13，`DECISIONS.md` D44）：
+#    老树先试「当日全市场快照」（`GQ_stock_a_spot_em`，本树没有对应物），失败再走
+#    兜底「`vol / liutongguben` 现算」。**两条都不在了** —— 本模块现在读完
+#    `stock_reality_feat_day` 的两个源后**直接抛**，补齐由
+#    `markets/StockCN/metadata_save.fill_turnover` 负责。
 
 
 pd.set_option('expand_frame_repr', False)
@@ -726,15 +726,22 @@ class ChipDistribution():
         )
 
         # 老树：读 4.4 `stock_valuation`（baostock 口径的 `turnover` + `peTTM`）。
-        # 新树：改读本树 `stock_metadata_day` —— `turnover` 那列在，**`peTTM` 没有**
+        # 新树：改读本树 `stock_reality_feat_day` —— `turnover` 那列在，**`peTTM` 没有**
         # （本轮只搬了换手率）。
         # ⚠️ 老树的 PE 在本模块里**只被写、从不被读**（实测 `PE_RATION` 零处读取），
         # 故 `column_list` 去掉 PE **不影响本模块**；下游若要用 PE 得另行落库。
-        stock_valuation_pd = GQ_fetch_stock_metadata_day(
+        stock_valuation_pd = GQ_fetch_stock_reality_feat_day(
             code, start=start, end=end, columns=[AKA.TURNOVER]
         )
 
         column_list = [FLD.TURNOVER_RATE]
+        # ⚠️ **两个源一行都没读到时，这一列根本不存在** —— 下面几处 `self.data.loc[…] = …`
+        # 都只在**非空交集**上执行，于是 `dropna(subset=[…])` 抛的是
+        # `KeyError: TurnoverRate`，一个与「缺数据」毫不相干的错
+        # （实测：`stock_reality_feat_day` 里该 code 一行都没有时）。
+        # 先补成 NaN 列，让「缺」这件事一路走到下面那个**明确的**抛出点。
+        if FLD.TURNOVER_RATE not in self.data.columns:
+            self.data[FLD.TURNOVER_RATE] = np.nan
         if (stock_valuation_pd is not None) and (len(stock_valuation_pd) > 0):
             stock_valuation_pd = stock_valuation_pd.rename(
                 columns={
@@ -754,135 +761,19 @@ class ChipDistribution():
         else:
             missing_stock_valuation_idx = self.data.index
 
-        if len(self.data.index.difference(
-            self.data.dropna(
-                subset=[FLD.TURNOVER_RATE], axis=0, how="all"
-            ).index
-        )) > 0:
-            # 检查日期缺乏今天
-            missing_date = self.data.index.difference(
-                self.data.dropna(
-                    subset=[FLD.TURNOVER_RATE], axis=0, how="all"
-                ).index
-            ).get_level_values(level=0)
-            if (len(missing_date) == 1) and (missing_date[-1] == GQ_util_get_last_day()):
-                missing_date = missing_date[-1]
-                # ⚠️ 老树这里先试 `GQ_stock_a_spot_em()`（**当日全市场快照**），
-                # 失败才走「vol / 流通股本」兜底。新树**没有那个源**（它是老树
-                # `fetch` 那条链上的东西，已随 QUANTAXIS 解耦一起没了），
-                # 而换手率现在**已落进 `stock_metadata_day`** ⇒ 缺当日的正常情形是
-                # 「今天的还没入库」，走兜底按股本现算即可。
-                # 故这一段**去掉快照尝试、直接走兜底**（兜底依赖的
-                # `GQ_fetch_stock_info` 在新树有）。
-                vol = self.data.loc[
-                    (missing_date, code), "volume"].item()
-                stock_info = GQ_fetch_stock_info([code[:6]])
-                if stock_info is not None and 'liutongguben' in stock_info.columns:
-                    total_volume = stock_info['liutongguben'].iloc[0]
-                else:
-                    print(stock_info)
-                if total_volume and total_volume > 0:
-                    turnover_rate = round((vol * 100 / total_volume) / 100, 6)
-                    if (turnover_rate > 0.96):
-                        turnover_rate = round((vol * 100 / total_volume) / 10000, 6)
-                else:
-                    turnover_rate = None
-                self.data.loc[
-                    (missing_date, code), FLD.TURNOVER_RATE
-                ] = turnover_rate
-                if verbose:
-                    # ⚠️ 老树这里还打了一行 `stock_cn_snapshot...item()` —— 那个变量
-                    # 随 `GQ_stock_a_spot_em` 一起去掉了，**留着会 NameError**
-                    # （只在 `-v` 下才炸，更难发现）。故只保留这行诊断。
-                    print(
-                        '缺实盘当天换手率', missing_date, type(missing_date),
-                        GQ_util_get_last_day(), type(GQ_util_get_last_day())
-                    )
-            else:
-                tag1 = len(self.data.index.difference(
-                    self.data.dropna(
-                        subset=[FLD.TURNOVER_RATE], axis=0, how="all"
-                    ).index))
-                if (tag1 == 1):
-                    missing_date = self.data.index.difference(
-                        self.data.dropna(
-                            subset=[FLD.TURNOVER_RATE], axis=0, how="all"
-                        ).index).get_level_values(level=0)[-1]
-                    vol = self.data.loc[
-                        (missing_date, code), "volume"].item()
-                    stock_info = GQ_fetch_stock_info([code[:6]])
-                    if stock_info is not None and 'liutongguben' in stock_info.columns:
-                        total_volume = stock_info['liutongguben'].iloc[0]
-                    else:
-                        print(stock_info)
-                    if total_volume and total_volume > 0:
-                        turnover_rate = round((vol * 100 / total_volume) / 100, 6)
-                        if (turnover_rate > 1.0618):
-                            turnover_rate = round((vol * 100 / total_volume) / 10000, 6)
-                    else:
-                        turnover_rate = None
-                    self.data.loc[
-                        (missing_date, code), FLD.TURNOVER_RATE
-                    ] = turnover_rate
-                else:
-                    # 检查是否是连续的尾部<7天，尝试使用同样的成交量算法计算填补
-                    missing_idx = self.data.index.difference(
-                        self.data.dropna(
-                            subset=[FLD.TURNOVER_RATE], axis=0, how="all"
-                        ).index
-                    )
-                    
-                    # 获取缺失日期的日期部分
-                    missing_dates = missing_idx.get_level_values(level=0)
-                    
-                    # 检查是否是连续的尾部
-                    if len(missing_dates) > 0:
-                        # 检查缺失日期是否是最后几个连续的日期
-                        is_tail_consecutive = True
-                        for i in range(len(missing_dates) - 1):
-                            # 检查日期是否连续（按顺序）
-                            if missing_dates[i] + pd.Timedelta(days=1) != missing_dates[i + 1]:
-                                is_tail_consecutive = False
-                                break
-                        
-                        # 检查是否确实是尾部（缺失日期之后没有非缺失日期）
-                        if is_tail_consecutive and len(missing_dates) < 7:
-                            # 获取缺失日期之前的最后一个非缺失日期
-                            non_missing_idx = self.data.dropna(
-                                subset=[FLD.TURNOVER_RATE], axis=0, how="all"
-                            ).index
-                            if len(non_missing_idx) > 0:
-                                # 获取股票流通股本
-                                stock_info = GQ_fetch_stock_info([code[:6]])
-                                if stock_info is not None and 'liutongguben' in stock_info.columns:
-                                    total_volume = stock_info['liutongguben'].iloc[0]
-                                    
-                                    if total_volume and total_volume > 0:
-                                        for missing_date in missing_dates:
-                                            vol = self.data.loc[
-                                                (missing_date, code), "volume"
-                                            ].item()
-                                            turnover_rate = round((vol * 100 / total_volume) / 100, 6)
-                                            if (turnover_rate > 1.0618):
-                                                turnover_rate = round((vol * 100 / total_volume) / 10000, 6)
-                                            
-                                            self.data.loc[
-                                                (missing_date, code), FLD.TURNOVER_RATE
-                                            ] = turnover_rate
-                                        if (verbose):
-                                            print(f'已填补 {len(missing_dates)} 天的换手率')
-                                    else:
-                                        print('无法获取有效的流通股本，跳过填补')
-                                else:
-                                    print('无法获取股票信息，跳过填补')
-                        else:
-                            print(
-                                f'缺 {tag1} ()>7) 天的换手率(ChipDistribution_jit)',
-                                self.data.index.difference(
-                                    self.data.dropna(
-                                        subset=[FLD.TURNOVER_RATE], axis=0, how="all"
-                                    ).index),
-                                f"首:{self.data.head(1).index.get_level_values(level=0)[0]} 尾:{self.data.tail(1).index.get_level_values(level=0)[0]}")
+        # ⚠️ **自补换手率那一段（老代码的 `vol / 流通股本` 现算 + 尾部逐日填补）已删** ——
+        # 2026-10-13 用户定：分析层模块**只做计算/选择，不做数据的自我修复**（`DECISIONS.md` D44）。
+        # 三条理由，都不是洁癖：
+        # 1. 那种修补**失败是静默的**（老代码最末一支只 print 一行就继续），脏数据一路带进
+        #    筹码分布；而换手率是这张表**所有**下游结论的系数（`_calcu_sin_jit` 的
+        #    `TurnoverRateT * A`），错一天就错一片。
+        # 2. 老代码那三条分支里，「恰好缺今天这一天」是**最常见**的情形（`--save` 先写 K 线、
+        #    后写元数据；盘中跑筹码分布必然缺当日换手率）⇒ 它不是异常路径，是日常路径。
+        #    把它做成静默兜底，等于让「数据还没到」永远不被发现。
+        # 3. 那一段里 `total_volume` 在 `else` 分支之后仍被引用（老 `:784` / `:818`），
+        #    是一条**没跑到的 `UnboundLocalError`** —— 只在 `stock_info` 缺
+        #    `liutongguben` 列时触发。删掉它连这个一起带走。
+        # 补齐的能力没丢，搬到了它该在的地方：`markets/StockCN/metadata_save.fill_turnover`。
 
         if len(self.data.index.difference(
             self.data.dropna(
@@ -890,16 +781,20 @@ class ChipDistribution():
             ).index
         )) > 1:
             # 老树：读 4.4 `stock_ranking`（**东财口径**，旧树筹码分布吃的就是它）。
-            # 新树：同一张 `stock_metadata_day` 的 `TurnoverRate` 列 —— 列名与源端
+            # 新树：同一张 `stock_reality_feat_day` 的 `TurnoverRate` 列 —— 列名与源端
             # 一致（用户 2026-10-10 定），所以下面那些 `FLD.TURNOVER_RATE` 判断
             # 一行都不用改。
-            stock_ranking_pd = GQ_fetch_stock_metadata_day(
+            stock_ranking_pd = GQ_fetch_stock_reality_feat_day(
                 code,
                 start='{}'.format(start)[:10],
                 end='{}'.format(end)[:10],
                 columns=[FLD.TURNOVER_RATE],
             )
-            if stock_ranking_pd is not None:
+            # ⚠️ **空结果是没有列的**（`refdata._read` 空集返**空帧**，不是 `None`）——
+            # 不先判列，下面两处 `dropna(subset=[…])` / `.loc[:, [col]]` 都会抛
+            # `KeyError: TurnoverRate`，于是「两个源都空」这种**最该报缺数据**的情形，
+            # 报出来的却是一个 KeyError（实测）。
+            if stock_ranking_pd is not None and FLD.TURNOVER_RATE in stock_ranking_pd.columns:
                 stock_ranking_pd = stock_ranking_pd.dropna(
                     subset=[FLD.TURNOVER_RATE], axis=0, how="all"
                 )
@@ -940,6 +835,19 @@ class ChipDistribution():
                         None if (stock_valuation_pd is None) else len(stock_valuation_pd)
                     ), '\n'
                 )
+
+        # 两个**源**都读完了（baostock `turnover` 与 东财 `TurnoverRate` —— 口径与覆盖期
+        # 都不同，取并集才是正确读法，不是"修补"）。仍缺 ⇒ **抛**。
+        # 缺一天都不放过：本模块所有结论都吃换手率（见上面那段说明与 `DECISIONS.md` D44）。
+        still_missing = self.data.index.difference(
+            self.data.dropna(subset=[FLD.TURNOVER_RATE], axis=0, how="all").index)
+        if len(still_missing) > 0:
+            days = sorted({str(d)[:10] for d in still_missing.get_level_values(level=0)})
+            raise ValueError(
+                'Code {} 缺 {} 天换手率（{} … {}）：`stock_reality_feat_day` 的两个源都没覆盖到。'
+                '先跑 `GolemQ.markets.StockCN.metadata_save.fill_turnover([code])` 补齐；'
+                '本模块**不再自己补算**（`DECISIONS.md` D44）。'.format(
+                    code, len(days), days[0], days[-1]))
 
         if verbose and (AKA.PROFIT in self.data.columns):
             print(

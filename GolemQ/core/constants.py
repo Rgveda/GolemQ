@@ -461,7 +461,18 @@ class FIELD(metaclass=_StubMeta):
     GARIDENT_PRICE = 'garP'
     GARIDENT_PRICE_COUNT = 'garPCount'
     GARIDENT_PRICE_CLEARANCE = 'garPClr'
+    #: `GAR_P` 那组带是**哪个 checkpoint** 算出来的（日期字符串 `'YYYY-MM-DD'`）。
+    #: 8.3 起 `GAR_P` 落的是**相对锚 bar close 的比值**（见 `docs/decisions/D49.md`：
+    #: 绝对价位只存在 K 线里，指标一律存比值）—— 还原必须知道乘哪一个日期的
+    #: （已复权的）close，所以锚日期得跟着落库。**老树没有这一列**（老树存绝对价）。
+    GARIDENT_PRICE_ANCHOR = 'garPAnchor'
     GARIDENT_STAGE_TIMING_LAG = 'garSLag'
+    # ⚠️ 老树那四列 `STOCK_TREND_CHECKOUT_CLOSE` / `STOCK_TREND_RETURNS` /
+    # `STOCK_TREND_BEFORE` / `STOCK_TREND_RETURNS_GARIDENT` **没有搬进来**
+    # （2026-10-16，用户定）：它们**老树从没落过库**、新树零消费，整条链在
+    # `analysis/stages.py` 里连计算一起删了。老树真值是 `TRD_CHK_CLOSE` / `TRD_RET` /
+    # `TRD_BEFORE` / `TRD_RET_GAR`（`GolemQ_old/utils/parameter.py` 的 INDICATOR_FIELD）
+    # —— **别照着老树加回来**，先找出消费方。见 `docs/decisions/D49.md`。
     BOOTSTRAP_STAGE_BEFORE = 'bstStgBf'
     ENDPOINT_STAGE_BEFORE = 'epStgBf'
     STOCK_SCORE_M15_NORM = 'ssm15Norm'
@@ -471,7 +482,22 @@ class FIELD(metaclass=_StubMeta):
     MAGIC_NINE_TURNS_BASELINE_TIMING_LAG = 'm9tBslLag'
     MAGIC_NINE_TURNS_BEFORE = 'm9tBf'
     MAGIC_NINE_TURNS_SX_BEFORE = 'm9tSxBf'
+    # Magic Nine Turns 的两个 dummy 列。老值 `m9tDmy` / `M9TWekDmy`。
+    # ⚠️ 后者老树里是**大小写不统一**的（同族其余全是 `m9t` 小写前缀），
+    # 这里统一到 `m9tWekDmy` —— 同属 D41 的「未入库、纯计算」，三道查已过。
+    # ⚠️ **这两个常量此前缺失，而 `ChipDistribution_jit.py:1120` 正在用它们** ⇒
+    # `_StubMeta` 早已不再伪造（`MIGRATION_STATUS` #3），所以那次调用会直接抛
+    # `AttributeError`。补上即修好（见 `docs/decisions/D49.md`）。
+    MAGIC_NINE_TURNS_DUMMY = 'm9tDmy'
+    MAGIC_NINE_TURNS_WEEKLY_DUMMY = 'm9tWekDmy'
+    # —— Poly9 家族的中间列 ——
+    # `POLYNOMIAL9_NORM` 老值 `poly9pwr3` **无下划线** ⇒ 按 D41 第 1 条**原样不动**。
+    POLYNOMIAL9_NORM = 'poly9pwr3'
     POLYNOMIAL9_NORM_MAJOR = 'poly9pwr3Maj'
+    POLYNOMIAL9_DELTA = 'poly9Delta'
+    POLYNOMIAL9_MAJOR = 'poly9Maj'
+    POLYNOMIAL9_WEEKLY = 'poly9Wek'
+    POLYNOMIAL9_NORM_WEEKLY = 'poly9NorWek'
     RENKO_TREND_S_TIMING_LAG = 'renkosBarLag'
     RENKO_TREND_S_LB = 'renkosBarLb'
     RENKO_TREND_S_UB = 'renkosBarUb'
@@ -527,7 +553,6 @@ class FIELD(metaclass=_StubMeta):
     # 补齐前实测：本文件用到的 29 个名字在新树**全部抛 AttributeError**。
     # ------------------------------------------------------------------ #
     ATR_LB = 'atrLb'
-    ATR_LB_REGTREE_DIVERGENCE = 'atrLRtDiv'
     COMBINE_DENSITY = 'combDensity'
     DEA_ZERO_TIMING_LAG = 'deaOLag'
     HMA10 = 'HMA10'
@@ -538,21 +563,29 @@ class FIELD(metaclass=_StubMeta):
     MA30 = 'MA30'
     MA90 = 'MA90'
     MA90_SLOPE = 'ma90Slope'
-    # ⚠️ 下面 10 个是 2026-10-11 随「四量图」搬运补的（`analysis/quadrant.py` 要用）。
-    # 真值**逐字**取自老树 `GolemQ_old/utils/parameter.py` 的 `FIELD` 类，未改一个字符。
+    # ⚠️ 下面这些是 2026-10-11 起随「四量图 / RSRS / 筹码分布」搬运补的
+    # （`analysis/{quadrant,rsrs,ChipDistribution_jit}.py` 要用）。
+    # **标识符**照搬老树 `GolemQ_old/utils/parameter.py` 的 `FIELD` 类；
+    # **值**按 `DECISIONS.md` **D41** 的规则改写 —— 老树那些值**全是 snake**
+    # （`MA250_MAJ` / `ATR_UB_WEK` / `KDJ_K` …），而这里落的是驼峰且 ≤16 字符。
+    # ⚠️ 2026-10-13 更正：本注释原先写「真值逐字取自老树、未改一个字符」——**那是错的**，
+    # 会让人以为可以直接拿老树的值去对库。
     MA60 = 'MA60'
     MA120 = 'MA120'
     MA250 = 'MA250'
     MA250_MAJOR = 'ma250Maj'
+    #: MA250 的**时序滞回**（旧树 `'MA250_LAG_MAJ'` → 驼峰）。
+    MA250_TIMING_LAG_MAJOR = 'ma250LagMaj'
     ATR_UB_WEEKLY = 'atrUbWek'
     KDJ_K = 'kdjK'
     KDJ_D = 'kdjD'
     KDJ_J = 'kdjJ'
     KDJ_TREND_TIMING_LAG = 'kdjTrdLag'
+    #: MACD 三件套（`talib.MACD` 的输出）。`DIF` / `DEA` 是**单词**，无 `_`，值照旧。
+    DIF = 'DIF'
+    DEA = 'DEA'
     MACD = 'MACD'
     MACD_DELTA_MAJOR = 'macdDiff1tMaj'
-    # ⚠️ 下面 5 个是 2026-10-12 随「RSRS 指标计算」搬运补的（`analysis/rsrs.py` 要用）。
-    # 真值**逐字**取自老树 `utils/parameter.py` 的 `FIELD` 类。
     RSRS_BETA = 'rsrsBeta'
     RSRS_BETA_R2 = 'rsrsBetaR2'
     RSRS_ZSCORE = 'rsrsZscore'
@@ -564,7 +597,6 @@ class FIELD(metaclass=_StubMeta):
     MAPOWER120_TIMING_LAG = 'mpwr12Lag'
     MAPOWER30_QUARTER = 'mpwr3Qtr'
     MAPOWER30_TIMING_LAG = 'mpwr3Lag'
-    POLY9_REGTREE_DIVERGENCE = 'poly9RtDiv'
     POLYNOMIAL9_TIMING_LAG = 'poly9Lag'
     REGTREE_CORRCOEF = 'regtreeCorrcoef'
     REGTREE_DENY_LINE = 'regtreeDenyLine'
@@ -660,3 +692,73 @@ class STATE(metaclass=_StubMeta):
 
 # Module-level singleton instance
 # aka = AKA()
+
+
+# ---------------------------------------------------------------------------
+# `datetime64` → 秒级 epoch 的**换算系数**（全树唯一出处）
+# ---------------------------------------------------------------------------
+# 背景（`DECISIONS.md` D52）：pandas 3.0 把 `pd.to_datetime` 的默认精度从
+# `datetime64[ns]` 改成 `datetime64[us]`（本机 3.0.6 实测）。于是老写法
+#
+#     series.astype(np.int64) // 10 ** 9
+#
+# 在 pandas 3 上**少 1000 倍**，而且**不报错** —— 只是把 `date_stamp` /
+# `time_stamp` 这类**键**写成另一个数量级。
+#
+# 这里**不是**看版本号字符串，也**不是**一个全局标量 —— 系数**按 dtype 查表**。
+# 原因是 pandas 3 会按**输入**推不同的精度，同一次运行里几种精度是并存的
+# （2026-10-17 本机 3.0.6 实测）：
+#
+#     ==============================  ==================
+#     构造方式                         得到的 dtype
+#     ==============================  ==================
+#     `pd.to_datetime(date 对象)`       `datetime64[s]`
+#     `pd.to_datetime(字符串)`          `datetime64[us]`
+#     `pd.to_datetime(Series)`          `datetime64[us]`
+#     pandas 2 的默认                    `datetime64[ns]`
+#     ==============================  ==================
+#
+# ⚠️ **单个标量系数会算错**：`reality_save` 的 `day_dt` 走的正是 `date` 对象那一路
+# （秒），拿 µs 的 1e6 去除 ⇒ `date_stamp` 变成 `1767`（实测，当场红了 doctest）。
+#
+#     秒级 epoch = series.astype(np.int64) // epoch_divisor(series.dtype)
+#
+# ⚠️ 只用它换**秒**。`analysis/pivot.py` 那处是**纳秒域**（与 `Timestamp.value`
+# 比 `searchsorted`，而 `Timestamp.value` 恒为 ns），**不能**换成秒 —— 见该处注释。
+
+#: `datetime64` 单位 → 1 秒对应的整数单位数。**固态常量**（单位名是 numpy 的稳定 API）。
+EPOCH_UNIT_TO_SECONDS = {'s': 1, 'ms': 10 ** 3, 'us': 10 ** 6, 'ns': 10 ** 9}
+
+
+def epoch_divisor(dtype) -> int:
+    """`datetime64` 的 dtype（naive 或 tz-aware）→ **秒**系数。
+
+    >>> epoch_divisor('datetime64[s]')
+    1
+    >>> epoch_divisor('datetime64[us]')
+    1000000
+    >>> import pandas as pd
+    >>> epoch_divisor(pd.DatetimeIndex(['2026-01-05']).tz_localize('Asia/Shanghai').dtype)
+    1000000
+    """
+    unit = getattr(dtype, 'unit', None)          # tz-aware（pandas 的 DatetimeTZDtype）
+    if unit is None:
+        import numpy as _np
+        unit = _np.datetime_data(_np.dtype(dtype))[0]
+    try:
+        return EPOCH_UNIT_TO_SECONDS[unit]
+    except KeyError:                      # 未来的 pandas/numpy 又换单位时**响亮地**失败
+        raise RuntimeError(
+            'datetime64 精度是 {!r}，EPOCH_UNIT_TO_SECONDS 表里没有 —— '
+            '先在 core.constants 里补一行，再跑全量测试'.format(unit))
+
+
+def _default_epoch_divisor() -> int:
+    """pandas **当前默认**构造出来的系数。**只用于诊断/文档，别拿它去算值**。"""
+    import pandas as _pd
+    return epoch_divisor(_pd.to_datetime(['2000-01-01']).dtype)
+
+
+#: pandas 当前默认精度下的系数（pandas 2 ⇒ 1e9 / pandas 3 ⇒ 1e6）。
+#: ⚠️ 算值请用 `epoch_divisor(series.dtype)` —— 不同来源的 Series 精度可能不同。
+EPOCH_DIVISOR = _default_epoch_divisor()

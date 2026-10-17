@@ -17,7 +17,7 @@ from ._registry import Command
 
 def add_turnover_arguments(parser) -> None:
     parser.add_argument('--migrate-turnover',
-                        help="把 4.4 的换手率搬进 8.3 stock_metadata_day"
+                        help="把 4.4 的换手率搬进 8.3 stock_reality_feat_day"
                              "（两个源各写一列，**保留源端原字段名**："
                              "东财 TurnoverRate / baostock turnover）",
                         action='store_true',
@@ -36,7 +36,7 @@ def add_turnover_arguments(parser) -> None:
 
 def run_migrate_turnover(args) -> None:
     """`--migrate-turnover` 的处理体：只做参数校验，干活在 `metadata_save`。"""
-    from GolemQ.markets.StockCN.metadata_save import METADATA_DAY_COLL, save_turnover
+    from GolemQ.markets.StockCN.metadata_save import REALITY_FEAT_DAY_COLL, save_turnover
 
     try:
         out = save_turnover(since=args.migrate_since,
@@ -61,7 +61,7 @@ def run_migrate_turnover(args) -> None:
             total_read, total_written, total_skipped))
     else:
         print('[migrate] 完成 → {}：读 {} / 写 {} / 丢弃 {}'.format(
-            METADATA_DAY_COLL, total_read, total_written, total_skipped))
+            REALITY_FEAT_DAY_COLL, total_read, total_written, total_skipped))
     if total_skipped:
         # 丢行**必须显眼** —— 静默丢行会让「搬完了」这句话没有依据
         print('[migrate] ⚠️ 丢弃 {} 行（缺值 / 非数字 / 换手率 > 1.08 判为未换算）'.format(
@@ -105,4 +105,100 @@ MIGRATE_INDEX_LIST = Command(
     flags=('migrate_index_list',),
     add_arguments=add_index_list_arguments,
     run=run_migrate_index_list,
+)
+
+
+def add_metadata_merge_arguments(parser) -> None:
+    parser.add_argument('--migrate-metadata-merge',
+                        help="把 8.3 的 stock_metadata_day **原样**搬进 "
+                             "stock_reality_feat_day（**8.3 内部合并**，不连 4.4）。"
+                             "幂等（只 $set、键 (code, date_stamp)），中途挂了重跑即可。"
+                             "配合 --migrate-dry-run 先量规模、--migrate-limit 试跑。",
+                        action='store_true',
+                        default=False)
+    parser.add_argument('--migrate-metadata-verify',
+                        help="**只读**核对：抽样比对两表在 (code, date_stamp) 上"
+                             "是否逐字段相同。⚠️ 合并跑完必须先跑它再谈 drop。",
+                        action='store_true',
+                        default=False)
+    parser.add_argument('--migrate-limit',
+                        help="只搬前 N 行（试跑用）。不传 = 全量",
+                        type=int, default=None)
+
+
+def run_migrate_metadata_merge(args) -> None:
+    """`--migrate-metadata-merge` / `--migrate-metadata-verify` 的处理体。"""
+    from GolemQ.markets.StockCN.metadata_save import (
+        merge_metadata_into_feat, verify_metadata_merge)
+
+    if args.migrate_metadata_verify:
+        out = verify_metadata_merge()
+        # **不符就必须非零退出** —— 否则「核对过了」会被读成「核对通过」。
+        if out['missing'] or out['mismatch']:
+            print('[migrate] ❌ 核对不通过：缺 {} / 不符 {}'.format(
+                out['missing'], out['mismatch']), file=sys.stderr)
+            sys.exit(1)
+        return
+
+    stats = merge_metadata_into_feat(dry_run=args.migrate_dry_run,
+                                     limit=args.migrate_limit)
+    if stats['skipped']:
+        print('[migrate] ⚠️ 有丢弃行 —— 见上面的说明', file=sys.stderr)
+
+
+MIGRATE_METADATA_MERGE = Command(
+    name='migrate-metadata-merge',
+    flags=('migrate_metadata_merge', 'migrate_metadata_verify'),
+    add_arguments=add_metadata_merge_arguments,
+    run=run_migrate_metadata_merge,
+)
+
+
+def add_reality_feat_arguments(parser) -> None:
+    parser.add_argument('--migrate-reality-feat',
+                        help="把 4.4 的 **ChartScan CV 检出结果**搬进 8.3 的 "
+                             "*_reality_feat_*（**只搬 CV 列**，不搬那 136 个指标列）。"
+                             "逐码路由：etf_cn→etf_*、index_cn/fund_cn→index_*、"
+                             "stock_cn→stock_*。幂等（只 $set）。"
+                             "配合 --migrate-dry-run 先量规模、--migrate-limit 试跑。",
+                        action='store_true',
+                        default=False)
+    parser.add_argument('--migrate-reality-verify',
+                        help="**只读**核对：4.4 的 CV 行是否都在 8.3 对应表里、逐值相同。"
+                             "⚠️ 搬完必须先跑它才算「库齐全」。",
+                        action='store_true',
+                        default=False)
+
+
+def run_migrate_reality_feat(args) -> None:
+    """`--migrate-reality-feat` 的处理体：只做参数校验，干活在 `reality_save`。"""
+    from GolemQ.markets.StockCN.reality_save import (
+        migrate_reality_feat_from44, verify_reality_feat_migration)
+
+    if args.migrate_reality_verify:
+        v = verify_reality_feat_migration()
+        if v['missing'] or v['mismatch']:
+            print('[migrate] ❌ 核对不通过：缺 {} / 不符 {}'.format(
+                v['missing'], v['mismatch']), file=sys.stderr)
+            sys.exit(1)
+        return
+
+    try:
+        out = migrate_reality_feat_from44(limit=args.migrate_limit,
+                                          dry_run=args.migrate_dry_run)
+    except Exception as exc:                     # noqa: BLE001
+        from GolemQ.core.migrate44 import mongo44_uri
+        print('[migrate] 失败：{}: {}'.format(type(exc).__name__, exc), file=sys.stderr)
+        print('[migrate] 4.4 地址由 8.3 的 uri 推导得到：{}'.format(mongo44_uri()),
+              file=sys.stderr)
+        sys.exit(1)
+    if not args.migrate_dry_run and not out:
+        print('[migrate] ⚠️ 一行都没搬到 —— 检查 4.4 是否可达', file=sys.stderr)
+
+
+MIGRATE_REALITY_FEAT = Command(
+    name='migrate-reality-feat',
+    flags=('migrate_reality_feat', 'migrate_reality_verify'),
+    add_arguments=add_reality_feat_arguments,
+    run=run_migrate_reality_feat,
 )

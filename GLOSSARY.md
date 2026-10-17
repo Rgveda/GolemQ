@@ -44,10 +44,11 @@
 
 | 术语 | 形态 | 说明 |
 |:--|:--|:--|
-| **`features_dummy`** | `DataFrame`，两层 MultiIndex **`(date, code)`**，列 = 特征名 | **本项目特征矩阵的规范名**。各 `features/` `analysis/` 模块往里**追加列**；`portfolio/` 也消费它 |
+| **`features_dummy`** | `DataFrame`，两层 MultiIndex **`(date, code)`**，列 = 特征名 | **本项目特征矩阵的规范名**。各 `analysis/` 模块往里**追加列**；`portfolio/` 也消费它。⚠️ 原文写作「各 `features/` `analysis/` 模块」—— `GolemQ/features/` 已于 2026-10-16 **整包删除**（D50）|
 | **`KlineResult`** | 只有 `.data` 的最小接口 | 与 QUANTAXIS `QA_DataStruct_*` 对齐 —— 调用方只取 `.data`。定义在 `markets/StockCN/kline83.py` |
 | **`.data`** | `DataFrame`，两层 MultiIndex `(date\|ts, code)` | 下游用 `index.get_level_values(level=0/1)` 取时间轴与代码 |
 | **`MARKET_TYPE`** | 常量类 | ⚠️ **混了两个层级**：`STOCK_CN`/`STOCK_HK`/`STOCK_US` 是**市场归属**；`INDEX_CN`/`ETF_CN`/`FUND_CN` 等是**品种类型**（同属一个市场）。A 股指数仍属 `StockCN` |
+| **`epoch_divisor(dtype)`** / `EPOCH_UNIT_TO_SECONDS` | 常量 + 函数 | **`datetime64` 的整数 → 秒**的唯一换算入口（`core/constants.py`）。⚠️ **按每条序列自己的 dtype 查**（s→1 / ms→1e3 / us→1e6 / ns→1e9）—— **不是一个全局标量**：pandas 3 的精度**按输入而定**（`date` 对象 ⇒ `[s]`，字符串/Series ⇒ `[us]`），单标量会把 `date_stamp` 算错（D52 / P35）。用 `kline83.epoch_seconds(series)` 更省事 |
 
 ---
 

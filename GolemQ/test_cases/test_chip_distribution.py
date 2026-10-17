@@ -13,9 +13,11 @@ import numpy as np
 import pandas as pd
 
 try:
+    from GolemQ.analysis import ChipDistribution_jit as _MOD
     from GolemQ.analysis.ChipDistribution_jit import ChipDistribution
     _IMPORT_ERROR = None
 except ImportError as _import_error:
+    _MOD = None
     ChipDistribution = None
     _IMPORT_ERROR = _import_error
 
@@ -89,6 +91,68 @@ class TestChipDistributionPerformance(unittest.TestCase):
         self.assertEqual(len(cost_result), len(test_df), '成本分布应与输入等长')
 
         print("性能测试完成！")
+
+
+class TestMissingTurnoverRaises(unittest.TestCase):
+    """缺换手率 ⇒ **抛**，且点名 `fill_turnover`（`DECISIONS.md` D44）。
+
+    为什么值得钉：这条链原先**自己补算**（`vol / 流通股本`），失败还是静默的
+    （最末一支只 print 一行就继续）。而「恰好缺今天这一天」是**日常**情形
+    （`--save` 先写 K 线、后写元数据），所以静默兜底等于让「数据还没到」永远不被发现。
+    现在补齐挪到 `markets/StockCN/metadata_save.fill_turnover`，这里只负责**不装**。
+    """
+
+    N = 300
+
+    def _data(self):
+        ts = pd.date_range('2024-01-01', periods=self.N, freq='B')
+        idx = pd.MultiIndex.from_arrays([ts, ['600519'] * self.N], names=['ts', 'code'])
+        rng = np.random.default_rng(42)
+        close = rng.uniform(10, 20, self.N)
+        return pd.DataFrame({
+            'open': close, 'high': close + 1, 'low': close - 1, 'close': close,
+            'volume': rng.uniform(1e4, 5e4, self.N),
+            'amount': close * 1e6, 'date': ts.strftime('%Y-%m-%d'),
+        }, index=idx)
+
+    def _run(self, meta):
+        from unittest import mock
+        chip = ChipDistribution()
+        with mock.patch.object(_MOD, 'GQ_fetch_stock_reality_feat_day', return_value=meta):
+            chip.get_data('600519', data=self._data(), verbose=False)
+        return chip
+
+    def _meta(self, days):
+        idx = pd.MultiIndex.from_arrays([days, ['600519'] * len(days)],
+                                        names=['date', 'code'])
+        return pd.DataFrame({'turnover': [0.01] * len(days)}, index=idx)
+
+    def test_missing_turnover_raises_and_names_the_fill_function(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._run(self._meta([]))
+        self.assertIn('fill_turnover', str(ctx.exception))
+
+    def test_full_coverage_runs_to_completion(self):
+        """全覆盖时一路跑通，并把 MA250 / MACD 三件套 / 滞回列都算出来。
+
+        ⚠️ 这条用例在 2026-10-13 之前**写不出来** —— `FIELD.DIF` / `FIELD.DEA` /
+        `FIELD.MA250_TIMING_LAG_MAJOR` 三个常量没定义（`PITFALLS.md` **P1** 的缺口），
+        `get_data` 走到 `talib` 那段必抛 `AttributeError`。常量补齐后才跑得通。
+        这也解释了那个缺口为何长期没暴露：进 `get_data` 的唯一路径
+        `calc_stock_chip_distribution_jit` **全树无人调用**。
+        """
+        data = self._data()
+        days = pd.to_datetime(data.index.get_level_values(0))
+        chip = self._run(self._meta(days))
+        for col in ('TurnoverRate', 'MA250', 'DIF', 'DEA', 'MACD', 'ma250LagMaj'):
+            self.assertIn(col, chip.data.columns)
+
+    def test_partial_coverage_still_raises(self):
+        """只缺一天也抛 —— 不设「差几天才报」的余地。"""
+        data = self._data()
+        days = pd.to_datetime(data.index.get_level_values(0))[:-1]
+        with self.assertRaises(ValueError):
+            self._run(self._meta(days))
 
 
 def test_performance():

@@ -6,7 +6,21 @@
 """
 from __future__ import annotations
 
+import os as _os
 from io import BytesIO
+
+#: ⚠️ **必须在 matplotlib 首次 import 之前**把它钉到**无 GUI** 后端。
+#:
+#: 2026-10-18 实测（用户真机跑 `chartscan.ps1`）：服务端对**每个端口开一个线程**
+#: （`server.main` → `run_server(port, is_thread=True)`），而 matplotlib 默认走
+#: **TkAgg** ⇒ 在非主线程里 `plt.figure()` 先警告
+#: ``Starting a Matplotlib GUI outside of the main thread will likely fail``，
+#: 紧接着 `plt.close()` 里 Tk 抛 ``RuntimeError: main thread is not in main loop``。
+#: 而 `predict.GQ_predict_ChartScanAI` 的渲染段被 `except Exception: print_exc()`
+#: 兜着 ⇒ **每个标的都「失败得很安静」，一条结果都写不进库**。
+#:
+#: 本模块只把图存进内存 `BytesIO`，**从不需要窗口** ⇒ `Agg` 是唯一正确选择。
+_os.environ['MPLBACKEND'] = 'Agg'
 
 __all__ = [
     'CHUNK_SIZE', 'FIGSIZE', 'DPI', 'CLOSE_TIMES',
@@ -33,7 +47,11 @@ def GQ_generate_chart_stock(kline, ticker='', chunk_size=CHUNK_SIZE,
     ⚠️ **只进内存、不落盘**（旧树也如此 —— `datastore/ChartScanAI/` 是空的）。
     无数据返回 `None`（并打印一行，照旧）。
     """
-    import matplotlib.font_manager as fm      # noqa: PLC0415 惰性：GolemQ env 没装
+    import matplotlib                          # noqa: PLC0415 惰性：GolemQ env 没装
+    # 再钉一次（`force=True`）：万一 matplotlib 在本模块被 import 之前就已经
+    # 以 GUI 后端 import 过（例如别处先 import 了 pyplot），模块级的 MPLBACKEND 不生效。
+    matplotlib.use('Agg', force=True)
+    import matplotlib.font_manager as fm      # noqa: PLC0415
     import matplotlib.pyplot as plt            # noqa: PLC0415
     import mplfinance as mpf                   # noqa: PLC0415
 

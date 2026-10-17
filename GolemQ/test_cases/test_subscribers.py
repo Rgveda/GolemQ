@@ -45,8 +45,13 @@ class TestSubscriberRegistry(unittest.TestCase):
                                  f'{key} 有必填参数 {required}，CLI 是无参调用')
 
     def test_expected_keys_are_present(self):
-        """当前应支持的三条实时订阅键（新增/改名时这个用例会红 —— 那是有意的）。"""
-        self.assertEqual(sorted(GQSUBSCRIBER), ['l1_tencent', 'l2_tencent', 'tencent'])
+        """当前应支持的两条实时订阅键（新增/改名时这个用例会红 —— 那是有意的）。
+
+        ⚠️ **2026-10-15 起少了 `l2_tencent`**：腾讯 L2 是 L1 的真子集、且比 L1 还慢
+        （3 秒 vs 2 秒），已整条删除 —— 见 `docs/decisions/D47.md`。
+        别把这个用例改回三条：那意味着 L2 又回来了。
+        """
+        self.assertEqual(sorted(GQSUBSCRIBER), ['l1_tencent', 'tencent'])
 
 
 if __name__ == '__main__':

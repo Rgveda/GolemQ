@@ -38,18 +38,41 @@
 
 ### 集合布局
 
-```
-golemq_stock_cn                       ← 历史行情（读多写少、全量保留）
-  ├─ stock_1min | stock_5min | stock_15min | stock_30min | stock_60min    ← 时序集合
-  └─ index_1min | index_5min | index_15min | index_30min | index_60min    ← 正在转时序（另一会话）
+> **2026-10-17 实测重写**（原表只列了 stock/index 两类 K 线，已严重过时）。
+> 当时 `golemq_stock_cn` 共 **60 个用户集合**（不含 `system.*`）。
 
-golemq_stock_cn_realtime              ← 实时行情（追加写、按日退役）
-  └─ realtime_YYYY-MM-DD              ← 一天一个时序集合，保留约 14 天
 ```
+golemq_stock_cn                         ← 历史行情 + 参考数据（读多写少、全量保留）
+  # K 线（**时序集合**，{timeField:'ts', metaField:'code'}）
+  stock_{1,5,15,30,60}min  stock_day  stock_adj  stock_xdxr
+  etf_{1,5,15,30,60}min    etf_day    etf_adj    etf_xdxr
+  index_{1,5,15,30,60}min  index_day
+  fund_{1,5,15,30,60}min   fund_day
+  future_{1,5,15,30,60}min future_day
+  *_{freq}_removed                       ← 迁移时剔除的死行（审计留档，不再写）
+  # 参考数据（普通集合）
+  stock_list  stock_info  stock_block  etf_list  index_list  financial
+  # ChartScan CV 结果（普通集合；见下「键」）
+  stock_reality_feat_{day,60min,15min}
+  etf_reality_feat_{day,60min,15min}
+  index_reality_feat_{day,60min,15min}
+  # 记账
+  refdata_meta  migrate83_ledger
+
+golemq_stock_cn_realtime                ← 实时行情（追加写、按日退役）
+  └─ realtime_YYYY-MM-DD                ← 一天一个时序集合，保留约 14 天
+```
+
+**`*_reality_feat_*` 的键**（`reality_save.UNIQUE_KEYS`）：`day` 族
+`(code, date_stamp)`，`60min` / `15min` 族 `(code, time_stamp)`，**唯一索引**。
+`stock_` / `etf_` / `index_` 的前缀由 `reality_feat_name(family, market_type)` 定
+（⚠️ **ETF 自 2026-10-17 起是 `etf_`**，此前误与指数共用 `index_`，见 `D51`）。
 
 时序规格：`{timeField: 'ts', metaField: 'code', granularity: 'minutes'|'hours', bucketMaxSpanSeconds: 86400|2592000}`
 
-集合名推导统一为 `f'{market}_{frequency}'`，`market ∈ {'stock','index'}`。
+集合名推导统一为 `f'{market}_{frequency}'`，`market ∈ {'stock', 'etf', 'index',
+'fund', 'future'}`（`kline83.market_prefix` 是**唯一出处**；ETF 早在 2026-09 就拆到了
+`etf_*`，别再按「股票/指数二选一」理解）。
 
 ### 实时库的集合布局（2026-10-08 定，取代 2026-09-21 的单集合写法）
 
@@ -58,13 +81,16 @@ golemq_stock_cn_realtime              ← 实时行情（追加写、按日退�
   `purge_historical_collections`）正是按这个名字删整日集合的。名字生成收敛在
   `realtime.realtime_collection_name()` 一处，并有单测钉住「写入端产出的名字 =
   purge 要找的名字」。
-* **一个日集合里混三条流**，靠行内 `source` 区分；它**同时是去重键的一部分**：
+* **行内 `source` 区分数据流**，它**同时是去重键的一部分**。
+  ⚠️ 2026-10-15 起**只有一条流**，但 `source` 不是摆设（见下）：
 
 | `source` | 内容 | 写入方 |
 |:--|:--|:--|
-| `tencent_l1` | 腾讯全市场快照（**含五档**），2 秒一轮 | `realtime.sub_l1_from_tencent` |
-| `tencent_l2` | 腾讯盘口（字段是 L1 的**真子集**），3 秒一轮 | `realtime.sub_l2_from_tencent` |
-| `qmt` | MiniQMT 五档 —— **2026-10-01 起停服，当前无数据** | 同上（`QMT_REALTIME_ENABLED=False` 已关） |
+| `tencent_l1` | 腾讯全市场快照（**含五档**），2 秒一轮。⚠️ **2026-10-15 起含 ETF 与指数**（此前只有股票）—— 一并落这张表 | `realtime.sub_l1_from_tencent` |
+
+  删掉的两条（`docs/decisions/D47.md`）：`tencent_l2` —— 字段是 L1 的**真子集**、
+  且 3 秒一轮比 L1 的 2 秒**还慢**，纯重复；`qmt` —— MiniQMT 2026-10-01 停服占位。
+  存量行里可能还有这两类 `source`，读取器按 `source` 过滤**正是为了别把它们混进来**。
 
 * 写入**先删后插，但只在「本进程首次见到该 `(source, code)`」时删**：
   `delete_many({'code':…, 'ts':…, 'source':…})` + `insert_many`
@@ -216,7 +242,7 @@ each_day = sorted(kline.index.get_level_values(level=0).unique())
 | ~~**日线未迁移**~~ **已作废**（2026-10-08） | 先前那条是**错的**：`stock_day` **17,893,343** 行、`index_day` 4,564,152 行、`etf_day` 3,220,050 行 —— 日线**迁全了**。当时据以判断的计数来自时序集合上不可靠的 `$collStats count`，见 `PITFALLS.md` P15。⚠️ **实测真有洞的是 ETF**：`etf_day` 抽查 1,689 只里 **739 只有缺日**（`--save-coverage` 可复现）|
 | **指数集合数据不全** | ~~先前的说法~~ 实测 `index_day` 有 8,733 个 code、`index_1min` 亦然（2026-10-08）。⚠️ 但**指数分钟与 pytdx 不同源**：`vol` 比值 14–18 非常数、`close` 精度也不同 → `--save tdx` 里指数分钟**按 pytdx 原值写**（`INDEX_MIN_VOL_SCALE`），边界处会与存量跳变 |
 | **概念 K 线仍未实现** | 真实版本只在 `GolemQ_old/fetch/concept.py:865`（读 4.4）。⚠️ 2026-10-10 补记：原先那个空壳 `GolemQ/fetch/concept.py` **已随 `fetch/` 整包删除**，现在该方法是 `markets/StockCN/__init__.py` 里一个直接抛 `NotImplementedError` 的实现（`base_market.py` 的契约本就要求如此） |
-| **下游 stub 未解** | `load_massive_reviews` / `attach_reality_features` 仍是 stub，端到端检查会停在这些点 —— 与 kline 通路无关。⚠️ 2026-10-10 更正：`align_kline_timeline` **已不是 stub，而是不存在**（调用方随 `services/persistence/` 删除）；`Timeline_duration` 反倒**回来了**，真实现在 `analysis/timing.py` |
+| ~~下游 stub 未解~~ | ✅ **2026-10-16 已了结**（`DECISIONS.md` **D50**）：整个 `GolemQ/features/` 包**已删除**。它一共 5 个函数、**零调用方**（老树的 20 个消费方都在 `models/`/`benchmark/`，那两层新树没有），其中 2 个新树**已有等价物**（`refdata.GQ_fetch_stock_reality_feat_day` / `metadata_save` 的写口，且是新树 D34 修正过的），3 个的**数据源在 8.3 根本不存在**（`stock_reality_features` / `stock_massive_models` / `stock_massvie_reviews` ← 老树那个集合名是拼错的）。<br>⚠️ 旧记录：`align_kline_timeline` **不是 stub 而是不存在**（调用方随 `services/persistence/` 删除）；`Timeline_duration` 反倒**回来了**，真实现在 `analysis/timing.py` |
 
 ### 附：本次发现的既有缺陷（非本次引入）
 

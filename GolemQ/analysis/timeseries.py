@@ -108,3 +108,72 @@ def GQ_data_min_to_day(min_data, type_='1D'):
         offset="0min",
         closed='right'
     ).agg(conversion).dropna()
+
+
+def rolling_poly9_v2(s, w: int = 252):
+    """滚动**九次多项式**拟合，取每个窗口的**端点值**作输出（第二版）。
+
+    逐字搬自老树 `analysis/timeseries.py:1014`（`POLYNOMIAL9` 的生产核，
+    `features/base.py:2110` 用 `rolling_poly9_v2(s, 252)` 调它）。
+
+    它在算一条**平滑的趋势基线**：在收盘价序列上开 `w` 长的滑动窗，
+    每窗用 Chebyshev 九次多项式拟合，只要**窗口末端那一根**的拟合值 ——
+    于是得到与原序列等长的一条"去噪趋势线"。`POLYNOMIAL9_DELTA`（它的一阶差分）
+    与 `POLYNOMIAL9_TIMING_LAG`（由差分符号算的金叉/死叉时序）都建在它上面。
+
+    递归折半（**这是 `_v2` 与 `_v1` 的唯一区别**）
+    ============================================
+    `w` 大而序列不够长时，若直接开窗会得到**一整段 NaN**。`_v2` 的做法是把 `w` 折半
+    **递归**，并把前缀段单独拿去递归补齐：
+
+    * `len(s) > w 且 w > 122` → 开窗扫一遍（每窗出 1 个点），**前缀 `s[:w-1]` 用 `w/2` 递归补**；
+    * `len(s) > w/2 且 w > 64` → 只做递归，不扫窗；
+    * 否则 → 整段一次拟合（度数 9）。
+
+    实测 `w=252`、`len=900` 的实际路径是 `252 → 126 → 63`（最后落 else），
+    三段拼起来**恰好 900 个数**。
+
+    ⚠️ **不设 `random_state` 之类**：这里没有随机性，但**也没有容差** ——
+    搬运判据是 `np.array_equal`（`DECISIONS.md` D35/D36）。
+
+    ⚠️ **本函数刻意不做 JIT**（用户 2026-10-16 问过）：它的热循环是
+    `map(last_poly9, windows)`，而每次迭代调的是 `np.polynomial.Chebyshev.fit`
+    —— **numpy 的 C 实现**，numba 编译不了。硬写成手搓最小二乘会**动最低位**，
+    直接破坏上面的 `array_equal` 对拍。这一族真正该 JIT 的是
+    `mapower_np_vXIIs` / `inv_nums`（O(n²) 双重 Python 循环）与
+    `magic_nine`（逐 bar 循环）—— 那两处已各有实现。
+
+    >>> import numpy as np
+    >>> y = rolling_poly9_v2(np.arange(30, dtype=float), 20)
+    >>> len(y)                      # 输出与输入**等长**
+    30
+    >>> round(float(y[-1]), 6)      # 线性序列上九次拟合能精确落到端点
+    29.0
+
+    :param s: 价格序列（1-D array-like）
+    :param w: 窗口长；`>122` 才会真的滑动开窗，否则退化成整段拟合
+    :returns: 与 `s` 等长的趋势线（`np.ndarray`）
+
+    ⚠️ **长度对不上时它是补零而不是报错**（老树行为，见下面的分支）——
+    正常输入不会走到那里；走到就说明上游给的序列有问题。
+    """
+    s = np.asarray(s)
+    x_index = range(w)
+
+    def last_poly9(sx):
+        p = np.polynomial.Chebyshev.fit(x_index, sx, 9)
+        return p(x_index)[-1]
+
+    if (len(s) > w) and (w > 122):
+        # 惰性 import：**不在模块顶层** —— `timing` 是本模块的同级，顶层导入没问题，
+        # 但这里放在函数内是为了让「谁真的用到 sliding window」一眼可见。
+        from .timing import strided_app
+        x = strided_app(s, w, 1)
+        return np.r_[rolling_poly9_v2(s[0: w - 1], w=int(w / 2)),
+                     np.array(list(map(last_poly9, x)))]
+    elif (len(s) > int(w / 2)) and (w > 64):
+        return rolling_poly9_v2(s, w=int(w / 2))
+    else:
+        x_index = range(len(s))
+        p = np.polynomial.Chebyshev.fit(x_index, s, 9)
+        return p(x_index)

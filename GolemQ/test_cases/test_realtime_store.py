@@ -12,10 +12,15 @@ from unittest.mock import MagicMock
 
 from GolemQ.markets.StockCN.realtime import (
     REALTIME_SOURCE_TENCENT_L1,
-    REALTIME_SOURCE_TENCENT_L2,
     _write_ts_rows,
     realtime_collection_name,
 )
+
+#: 第二条流的**合成** source 名 —— 这个集合的设计前提是「多条流可共用一张表」，
+#: 而当前树里实际只剩 L1 一条（2026-10-15 删了腾讯 L2，见 `docs/decisions/D47.md`）。
+#: 用合成名而不是复活 `REALTIME_SOURCE_TENCENT_L2`：那条流真删了，
+#: 但**「键必须含 source」这条纪律不能跟着走** —— 它是那个设计的承重条件。
+SOURCE_SECOND = 'synthetic_second_stream'
 from GolemQ.markets.StockCN.tools import purge_historical_collections
 
 
@@ -143,15 +148,17 @@ class TestWriteTsRows(unittest.TestCase):
     def test_last_ts_is_keyed_by_source_too(self):
         """同一个 code、同一个 ts，两条流互不遮挡。
 
-        L1 与 L2 落在同一集合、同一 `(code, ts)`，若 `last_ts` 只按 code 记，
+        这个集合的语义是「多条流可共用一张表」，若 `last_ts` 只按 `code` 记，
         第二条流的第一行会被当成"重复"丢掉。
+
+        ⚠️ 用**合成** source 名：当前树里只剩 L1 一条流（L2 已删），但这条
+        纪律是「多流共用」那个设计的承重条件，**不跟着某条流一起走**。
         """
         ts = self._rows(0)
         self.assertEqual(_write_ts_rows(self.collection, ts, self.last_ts,
                                         REALTIME_SOURCE_TENCENT_L1), 1)
         self.assertEqual(_write_ts_rows(self.collection, self._rows(0),
-                                        self.last_ts,
-                                        REALTIME_SOURCE_TENCENT_L2), 1)
+                                        self.last_ts, SOURCE_SECOND), 1)
 
     def test_rows_missing_code_or_ts_are_dropped(self):
         rows = [{'code': '600519.XSHG'},                 # 缺 ts

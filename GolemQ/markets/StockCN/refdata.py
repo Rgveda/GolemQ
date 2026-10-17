@@ -54,14 +54,14 @@ __all__ = [
     'GQ_fetch_index_list',
     'GQ_fetch_stock_block',
     'GQ_fetch_financial',
-    'GQ_fetch_stock_metadata_day',
+    'GQ_fetch_stock_reality_feat_day',
     'GQ_ref_collection',
 ]
 
 #: **6 个**参考集合的规范名。
 #: ⚠️ 与 `refdata_save.ALL_REF_COLLECTIONS` 是**两份平行清单**（这里管「读」、
 #: 那里管「写」），两边必须同步 —— `index_list` 是 2026-10-11 一起加的第 6 个。
-#: 另注：`GQ_fetch_stock_metadata_day` **刻意不在其中**（它是派生元数据表，
+#: 另注：`GQ_fetch_stock_reality_feat_day` **刻意不在其中**（它是派生元数据表，
 #: 不是参考集合），所以清单长度不等于 `__all__` 里的读取函数个数。
 REF_COLLECTIONS = ('stock_list', 'stock_info', 'etf_list', 'index_list',
                    'stock_block', 'financial')
@@ -174,9 +174,9 @@ def GQ_fetch_financial(codes=None, report_date=None, database=None) -> pd.DataFr
     return df
 
 
-def GQ_fetch_stock_metadata_day(code, start=None, end=None, columns=None,
+def GQ_fetch_stock_reality_feat_day(code, start=None, end=None, columns=None,
                                 database=None) -> pd.DataFrame:
-    """`stock_metadata_day`（**日频元数据**，一行 = 一标的 × 一交易日）的读取口。
+    """`stock_reality_feat_day`（**日频元数据**，一行 = 一标的 × 一交易日）的读取口。
 
     ⚠️ **不走 `GQ_ref_collection`** —— 那个只认 5 个**参考集合**
     （`REF_COLLECTIONS`），而本表是**派生元数据**表、不在其中。给 `REF_COLLECTIONS`
@@ -220,7 +220,10 @@ def GQ_fetch_stock_metadata_day(code, start=None, end=None, columns=None,
             proj[c] = 1
         for c in columns:
             proj[c] = 1
-    coll = (database or _stock_cn_db())['stock_metadata_day']
+    # ⚠️ **不要在这里写字面量** —— 集合名有唯一出处（`metadata_save`）。
+    # 2026-10-16 前这里硬编码过 `'stock_metadata_day'`，与常量是**两个真相源**。
+    from .metadata_save import REALITY_FEAT_DAY_COLL
+    coll = (database or _stock_cn_db())[REALITY_FEAT_DAY_COLL]
     rows = list(coll.find(q, proj))
     if not rows:
         return pd.DataFrame()

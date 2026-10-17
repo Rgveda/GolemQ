@@ -114,8 +114,10 @@ def run_save(args) -> None:
         from GolemQ.markets.StockCN.refdata_save import (
             ALL_REF_COLLECTIONS,
             REFDATA_BY_SOURCE,
+            SNAPSHOT_COLLECTIONS,
             format_status,
             refdata_ttl_hours,
+            refresh_stock_codes_cache,
             save_refdata,
         )
         from GolemQ.markets.StockCN.metadata_save import refresh_turnover
@@ -229,6 +231,33 @@ def run_save(args) -> None:
                     name, RUNNING if phase == 'start' else (
                         DONE if (entry.get('rows') or entry.get('cached'))
                         else PENDING)))
+
+        # —— 码表缓存（用户 2026-10-15 要求）——
+        # `easyquotation` 的全市场快照枚举的是 `~/.GolemQ/.../stock_codes.conf`
+        # 这份本地码表，而它此前**全树无人写** ⇒ 新股永远收不到、退市股永远在收，
+        # 且完全静默（详见 `refdata_save.refresh_stock_codes_cache`）。
+        #
+        # 触发条件是两条**同时**成立：
+        #   ① 码表的**任一**来源集合本次真的取到并写成功 —— `status == 'ok'`。
+        #      ⚠️ 口径从「只看 stock_list」放开成 `SNAPSHOT_COLLECTIONS` 三集合：
+        #      码表现在是 `stock_list ∪ etf_list ∪ index_list` 的并集，
+        #      只盯 stock_list 的话，「某天只上新了一只 ETF」就更新不到。
+        #      刷新闸拦下的 `cached` **不算**（没碰源）；`skipped`/`failed` 更不算。
+        #   ② 码表**有增减** —— 增删皆空时 `refresh_stock_codes_cache` 自己不写盘。
+        # `--save-collections etf_list` 这类只带一个集合的跑法照样能触发：
+        # 另外两个集合从库里读现值即可（它们本来就在那儿）。
+        #
+        # ⚠️ **不做成独立的 banner 节点**：它没有"取数"这一步，硬塞一行会留一个
+        # 点不亮的灰点（`PITFALLS.md` P22 同款的记账问题），而它本来就是
+        # 「参考数据」那一步的产物 —— 用 `say` 出一行即可（banner 活着时走它）。
+        refreshed = [c for c in SNAPSHOT_COLLECTIONS
+                     if (refdata.get(c) or {}).get('status') == 'ok']
+        if do_refdata and refreshed:
+            try:
+                refresh_stock_codes_cache(verbose=args.verbose, echo=say)
+            except Exception as exc:      # noqa: BLE001 码表缓存不该拖垮 --save
+                say('[stock_codes] 码表缓存更新失败：{}: {}'.format(
+                    type(exc).__name__, exc))
 
         if not tdx_like:
             say('[save] 源 {}：K 线/xdxr/adj 只有 pytdx 供得了，本命令跳过'.format(value))

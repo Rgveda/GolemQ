@@ -129,3 +129,38 @@ streamlit run examples/app_pivot_renko.py
    用普通折线会把"没变化"画成斜线，看不出台阶。
 3. **jit 缺失时自动退回纯版**（`renko_jit.available()`），并在侧边栏**如实标出**
    走的是哪个版本 —— 两版逐值相同（见 `test_renko_jit.py`），只是快慢差 ~6×。
+
+## `app_chartscan.py` —— ChartScanAI（YOLOv8 买卖点识别）演示
+
+```bash
+# ⚠️ 必须在 GolemAI env —— torch / ultralytics 只装在那儿（streamlit 那边也有）
+conda activate GolemAI
+streamlit run examples/app_chartscan.py
+```
+
+参考 `Y:\Projects\ChartScanAI\app.py`（那份用 yfinance 取美股），本版把取数换成
+**新树的 8.3 读口**，其余交互照旧：生成 K 线图 → 喂模型 → 画出检出框。
+
+### 这条链上有什么
+
+| 环节 | 落点 | 说明 |
+|:--|:--|:--|
+| 取数 | `GolemQ.get_active_market().get_kline_price_v3 / get_kline_price_min` | 市场实例；日线 / 60min / 15min 三档 |
+| ↓ | `markets/StockCN/kline83.py` | MongoDB **8.3** 时序集合，**已前复权** |
+| 出图 | `chartscan/render.GQ_generate_chart_stock` | ⚠️ **与线上推理同一个函数**，不是另画一份 |
+| 推理 | `chartscan/model.load_model().predict` | YOLOv8（52 MB 权重在 `datastore/models/weights/`） |
+| 像素→bar | `chartscan/predict.calculate_i` | `(x-386)/6.5-1`，只在固定标定下成立 |
+| 对照 | `reality_save.fetch_reality_feat` | 库里**已有**的检出（稀疏） |
+
+### 三条刻意设计
+
+1. **出图必须复用 `GQ_generate_chart_stock`。** YOLO 的像素 x 靠 `calculate_i`
+   映射回 bar，那两个常数只在 `figsize=(18, 6.5)` + `dpi=100` + `chunk_size=180`
+   下成立。在 app 里另画一份 = **坐标静默挪位**，模型照样给出「可信」的框。
+2. **上传任意图片时不给 bar 映射。** 那套像素标定只对「自己生成的那张图」有意义；
+   对别人的图硬算等于编。所以「对应时刻」那一列只在自己出的图上出现。
+3. **本 app 不落库。** 它只做可视化；落库那条链是 `--server` / `--scan ChartScan`
+   （见页面底部）。两者共用同一套出图与坐标换算，差别只在「写不写」。
+
+⚠️ 检出是**稀疏**的：只有识别到买卖点的那几根才有值，不是每根 bar 都有。
+`Coordinates*` 存的是 **UTC 毫秒**，而文档的键（`date_stamp` / `time_stamp`）是**秒**。

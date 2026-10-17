@@ -63,8 +63,7 @@ from collections import deque
 # 实时读写已全部切到 8.3 的 `golemq_stock_cn_realtime`（见 `_realtime_db`）。
 from tqdm import tqdm
 import urllib3
-import threading
-from GolemQ.core.constants import MARKET_TYPE
+from GolemQ.core.constants import MARKET_TYPE, epoch_divisor
 from GolemQ.analysis.timeseries import (
     GQ_data_min_resample,
     GQ_data_min_to_day,
@@ -131,16 +130,14 @@ def formater_l1_tick(code: str, l1_tick: dict) -> dict:
     return l1_tick
 
 
-#: 实时落库的 `source` 取值 —— 同一个日集合里区分数据流，**且是去重键的一部分**
+#: 实时落库的 `source` 取值 —— 它同时是**去重键的一部分**
 #: （见 :func:`_write_ts_rows`：删除条件不带它，两条流会互删对方刚写的行）。
+#:
+#: ⚠️ **2026-10-15 起只剩 L1 一条流** —— 腾讯 L2 与 QMT 五档占位**都已删除**
+#: （它当时是 L1 的真子集、且比 L1 还慢，见 `docs/decisions/D47.md`）。
+#: 这个字段**不是摆设**：库里存量行已经带它、读取器按它过滤（`GQ_fetch_stock_realtime_adv`），
+#: 删掉会让所有历史行读不出来；`_write_ts_rows` 的删除条件也仍按它分组。
 REALTIME_SOURCE_TENCENT_L1 = 'tencent_l1'
-REALTIME_SOURCE_TENCENT_L2 = 'tencent_l2'
-REALTIME_SOURCE_QMT = 'qmt'
-
-#: MiniQMT 自 2026-10-01 起停服（监管），替代方案（cfquant）尚未落地。
-#: ``False`` = 不订阅、不取数、不刷错 —— QMT 那条路的**结构保留**，
-#: 将来接上替代源时把它改回 ``True``，并让 :func:`_l2_rows_from_qmt` 对接新源。
-QMT_REALTIME_ENABLED = False
 
 
 def realtime_collection_name(day=None):
@@ -167,8 +164,10 @@ def collections_of_today(database):
     """当天实时集合 —— **普通集合**，QMT / 老 L1 路径的写法。
 
     ⚠️ **当前无调用者**：唯一使用方是 `gateway/xtquant/realtime.py`，而 MiniQMT
-    自 2026-10-01 起停服（见 :data:`QMT_REALTIME_ENABLED`）。函数与那三个索引
-    **保留**，是为了将来接替代源时有个明确的对接口；不要因为"没人用"就删掉。
+    自 2026-10-01 起停服。函数与那三个索引**保留**，是为了将来接替代源时有个
+    明确的对接口；不要因为"没人用"就删掉。（`QMT_REALTIME_ENABLED` 那个开关
+    2026-10-15 随 L2 一起删了，见 `docs/decisions/D47.md` —— 它与本函数无关，
+    本函数是**集合构造**，不是取数。）
 
     ⚠️ 它建**普通**集合 + ``(code, datetime)`` 索引 + upsert 写入，与现在的
     **时间序列**存储**不兼容**（实测时间序列不支持唯一索引、不能 upsert）。
@@ -298,15 +297,22 @@ def sub_l1_from_tencent(database_realtime=None):
         l1_ticks_data = []
         if GQ_util_if_tradetime(_time) or \
                 (get_once):  # 如果在交易时间
+            # ⚠️ **只取一遍**。这里原来还紧跟一遍 `market_snapshot(prefix=False)`，
+            # 注释写的是「获取第二遍，包含上证指数信息」—— **两半都是错的**：
+            # * 那两遍打的是**完全相同的 HTTP 请求**（`stock_list` 在 `__init__` 里
+            #   只切一次页，`prefix` 只影响**返回 dict 的 key 形态**，不换请求），
+            #   而 `formater_l1_ticks` 按**归一化后的 code** 去重 ⇒ 第二遍**贡献 0 行**；
+            # * 上证指数**从来就没进来过** —— 码表里没有 `sh000001`
+            #   （它是 `stock_list` 的投影，只有股票），`000001` 取的是
+            #   `sz000001` 平安银行。
+            #
+            # 实测（2026-10-15，用**当时那张只有股票的码表** 5,186 码）：两遍**合计**
+            # 4,936 个 symbol，与单遍**相同**（合计 = 4,936 = 原始码数 ⇒ 第二遍一个都没加进来）。
+            # 码表当天晚些时候扩成 7,878 码（股票 ∪ ETF ∪ 指数，D48），扫描量随之变大，
+            # 但「两遍是同一份响应」这个结论与码表内容无关。
+            # 去掉它每轮省一半请求；`max_num` 那处同时从 60 提到 800。
             l1_ticks = quotation.market_snapshot(prefix=True)
             l1_ticks_data, symbol_list = formater_l1_ticks(l1_ticks)
-
-            # 获取第二遍，包含上证指数信息
-            l1_ticks = quotation.market_snapshot(prefix=False)
-            l1_ticks_data, symbol_list = formater_l1_ticks(
-                l1_ticks,
-                stacks=l1_ticks_data,
-                symbol_list=symbol_list)
 
             # 将新数据转换为 DataFrame 并设置索引
             l1_ticks_data_idx = pd.DataFrame(
@@ -428,18 +434,20 @@ def _write_ts_rows(collection, rows, last_ts, source):
       **不拦重复**（实测同一 ``(code, ts)`` 插两次就是两行）—— 故对**本进程
       首次见到的** ``(source, code)`` 先用 ``delete_many`` 清掉同 ``ts`` 的行再插。
 
-    ⚠️ **`source` 必须进删除条件**：L1（腾讯全量快照）与 L2（腾讯五档）
-    落在**同一个日集合**里，同一 ``(code, ts)`` 会有两行（L1 是 L2 的真超集，
-    这是刻意接受的重复）。删除条件不带 `source`，L1 那轮就会把 L2 刚写的
-    行删掉，反之亦然。
+    ⚠️ **`source` 必须进删除条件**（**当前只有一条流，但这条仍不许省**）：
+    这个集合的语义是「**可能有多条数据流共用**」—— 增量在库里按 `source` 分开，
+    读取器也按它过滤。删除条件不带 `source`，后写的那条流会把先写的同
+    ``(code, ts)`` 行删掉。2026-10-15 删 L2 之前，这正是 L1/L2 互删的机制
+    （见 `docs/decisions/D47.md`）；删了 L2 **不等于**这条纪律作废 ——
+    它是「多流共用一张表」这个设计的承重条件，不是当下的巧合。
 
     ⚠️ **code 一律保持 :func:`normalize_code` 的带后缀形式**（``600519.XSHG``），
     调用方不要为了"省事"截成 6 位：``000001`` 是上证指数与平安银行共用的号，
     靠 ``pre_close`` 启发式区分，截断会把两只标的并成同一个 metaField 值。
 
     `last_ts` 由调用方持有（``{(source, code): 最近写入的 ts}``），本函数就地更新它。
-    **键要含 `source`**：同一个循环里可能先后写两条流（见 `sub_l2_from_tencent`），
-    只按 `code` 记的话，第二条流的第一行会被当成"重复"丢掉。
+    **键要含 `source`**，理由同上 —— 只按 `code` 记的话，第二条流的第一行
+    会被当成"重复"丢掉。`test_realtime_store` 用两个**合成** source 名钉着这条。
     缺 `code` 或 `ts` 的行直接丢（`ts` 是 timeField，缺了 insert 会报错）。
 
     :param source: :data:`REALTIME_SOURCE_TENCENT_L1` 等；写进每行的 `source` 字段
@@ -482,310 +490,6 @@ def _write_ts_rows(collection, rows, last_ts, source):
     return len(fresh)
 
 
-#: L2 五档盘口的字段名 —— 与 `easyquotation/tencent.py` 的解析结果同形。
-L2_DEPTH_FIELDS = tuple(
-    '%s%d%s' % (side, i, suffix)
-    for side in ('bid', 'ask')
-    for i in range(1, 6)
-    for suffix in ('', '_volume')
-)
-
-#: 腾讯快照里顺带留下的标量字段（都是响应里现成的，不额外请求）。
-L2_EXTRA_FIELDS = ('涨停价', '跌停价', '均价', '委差', '量比')
-
-
-def _l2_row(code, ts, source, **vals):
-    """一行 L2。`ts` 必须是 **UTC-aware**（时间序列的 timeField）。
-
-    两份时间的口径收敛在这里：`ts` 是唯一来源，`datetime` 由它反推成北京时间的
-    可读字符串。**不要**让调用方各传各的 —— 那正是 `kline83` 模块反复强调的
-    「时区换算只应有一处」。
-
-    `code` 必须是 :func:`normalize_code` 的**带后缀**形式：L1 行存的就是那个形式，
-    两条流落在同一个日集合里，按 code 查时才能一起命中。裸 6 位（``'600519'``）
-    会让 ``$in ['600519.XSHG']`` **静默读空**。
-
-    **`None` 不进库**：「字段缺失」与「值为 0」必须能区分 —— 盘口全 0
-    （集合竞价前）是有意义的状态，不能与没取到混为一谈。
-    """
-    row = {'code': code, 'source': source}
-    if ts is not None:
-        row['ts'] = ts
-        row['datetime'] = pd.Timestamp(ts).tz_convert('Asia/Shanghai').strftime(
-            '%Y-%m-%d %H:%M:%S')
-    for k, v in vals.items():
-        if v is not None and v == v:          # 排除 None 与 NaN
-            row[k] = v
-    return row
-
-
-def _l2_rows_from_tencent(quotation):
-    """腾讯全市场快照 → L2 行（含五档深度）。
-
-    两次 `market_snapshot`（`prefix=True/False`）的合计约 4,900 只，
-    与 L1 订阅器同一份数据源 —— 区别只在本函数**把深度显式取出来**，
-    按 3 秒节奏再落一遍（L1 行是它的真超集，重复是刻意接受的：
-    两条流靠 `source` 区分，见 :func:`_write_ts_rows`）。
-
-    `code` 走 :func:`normalize_code`（带后缀），与 L1 行、与读取器的查询同形。
-    `pre_close` 喂 `tick['now']` 是为了 ``000001`` 那条启发式与 L1 一致
-    （上证指数与平安银行共用这个号）。
-    """
-    rows, seen = [], set()
-    for prefix in (True, False):
-        for code, tick in quotation.market_snapshot(prefix=prefix).items():
-            c6 = str(code)[-6:]
-            if c6 in seen:
-                continue
-            seen.add(c6)
-            vals = {'price': tick.get('now'), 'volume': tick.get('volume')}
-            for f in L2_DEPTH_FIELDS:
-                if f in tick:
-                    vals[f] = tick[f]
-            for f in L2_EXTRA_FIELDS:
-                if f in tick:
-                    vals[f] = tick[f]
-            # 腾讯给的是 naive 北京时间字符串 → 交给 bj_date 换算（唯一入口）
-            rows.append(_l2_row(normalize_code(c6, tick.get('now')),
-                                bj_date(tick.get('datetime')),
-                                REALTIME_SOURCE_TENCENT_L2, **vals))
-    return rows
-
-
-def _l2_qmt_xt_codes(codelist):
-    """GolemQ 6 位代码 → QMT 的 `510300.SH` 形式。
-
-    解析会走 `symbol.is_stock_cn`，而它对**每一个不认识的代码**都打印一行
-    （`00158061 True None SZ 深交所未知代码` 之类）。ETF 名单里有大量它不认识的
-    号段（158xxx/150xxx 等分级基金），实测一次解析刷出**几百行**，把本订阅器
-    自己的进度输出整个淹掉。故这里用 `suppress_stdout_stderr` 包住解析 ——
-    `crawler.py` 用它是同一个理由（遮 QUANTAXIS 的 banner）。
-    """
-    from GolemQ.core.presentation import suppress_stdout_stderr
-    from .datasource.qmt_source import GQ_qmt_resolve_xt_code
-    out = []
-    with suppress_stdout_stderr():
-        for c in codelist:
-            try:
-                out.append(GQ_qmt_resolve_xt_code(c))
-            except Exception:
-                continue
-    return out
-
-
-def _l2_rows_from_qmt(xt_codes, subscribe: bool = True):
-    """MiniQMT → 五档行（ETF 走这条）。
-
-    ⚠️ **MiniQMT 自 2026-10-01 起停服，目前取不到任何数据**（监管）；
-    调用点已在 :func:`sub_l2_from_tencent` 用 :data:`QMT_REALTIME_ENABLED` 关掉。
-    本函数**结构保留**，等接上替代源（cfquant）后对接即可。
-
-    ⚠️ **必须先 `subscribe_quote(period='tick')`**：未订阅的代码
-    `get_full_tick` 只返回陈旧缓存（实测盘口全 0、`time` 停在几分钟前），
-    看起来像「盘口是空的」，实则是没订阅。这是这条路上唯一的坑。
-
-    订阅是**持续生效**的，所以订阅一次即可：`sub_l2_from_tencent` 在进入循环前
-    订阅一次（`subscribe=True`），循环里只读（`subscribe=False`）——
-    否则每轮都重订阅，而订阅后立刻读**当轮仍拿不到数据**（第一轮必空）。
-
-    :param xt_codes: QMT 形式代码（`'510300.SH'`），用 :func:`_l2_qmt_xt_codes` 转
-    """
-    import xtquant.xtdata as xtdata
-    from .datasource.qmt_source import GQ_qmt_to_qa_code
-
-    if subscribe:
-        for xc in xt_codes:
-            try:
-                xtdata.subscribe_quote(xc, period='tick')
-            except Exception:
-                pass
-    ticks = xtdata.get_full_tick(xt_codes) or {}
-
-    rows = []
-    for xc, t in ticks.items():
-        if not t:
-            continue
-        bid = list(t.get('bidPrice') or [])
-        ask = list(t.get('askPrice') or [])
-        bvol = list(t.get('bidVol') or [])
-        avol = list(t.get('askVol') or [])
-        vals = {'price': t.get('lastPrice'), 'volume': t.get('volume'),
-                'amount': t.get('amount')}
-        # ⚠️ 本机 QMT 客户端**不提供盘口深度**：`get_full_tick` 的 bid/ask 恒为 0，
-        # `get_fullspeed_orderbook` 直接报「当前客户端未支持此功能，请更新客户端或
-        # 升级投研版」，`get_l2_quote` 返回空（2026-09-21 实测，ETF 与股票都一样；
-        # 只有价格是活的）。**全 0 的深度一律不写** —— 写进去会被读成「盘口是空的」，
-        # 而真相是「这个源给不了」，两者必须能区分。
-        if any(bid) or any(ask) or any(bvol) or any(avol):
-            for i in range(5):
-                vals['bid%d' % (i + 1)] = bid[i] if i < len(bid) else None
-                vals['bid%d_volume' % (i + 1)] = bvol[i] if i < len(bvol) else None
-                vals['ask%d' % (i + 1)] = ask[i] if i < len(ask) else None
-                vals['ask%d_volume' % (i + 1)] = avol[i] if i < len(avol) else None
-        else:
-            vals['depth'] = 'unavailable'
-        # QMT 的 `time` 是**绝对时间**（epoch 毫秒，UTC 基线），不是北京时间裸值
-        # —— 所以**不能**过 `bj_date`（那会把它当北京时再 +8 小时）。
-        # 用 `pd.Timestamp` 而不是 `datetime`：本模块 `dt` 已经被
-        # `from datetime import datetime as dt` 占成**类**了，`dt.datetime` 不存在。
-        ms = t.get('time')
-        ts = (pd.Timestamp(int(ms), unit='ms', tz='UTC').to_pydatetime()
-              if ms else None)
-        rows.append(_l2_row(normalize_code(GQ_qmt_to_qa_code(xc)), ts,
-                            REALTIME_SOURCE_QMT, **vals))
-    return rows
-
-
-def sub_l2_from_tencent(database_realtime=None, sleep_time: float = 3.0,
-                        etf_codelist=None, verbose: bool = True):
-    """L2（五档盘口）订阅：全市场走腾讯；ETF 那条留给 MiniQMT（**已停服**）。
-
-    为什么 3 秒
-    ==========
-    新浪那条 L2 已加 **30 秒**请求限制，无法连续取 —— 这就是本订阅器存在的理由。
-    腾讯这条可以 3 秒一轮（L1 订阅器跑的是 2 秒），故默认 `sleep_time=3.0`。
-
-    落库
-    ====
-    与 L1 一样写 8.3 的 `golemq_stock_cn_realtime.realtime_YYYY-MM-DD`
-    （**按日**的**时间序列**集合），且**两条流共用同一个日集合**，靠行内
-    `source` 区分：``tencent_l1`` / ``tencent_l2`` / ``qmt``。
-
-    ⚠️ 腾讯 L2 存的字段是 L1 行的**真子集**（`_l2_rows_from_tencent` 只取价格、
-    成交量与五档，而 L1 存的是整份快照、**本来就含五档**）—— 这份重复是
-    **刻意保留**的：它是 3 秒节奏的独立流。**不要**为了"省磁盘"把它删掉。
-    两条流互不覆盖，靠的是 :func:`_write_ts_rows` 的删除条件带 `source`。
-
-    ⚠️ 时间序列**不支持唯一索引、也不能 upsert**（实测），写入见 :func:`_write_ts_rows`。
-
-    两个源的分工
-    ============
-    * **腾讯**：全市场约 4,900 只，一次 `market_snapshot` 拿全部五档。
-    * **MiniQMT**：仅 ETF（`etf_codelist`，默认取 `etf_list`）。
-      ⚠️ **自 2026-10-01 起停服**（监管），目前**取不到任何数据** —— 由
-      :data:`QMT_REALTIME_ENABLED` 关掉取数与订阅，等替代源（cfquant）落地后再恢复。
-      恢复时注意：必须先 `subscribe_quote(period='tick')`，否则拿到的是陈旧缓存。
-    * 每行带 `source` 字段标明来路（它同时是去重键的一部分）。
-
-    :param database_realtime: 目标库；默认 8.3 的 `golemq_stock_cn_realtime`
-        （`DATABASE.GolemQ_StockCN_REALTIME` 在 8.3 服务器上不存在，实测 0 集合，
-        故不用它 —— 见 `markets/StockCN/__init__.py` 里的同一处标注）。
-    :param sleep_time: 轮询间隔（秒），默认 3.0。
-    :param etf_codelist: ETF 代码列表；None = 取 `etf_list` 全量（QMT 停服期忽略）。
-    :param verbose: 打印每轮摘要。
-    """
-    urllib3.util.connection.DEFAULT_MAX_POOL_SIZE = 100
-
-    if database_realtime is None:
-        database_realtime = _realtime_db()
-    if easyquotation_not_install is True:
-        print(u'PLEASE run "pip install easyquotation" before call GolemQ.cli.sub modules')
-        return
-
-    module = HeartbeatModule(
-        module_name="sub_l2_from_tencent",
-        instance_id=f"sub_l2_from_tencent_{dt.now().strftime('%Y%m%d_%H%M%S')}",
-        timeout_seconds=30,
-    )
-    if module.mutex(verbose=True):
-        return False
-    module.start(initial_message="L2盘口订阅模块启动")
-
-    quotation = eq_use('tencent')
-
-    if etf_codelist is None:
-        if not QMT_REALTIME_ENABLED:
-            # MiniQMT 自 2026-10-01 停服：取 etf_list 只为喂 QMT 那条，直接跳过 ——
-            # 否则每轮都会去取 1674 只 ETF 名单、再因取不到数据刷错。
-            # 腾讯那条本来就不需要它（它自己一次快照拿全市场）。
-            print('[l2:qmt] MiniQMT 停服中（2026-10-01 起），只订阅腾讯源')
-            etf_codelist = []
-        else:
-            # ETF 那份走 QMT：默认取 etf_list 全量。取不到就只跑腾讯那条，
-            # 但要**说清**，不能静默少一半数据。
-            try:
-                from .refdata import GQ_fetch_etf_list
-                etf_codelist = [str(c) for c in GQ_fetch_etf_list()['code'].tolist()]
-            except Exception as exc:      # noqa: BLE001
-                etf_codelist = []
-                print(f'[l2:qmt] 取 etf_list 失败，本轮只订阅腾讯源: {exc!r}')
-
-    # QMT 的订阅放**后台线程**：实测订阅 1,674 只 ETF 要 **58 秒**，放在主循环前
-    # 会把第一轮数据推迟近一分钟，而腾讯那条 0.6 秒就拿到了。
-    #
-    # 后台订阅还有个好处：本条路径对本机**暂时拿不到深度**（见 `_l2_rows_from_qmt`
-    # 的实测说明），将来客户端升级、深度可用时会自然补上，不必回头改结构。
-    # 价格则**不需要订阅**就是活的（实测），所以推迟订阅不损失任何已有数据。
-    #
-    # `QMT_REALTIME_ENABLED` 为假时这里恒为空列表，下面三处调用点
-    # （后台订阅线程、循环里的取数）自然短路 —— 结构不动，只是不发请求。
-    xt_etf_codes = (_l2_qmt_xt_codes(etf_codelist)
-                    if (etf_codelist and QMT_REALTIME_ENABLED) else [])
-    if xt_etf_codes:
-        def _subscribe_etf_bg(codes):
-            try:
-                _l2_rows_from_qmt(codes, subscribe=True)
-                print(f'[l2:qmt] 后台订阅完成 {len(codes)} 只 ETF')
-            except Exception as exc:  # noqa: BLE001
-                print(f'[l2:qmt] 后台订阅失败: {exc!r}')
-        threading.Thread(target=_subscribe_etf_bg, args=(xt_etf_codes,),
-                         daemon=True).start()
-
-    collection_day = dt.now().date()
-    collection = realtime_ts_collection(
-        database_realtime, realtime_collection_name(collection_day))
-    last_ts: dict = {}
-    get_once = True
-    sync_count = 0
-    total = 0
-
-    while (GQ_util_if_tradetime(dt.now())) or get_once:
-        _time = dt.now()
-
-        # 跨日切换（与 `sub_l1_from_tencent` 同一写法）
-        if dt.now().date() != collection_day:
-            collection_day = dt.now().date()
-            collection = realtime_ts_collection(
-                database_realtime, realtime_collection_name(collection_day))
-
-        if (sync_count % 8 == 1):
-            module.checkin(message=f"L2盘口 已写 {total} 行")
-
-        rows = []
-        try:
-            rows.extend(_l2_rows_from_tencent(quotation))
-        except Exception as exc:      # noqa: BLE001 单源失败不拖垮另一源
-            print(f'[l2:tencent] 本轮失败: {exc!r}')
-
-        if xt_etf_codes:
-            try:
-                rows.extend(_l2_rows_from_qmt(xt_etf_codes, subscribe=False))
-            except Exception as exc:  # noqa: BLE001
-                print(f'[l2:qmt] 本轮失败: {exc!r}')
-
-        if rows:
-            try:
-                # 一轮里可能混着两个源的行（腾讯盘口 + QMT），而 `_write_ts_rows`
-                # 的删除条件带 `source` —— 必须**按 source 分组**分别调用，
-                # 否则一组会把另一组刚写的同 (code, ts) 行删掉。
-                groups: dict = {}
-                for r in rows:
-                    groups.setdefault(r.get('source'), []).append(r)
-                n = sum(_write_ts_rows(collection, group, last_ts, src)
-                        for src, group in groups.items())
-                total += n
-                if verbose:
-                    print(f'[l2] {_time.strftime("%H:%M:%S")} 写 {n}/{len(rows)} 行 '
-                          f'(累计 {total})')
-            except Exception as exc:  # noqa: BLE001
-                print(f'[l2] 写入失败: {exc!r}')
-
-        sync_count += 1
-        timer.sleep(sleep_time)
-
-    module.complete(completion_message="L2盘口订阅模块正常结束")
-
-
 def GQ_fetch_stock_realtime_adv(
     code=None,
     num=1,
@@ -804,8 +508,10 @@ def GQ_fetch_stock_realtime_adv(
     :param suffix: 股票代码是否带沪深交易所后缀
     :param day: 目标交易日；None = 今天
     :param source: 只取该条数据流的行（默认 L1）。传 ``None`` 表示不过滤 ——
-        ⚠️ 那时同一 ``(code, ts)`` 会有 L1 与 L2 两行，下游的
-        ``drop_duplicates(['datetime','code'])`` 会**任意**留一行
+        ⚠️ **别这么做**：这个集合按设计**可以**有多条流共用，一旦多了一条，
+        同一 ``(code, ts)`` 就会有两行，而下游的
+        ``drop_duplicates(['datetime','code'])`` 会**任意**留一行。
+        （2026-10-15 之前 L1/L2 正是这种局面，见 `docs/decisions/D47.md`。）
     :return: DataFrame，``set_index(['datetime','code'])``（无 `_id` 列）
 
     num 的真实语义
@@ -1163,15 +869,14 @@ def GQ_fetch_stock_day_realtime_adv(
                             stack_vol=False)
                         # data_realtime_1min['vol']
                         if (market_type == MARKET_TYPE.STOCK_CN):
+                            # 公式**只此一份**：`metadata_save.turnover_from_volume`
+                            # （2026-10-13 起）。原先这里内联的就是它 —— 且是那个
+                            # **多除了 100 的错版**，见该函数的「量纲」一节与 D44。
+                            from .metadata_save import turnover_from_volume
                             vol = data_realtime_1min.tail(1)["volume"].item()
                             stock_info = GQ_fetch_stock_info([code[:6]])
                             total_volume = stock_info['liutongguben'].iloc[0]
-                            if total_volume and total_volume > 0:
-                                turnover_rate = round((vol * 100 / total_volume) / 100, 6)
-                                if (turnover_rate > 0.96):
-                                    turnover_rate = round((vol * 100 / total_volume) / 10000, 6)
-                            else:
-                                turnover_rate = None
+                            turnover_rate = turnover_from_volume(vol, total_volume)
                     except Exception:
                         if (len(data_realtime_code) > 3.82):
                             print('fooo1 GQ_fetch_stock_day_realtime_adv', code)
@@ -1571,7 +1276,14 @@ def get_moneyflow_from_eastmoney_push(code, date_epoch=dt.now().date()) -> pd.Da
 
     stock_individual_fund_flow_df['code'] = code
     stock_individual_fund_flow_df['date'] = pd.to_datetime(date_epoch)
-    stock_individual_fund_flow_df['date_stamp'] = pd.to_datetime(stock_individual_fund_flow_df['date']).astype(np.int64) // 10 ** 9
+    # ⚠️ 除数用 `constants.epoch_divisor(dtype)`，**别写死 10**9** —— pandas 3
+    # 的精度随输入而变（date 对象 ⇒ s / 字符串与 Series ⇒ µs），写死会算错
+    # （见 `kline83.epoch_seconds` 的说明）。
+    # 这里**保持原有的 naive-as-UTC 口径**（不改成 `epoch_seconds` —— 那会把口径
+    # 从「墙上当 UTC」挪成「真实 UTC」，差 8 小时，是另一个决定）。
+    _flow_dt = pd.to_datetime(stock_individual_fund_flow_df['date'])
+    stock_individual_fund_flow_df['date_stamp'] = (
+        _flow_dt.astype(np.int64) // epoch_divisor(_flow_dt.dtype))
     # stock_individual_fund_flow_df['date_stamp'] = pd.to_datetime(stock_individual_fund_flow_df['date']).view("int64") // 10 ** 9
 
     stock_individual_fund_flow_df[u"主力净流入-净占比"] = stock_individual_fund_flow_df[u"主力净流入-净占比"].astype(np.float64) / 100

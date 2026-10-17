@@ -73,6 +73,8 @@ def build_parser() -> argparse.ArgumentParser:
   python -m GolemQ.cli --eneloop-remove --symbols "000001,000002" # 删除个股并归档
   python -m GolemQ.cli --eneloop-list    # 查看当前关注列表
   python -m GolemQ.cli --sub l1_tencent  # 执行L1数据订阅功能
+  python -m GolemQ.cli --server ChartScan --port 5555   # CV 服务端（自动切 GolemAI env）
+  python -m GolemQ.cli --scan ChartScan --eval fast --port 5555  # CV 客户端
         """
     )
 
@@ -111,6 +113,8 @@ def main() -> None:
 
     # ② 本地自检 —— 解析之后，因为详略要由 `--verbose` 定；画一块 banner，
     #    自开自闭（`PITFALLS.md` P22：下一块 banner 开之前，前一块必须已 close）。
+    #    只有「修配置」那四条放行硬拦项（`bootstrap.REPAIR_COMMANDS`）——
+    #    ⚠️ **别为别的理由再开豁免**，见 `bootstrap.REPAIR_COMMANDS` 上方那段。
     bootstrap.check_environment(
         verbose=args.verbose,
         strict=cmd is not None and cmd.name not in bootstrap.REPAIR_COMMANDS)

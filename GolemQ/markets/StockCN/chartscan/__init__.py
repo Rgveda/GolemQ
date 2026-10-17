@@ -15,11 +15,13 @@ mplfinance（而 CV 要 torch，GolemQ env 是 NoMKL，两者 BLAS 冲突 ⇒ �
 在 GolemQ env 下也成立 —— 只是调 `load_model()` / 出图会抛
 `ModuleNotFoundError`，**那是预期的**（在错的 env 里本就不该能跑 CV）。
 
-条目：
+条目（**首选 CLI，它会自动切 env**，见 `DECISIONS.md` **D51** 五之二）：
+    python -m GolemQ.cli --server ChartScan --port 6666
+    python -m GolemQ.cli --scan   ChartScan --eval fast --port 6666
+
+也可以直接跑模块（那时要**自己先** `conda activate GolemAI`）：
     python -m GolemQ.markets.StockCN.chartscan.server --port 6666
     python -m GolemQ.markets.StockCN.chartscan.client --eval fast --port 6666
-（**故意不走 `python -m GolemQ.cli`** —— 主 CLI 的环境自检硬拦 `talib` / `polars>=1.24`，
-而 GolemAI env 里没有，必 `exit 1`。）
 """
 from .model import load_model, weights_path
 from .predict import (GQ_markup_ChartScaned, GQ_markup_daily_ChartScaned,

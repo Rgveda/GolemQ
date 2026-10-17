@@ -1,11 +1,11 @@
 # coding:utf-8
-"""`--metadata-align` —— `stock_metadata_day` 对 K 线的**覆盖率报告**（只读）。
+"""`--metadata-align` —— `stock_reality_feat_day` 对 K 线的**覆盖率报告**（只读）。
 
 旧树是 `cli/__main__.py:426` 的 `--stock-min-aligned` 分支（调
 `markets/StockCN/align.py::stock_min_aligned`）。⚠️ **不是照搬** ——
 旧实现名不副实（全文没有分钟数据）、且依赖 QUANTAXIS + xtquant（已停服）
 + 4.4 的 `stock_valuation`。用户 2026-10-11 定：**保留「对齐」这个能力，
-源换成 8.3 自己的 `stock_metadata_day`**。理由与新语义见
+源换成 8.3 自己的 `stock_reality_feat_day`**。理由与新语义见
 `markets/StockCN/metadata_align.py` 的模块 docstring。
 
 ⚠️ **只读**：报告「哪些交易日缺哪些列」，**不自动补**。
@@ -21,7 +21,7 @@ DEFAULT_CODES = ('600519', '000001', '301308', '510300')
 
 def add_metadata_align_arguments(parser) -> None:
     parser.add_argument('--metadata-align',
-                        help="只读：报告 stock_metadata_day 对 K 线的覆盖率"
+                        help="只读：报告 stock_reality_feat_day 对 K 线的覆盖率"
                              "（每个标的、每一列各有多少交易日有值）",
                         action='store_true', default=False)
     parser.add_argument('--metadata-align-codes',

@@ -1,5 +1,5 @@
 # coding:utf-8
-"""资金流 / 千股千评 → **`stock_metadata_day`**（旧 CLI `--moneyflow` 的搬运）。
+"""资金流 / 千股千评 → **`stock_reality_feat_day`**（旧 CLI `--moneyflow` 的搬运）。
 
 从哪来
 ======
@@ -9,7 +9,7 @@
 
 写到哪
 ======
-`stock_metadata_day`（**不是**旧树的 `stock_ranking` / `stock_valuation` / `stock_moneyflow`）——
+`stock_reality_feat_day`（**不是**旧树的 `stock_ranking` / `stock_valuation` / `stock_moneyflow`）——
 用户 2026-10-11 明确要求。落库走 :func:`GolemQ.datasource.writer.upsert_fields`：
 **只 `$set` 自己的列，绝不整文档 replace**（那张表多列共用一个 `(code, date_stamp)` 文档）。
 
@@ -44,7 +44,7 @@ CLI 的输出里会写明这一点。
 1. **换手率 ÷100、写进现有的 `TurnoverRate` 列**。千股千评给的是百分数
    （`600519` = `0.28`），÷100 后与**库内同源同列**逐值相同 ——
    实测 `600519 → 0.0028` / `000001 → 0.0056` / `301308 → 0.0361`，
-   与 `stock_metadata_day` 里 4.4 迁移来的值**完全一致**（同一个东财源）。
+   与 `stock_reality_feat_day` 里 4.4 迁移来的值**完全一致**（同一个东财源）。
    所以这不是"覆盖"，是**刷新**（那一列从"一次性搬运"变成"每次爬取都更新"）。
 2. **日期取「最后交易日」，不取 `today()`**。同花顺的 `即时` 在**周六**给的是
    **最后交易日**的数据（实测 `600519` 最新价 `1263.0` == 库内 `2026-10-09` 的
@@ -59,7 +59,7 @@ import pandas as pd
 from GolemQ.core.constants import FIELD as FLD
 from GolemQ.datasource.writer import upsert_fields
 
-from .metadata_save import (METADATA_DAY_COLL, _db, day_date, day_stamp,
+from .metadata_save import (REALITY_FEAT_DAY_COLL, _db, day_date, day_stamp,
                             metadata_day_doc_multi)
 
 __all__ = ['save_moneyflow', 'rows_eastmoney', 'rows_ths', 'parse_cn_amount',
@@ -179,7 +179,7 @@ def fetch_ths_fundflow() -> pd.DataFrame:
 # 行构造（纯函数）
 # --------------------------------------------------------------------------- #
 def rows_eastmoney(df: pd.DataFrame, created_at=None) -> list:
-    """千股千评帧 → `stock_metadata_day` 文档列表。
+    """千股千评帧 → `stock_reality_feat_day` 文档列表。
 
     列映射见模块 docstring；`date` 取源端的**交易日**列（它是 `datetime.date`）。
     ⚠️ `最新价` / `名称` **不落**：价格 K 线里有，名称在 `stock_list` 里，
@@ -217,7 +217,7 @@ def rows_eastmoney(df: pd.DataFrame, created_at=None) -> list:
 
 
 def rows_ths(df: pd.DataFrame, day: str, created_at=None) -> list:
-    """同花顺资金流帧 → `stock_metadata_day` 文档列表（`day` 由调用方给）。
+    """同花顺资金流帧 → `stock_reality_feat_day` 文档列表（`day` 由调用方给）。
 
     ⚠️ **换手率那一列丢弃**：这是**第三个**换手率口径（既不是东财千股千评的、
     也不是 baostock 的）。表里已经有两列，再加一列只会是第三列死列。
@@ -247,7 +247,7 @@ def rows_ths(df: pd.DataFrame, day: str, created_at=None) -> list:
 # --------------------------------------------------------------------------- #
 def save_moneyflow(source: str = 'eastmoney', created_at=None, verbose=True,
                    echo=None, dry_run=False) -> dict:
-    """取数 → 组行 → `upsert_fields` 落 `stock_metadata_day`。
+    """取数 → 组行 → `upsert_fields` 落 `stock_reality_feat_day`。
 
     :param source: ``'eastmoney'``（千股千评）或 ``'ths'``（资金流）
     :param dry_run: 只取数并统计，**不写库**
@@ -283,13 +283,13 @@ def save_moneyflow(source: str = 'eastmoney', created_at=None, verbose=True,
         say('[moneyflow] {}：**没取到任何行**，不写库'.format(source))
         return out
 
-    stats = upsert_fields(_db()[METADATA_DAY_COLL], docs,
+    stats = upsert_fields(_db()[REALITY_FEAT_DAY_COLL], docs,
                           ['code', 'date_stamp'], payload_keys=payload,
                           verbose=False)
     out.update({k: stats.get(k, 0) for k in ('upserted', 'modified')})
     if verbose:
         say('[moneyflow] {} → {}：交易日 {}，读 {} 行 / 写 {} 文档 '
-            '/ 新增 {} / 更新 {}'.format(source, METADATA_DAY_COLL, day,
+            '/ 新增 {} / 更新 {}'.format(source, REALITY_FEAT_DAY_COLL, day,
                                          out['read'], out['written'],
                                          out['upserted'], out['modified']))
     return out

@@ -1,10 +1,11 @@
 # coding:utf-8
 """ChartScan 的 **ZeroMQ REQ 客户端** —— 按 scope 解析出任务、逐条发给服务端。
 
-    python -m GolemQ.markets.StockCN.chartscan.client --eval fast --port 6666
+    python -m GolemQ.cli --scan ChartScan --eval fast --port 6666   # ← 首选（自动切 env）
     python -m GolemQ.markets.StockCN.chartscan.client --eval etf  --port 7777
 
-⚠️ 同 `server.py`：**只在 `GolemAI` env 里跑**（要 pyzmq；且它读的账本在服务端那侧）。
+⚠️ 同 `server.py`：要在 `GolemAI` env 里跑（要 pyzmq；且它读的账本在服务端那侧）。
+走 CLI 那条时**不需要**手动切 —— `cli/commands/chartscan.py` 会 re-exec 过去（D51）。
 
 搬自旧树 `GolemAI/GolemQ/cli/__main__.py:247-392`。**没搬**两条旧入口
 （用户 2026-10-13 定「只搬要用的」）：`--eval` 给一段 notebook 文本、以及给一长串
@@ -120,13 +121,17 @@ def _throttle(code_job, code_list, scope, verbose=True):
 
 def run_client(scope, port, verbose=True):
     """解析 scope → 建任务 → 逐条 REQ。返回 `(code_list, code_job)`（便于测试）。"""
-    from .scopes import perpar_symbol_range
+    from GolemQ.analysis.cv.scopes import perpar_symbol_range
     from tqdm import tqdm
     import zmq                              # 只在 GolemAI env 有（见模块 docstring）
 
     say = print if verbose else (lambda *a, **k: None)
     say(f'[{dt.now().strftime("%Y-%m-%d %H:%M:%S")}]: ChartScan 扫描 (scope:{scope} port:{port}) ...')
-    code_list = perpar_symbol_range(scope, verbose=verbose)
+    # scope 解析在**跨市场**的 `analysis/cv/scopes.py`，数据落点由本站的 `scan_dataset()`
+    # 注入 —— 那个模块不 import 任何市场包（2026-10-13 归位，见 D44）。
+    from GolemQ.core.market_registry import get_active_market
+    code_list = perpar_symbol_range(scope, dataset=get_active_market().scan_dataset(),
+                                    verbose=verbose)
     if code_list is False:
         say(f'错误: 无法获取股票列表 [{scope}]。可先跑 `--save tdx` 灌 stock_list。')
         sys.exit(1)

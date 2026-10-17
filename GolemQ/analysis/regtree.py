@@ -195,7 +195,10 @@ def tree_model_evaluation_func(model, branch_data):
     n = np.shape(branch_data)[1]
     X = np.asmatrix(np.ones((1,n + 1)))
     X[:,1:n + 1] = branch_data
-    return float(X * model)
+    # ⚠️ `X * model` 是 1×1 的 `np.matrix`；numpy 2.x 起 `float(1×1 matrix)` 直接抛
+    # `TypeError: only 0-dimensional arrays can be converted to Python scalars`
+    # （1.x 时代是 DeprecationWarning）。`.item()` 取的是同一个标量，逐值不变。
+    return float((X * model).item())
 
 
 def is_tree_py(obj):
@@ -239,8 +242,11 @@ def create_whole_forecast_tree(tree, seq_data, directions:bool=False):
     yaxis_height_at = np.asmatrix(np.zeros((m,1)))
 
     for i in range(m): # m是item个数
-        yaxis_height_at[i,0] = tree_model_forecast_decision_func_np(tree, 
-                                                                 np.asmatrix(seq_data[i]), level=0)
+        # ⚠️ 必须 `.iloc[i]`：pandas 3.0 起 `Series[整数]` **一律按标签**解析
+        # （2.x 时代是位置的 FutureWarning），而 `seq_index` 的索引是日期
+        # ⇒ `seq_data[i]` 直接 `KeyError: 0`。2026-10-17 在 pandas 3.0.6 上实测踩到。
+        yaxis_height_at[i,0] = tree_model_forecast_decision_func_np(tree,
+                                                                 np.asmatrix(seq_data.iloc[i]), level=0)
         if (directions == True):
             ret_y[i] = yaxis_height_at[i,0]
             if (i > 0):
@@ -379,10 +385,22 @@ def calc_regtree_fractal_func(data, *args, **kwargs):
         features[FLD.REGTREE_TREND_RETURNS] = calc_onhold_returns_np(ohlc_data.close.values,
                                                                      features[FLD.REGTREE_TREND].values)
 
-    if (FLD.POLYNOMIAL9_TIMING_LAG in features.columns):
-        features[FLD.POLY9_REGTREE_DIVERGENCE] = (features[FLD.POLYNOMIAL9] - features[FLD.REGTREE_PRICE]) / features[FLD.REGTREE_PRICE]
-    if (FLD.ATR_LB in features.columns):
-        features[FLD.ATR_LB_REGTREE_DIVERGENCE] = (features[FLD.ATR_LB] - features[FLD.REGTREE_PRICE]) / features[FLD.REGTREE_PRICE]
+    # ⚠️ 老树这里还有两列「背离」—— `POLY9_REGTREE_DIVERGENCE` /
+    # `ATR_LB_REGTREE_DIVERGENCE`：
+    #     (poly9  − rtrePrz) / rtrePrz
+    #     (ATR_LB − rtrePrz) / rtrePrz
+    # **已删除**（2026-10-16，用户定）。画像与 `STOCK_TREND_*` 那批一样：
+    # 老树五个 `*_columns_of_persistence` 清单**都不含**、8.3 三库里**一个都没出现过**、
+    # **新树零读取方**（唯一引用就是下面那两行赋值本身）。
+    #
+    # ⚠️ **一处与 `STOCK_TREND_*` 不同、必须如实记下**：这两列在老树里**有真消费** ——
+    # 但那 **24 处 + 6 处**（`GolemQ_old/fractal/v8_1.py`）**全部落在
+    # `calc_Empirical_AMIRA_fractal`（`:5816-6100`）这一个函数里面**，
+    # 而该函数**已废弃**（用户 2026-10-16 明确：「这个函数废弃了」）、**不搬**。
+    # ⇒ 删的依据是「**消费方已废弃**」，不是「老树没人用」也不是「那条链没搬」。
+    #
+    # 将来真要恢复：公式就在上面这两行注释里，一行成本。
+    # 见 `docs/decisions/D49.md` 第九节。
     #try:
     #    features[FLD.REGTREE_TREND_RETURNS] =
     #    calc_onhold_returns_np(ohlc_data.close.values,

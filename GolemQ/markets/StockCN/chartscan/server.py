@@ -5,8 +5,12 @@
     python -m GolemQ.markets.StockCN.chartscan.server --port "6666,7777"
 
 ⚠️ **必须用 `GolemAI` conda env 跑**（torch / ultralytics / pyzmq 在那里；
-GolemQ env 是 NoMKL 跑不了 torch）。且**故意不走 `python -m GolemQ.cli`** ——
-主 CLI 的环境自检硬拦 `talib` / `polars>=1.24`，GolemAI env 里没有，必 `exit 1`。
+GolemQ env 是 NoMKL 跑不了 torch）。
+
+**首选入口是 CLI**：``python -m GolemQ.cli --server ChartScan --port 6666``
+—— 它会**自动切到 GolemAI env** 再起本模块（`cli/commands/chartscan.py`）。
+直接 ``python -m`` 跑本模块也照旧可用（那时必须**自己先** `conda activate GolemAI`），
+`chartscan_svr.ps1` 走的就是这条路。
 
 协议（**与旧树逐字相同**，客户端照旧树写）
 =====================================

@@ -32,13 +32,53 @@ index_codes = [
     "zz931897", "zz931992"]
 
 
+def save_stock_codes(codes):
+    """把码表写进本地缓存 ``STOCK_CODE_PATH``（``{"stock": [...]}``）—— **唯一写口**。
+
+    ⚠️ **写盘必须是原子的**：先写同目录的 ``.tmp``，再 ``os.replace`` 顶上去。
+    读方（`basequotation.load_stock_codes`）读的是**同一个路径**，而本文件
+    同时被每天 `--save tdx` 的落盘路径与 L1/L2 订阅器读 —— 写一半被中断
+    （Ctrl-C、磁盘满、进程被杀）会留下半个 JSON，`use('tencent')` 当场抛，
+    **两个订阅器一起起不来**。`os.replace` 在同一文件系统上是原子的。
+
+    ⚠️ **父目录按需建**：``STOCK_CODE_PATH`` 在
+    ``~/.GolemQ/datastore/cache/stock_cn/`` 下，全新机器上这几级**都不存在**。
+    旧写法直接 ``open(..., 'w')`` 会 `FileNotFoundError` —— 只是它全树零调用
+    （见 :func:`update_stock_codes`），所以从没暴露过。
+
+    ``ensure_ascii=False`` 是为了让文件在编辑器里可读；码表本身是纯 ASCII，
+    但别依赖这一点（`open` 一律显式带 `encoding`，见 CLAUDE.md 的编码纪律）。
+
+    :param codes: 代码序列（6 位裸码或带 ``sh``/``sz``/``zz`` 前缀都行），会去重排序
+    :returns: 实际写盘的有序列表
+    """
+    codes = sorted({str(c).strip() for c in codes if str(c).strip()})
+    parent = os.path.dirname(STOCK_CODE_PATH)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp = STOCK_CODE_PATH + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump({'stock': codes}, f, ensure_ascii=False)
+    os.replace(tmp, STOCK_CODE_PATH)
+    return codes
+
+
 def update_stock_codes():
-    """获取所有股票 ID 到 all_stock_code 目录下"""
+    """从 ``shdjt.com`` 抓全量码表 —— ⚠️ **本树已不再走这条路**（保留为上游 API）。
+
+    实际生效的刷新在 `refdata_save.refresh_stock_codes_cache`：`--save tdx`
+    每次都把 8.3 的 `stock_list`（pytdx 主源 + tdxaidata 补北交所）导出成码表。
+    不在这里敲站点，是因为实测它**要 19.1 秒**（15s 超时下会偶发成功、偶发
+    `ReadTimeout`）、且 ``https://`` 那道门直接拒绝连接 —— 拿它做每日刷新
+    等于给 `--save tdx` 挂一个不稳定的外网依赖，而库里那份**刚刚刷过、更全**。
+
+    写盘收敛到 :func:`save_stock_codes`（原子写 + 建父目录 + 显式编码）：
+    这文件曾有**两份写法**，这一份既没建目录也没写编码 —— 平行实现不会报错，
+    只会分叉。
+    """
     response = requests.get("http://www.shdjt.com/js/lib/astock.js")
     stock_codes = re.findall(r"~([a-z0-9]*)`", response.text)
-    with open(STOCK_CODE_PATH, "w") as f:
-        f.write(json.dumps(dict(stock=stock_codes)))
-    return stock_codes
+    return save_stock_codes(stock_codes)
 
 
 def get_stock_codes(realtime=False):
@@ -46,10 +86,10 @@ def get_stock_codes(realtime=False):
     if realtime:
         return update_stock_codes()
     if (os.path.exists(STOCK_CODE_PATH) and not os.path.isdir(STOCK_CODE_PATH)):
-        with open(STOCK_CODE_PATH) as f:
+        with open(STOCK_CODE_PATH, encoding='utf-8') as f:
             return json.load(f)["stock"]
     else:
-        with open(DEFAULT_STOCK_CODE_PATH) as f:
+        with open(DEFAULT_STOCK_CODE_PATH, encoding='utf-8') as f:
             return json.load(f)["stock"]
 
 

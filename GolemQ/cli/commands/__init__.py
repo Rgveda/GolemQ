@@ -18,6 +18,8 @@ from ._registry import (      # noqa: F401 再导出，供 __main__ 与测试用
     register,
 )
 from . import (      # noqa: F401 导入即注册（见上）
+    chartscan,
+    fill_turnover,
     heartbeat,
     metadata_align,
     migrate,
@@ -44,6 +46,9 @@ register([
     # —— 运维 ——
     purge.PURGE,                 # --purge-l1 / --purge
     subscribe.SUBSCRIBE,         # --sub
+    # —— CV / 图形识别（⚠️ 跑在 **GolemAI conda env**，见 `bootstrap.CROSS_ENV_COMMANDS`）——
+    chartscan.CHARTSCAN_SCAN,    # --scan ChartScan --eval <scope> --port <port>
+    chartscan.CHARTSCAN_SERVER,  # --server ChartScan --port <port[,port...]>
     heartbeat.HEARTBEAT_WATCHDOG,
     heartbeat.STOP_HEARTBEAT,
     tdx_hosts.UPDATE_TDX_HOSTS,      # 服务器池刷新（只做网络探活，不碰库）
@@ -51,13 +56,18 @@ register([
     save_report.SAVE_COVERAGE,   # ⚠️ 必须在 SAVE 之前
     save.SAVE,
     save_report.SAVE_STATUS,
-    # —— 外部抓取（HTTP，落 stock_metadata_day）——
+    # —— 外部抓取（HTTP，落 stock_reality_feat_day）——
     moneyflow.MONEYFLOW,             # --moneyflow {eastmoney|ths|all}
-    # ⚠️ 放在 MONEYFLOW **之后**：它是**只读报告**，跑在抓取后面才看得出刚补上的列
+    # 现算补齐（不连 4.4、不抓外网）—— 与 MONEYFLOW 同层，都落 stock_reality_feat_day
+    fill_turnover.FILL_TURNOVER,     # --fill-turnover（缺换手率就现算补上）
+    # ⚠️ 放在 MONEYFLOW / FILL_TURNOVER **之后**：它是**只读报告**，
+    # 跑在写路径后面才看得出刚补上的列
     metadata_align.METADATA_ALIGN,   # --metadata-align（只读覆盖率）
     # —— 一次性搬运（连 4.4；`core/migrate44.py` 的唯一消费者）——
     migrate.MIGRATE_TURNOVER,
     migrate.MIGRATE_INDEX_LIST,
+    migrate.MIGRATE_METADATA_MERGE,
+    migrate.MIGRATE_REALITY_FEAT,
 ])
 
 __all__ = ['COMMANDS', 'Command', 'dispatch', 'no_arguments', 'pick',

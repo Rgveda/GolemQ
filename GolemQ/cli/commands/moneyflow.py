@@ -1,5 +1,5 @@
 # coding:utf-8
-"""`--moneyflow` —— 抓资金流 / 千股千评并落 `stock_metadata_day`。
+"""`--moneyflow` —— 抓资金流 / 千股千评并落 `stock_reality_feat_day`。
 
 旧树是 `cli/__main__.py:514` 那个分支（`-f/--moneyflow`）。⚠️ 旧分支**名字骗人**：
 取值列了 `eastmoney` / `ths`，分支体里**只有东财**。**这次两个值都是真的** ——
@@ -21,7 +21,7 @@ from ._registry import Command
 
 def add_moneyflow_arguments(parser) -> None:
     parser.add_argument('--moneyflow',
-                        help="抓资金流/千股千评并落 stock_metadata_day。"
+                        help="抓资金流/千股千评并落 stock_reality_feat_day。"
                              "eastmoney=千股千评（东财，5200 行/11 次请求）；"
                              "ths=当日全市场资金流（同花顺，5210 行/105 次请求）；"
                              "all=两个都跑。"

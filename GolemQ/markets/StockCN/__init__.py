@@ -35,7 +35,6 @@ from GolemQ.core.market_registry import (
 )
 from .realtime import (
     sub_l1_from_tencent,
-    sub_l2_from_tencent,
     formater_l1_ticks,
     collections_of_today,
 )
@@ -119,9 +118,11 @@ class StockCN(BaseMarket):
             # 老树那条也是「腾讯 L1 写实时库」，只是当时写 4.4 的 `QAREALTIME`，
             # 现在写 8.3 的 `golemq_stock_cn_realtime`（见 `realtime._realtime_db`）。
             register_subscriber('tencent', sub_l1_from_tencent)
-            # L2 五档盘口：股票走腾讯（3 秒一轮），ETF 走 MiniQMT。
-            # 新浪那条 L2 已加 30s 请求限制，无法连续取，故不在此列。
-            register_subscriber('l2_tencent', sub_l2_from_tencent)
+            # ⚠️ **`l2_tencent` 键 2026-10-15 已删**（`docs/decisions/D47.md`）：
+            # 腾讯 L2 存的字段是 L1 行的**真子集**（L1 存整份快照、本就含五档），
+            # 而且它 3 秒一轮、L1 2 秒一轮 —— **既不多个字段、也不快**，
+            # 纯粹是同一份 HTTP 响应落两遍。QMT 那条 ETF 占位同批删除。
+            # 于是 `GQSUBSCRIBER` 现在只有 `l1_tencent` / `tencent` 两个键。
 
     @property
     def name(self) -> str:
@@ -237,6 +238,27 @@ class StockCN(BaseMarket):
         return [d for d in TRADE_DATE_SSE
                 if start_date <= datetime.strptime(d, '%Y-%m-%d') <= end_date]
                 
+    def scan_dataset(self):
+        """scan scope 的**数据落点** —— 供 :mod:`GolemQ.analysis.cv.scopes` 用。
+
+        那个模块是**跨市场**的，它不 import 任何市场包，只认这个返回值（契约见
+        `ScanDataset`）。这里做的是**薄封**：四个成员一一对应本站**已有的**读口，
+        不新造取数逻辑。
+
+        ⚠️ **别拿 `get_stock_codes()` 当这里的 `stock_list`** —— 那是个 mock，
+        返回 `600xxx.SH` 之类的**假码**（它名字像真口子）。真名单在
+        `refdata.GQ_fetch_stock_list`。
+        """
+        from GolemQ.analysis.cv.scopes import ScanDataset
+        from .refdata import GQ_fetch_stock_block, GQ_fetch_stock_list
+        from .symbol import ETF_LEGACY_CODES, focus_block
+        return ScanDataset(
+            stock_list=GQ_fetch_stock_list,
+            stock_block=GQ_fetch_stock_block,
+            focus_blocks=focus_block,
+            etf_codes=ETF_LEGACY_CODES,
+        )
+
     def purge_historical_collections(self):
         """清理历史数据集合"""
         from .tools import purge_historical_collections
@@ -256,7 +278,6 @@ __all__ = [
     'normalize_code',
     'is_stock_cn',
     'sub_l1_from_tencent',
-    'sub_l2_from_tencent',
     'formater_l1_ticks',
     'collections_of_today',
 ]

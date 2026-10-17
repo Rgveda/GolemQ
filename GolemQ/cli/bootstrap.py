@@ -167,6 +167,19 @@ ENV_GATE_NODES = ('python', '依赖包')
 #: 这四条命令**连硬拦项也放行** —— 它们是「修配置」的入口（`Command.name`）。
 REPAIR_COMMANDS = frozenset({'setup', 'mongodb-init', 'dingtalk-init', 'serverchan-init'})
 
+#: ⚠️ **不要为了"某个 env 装不齐依赖"往这里加豁免**（2026-10-17 用户定死）：
+#:
+#: > 「围栏本来就是预防我这种不靠谱的人类行为。你又给围栏做豁免那就没有意义了。」
+#:
+#: 具体那次的起因：`--scan ChartScan` / `--server ChartScan` 要跑在 GolemAI env，
+#: 而那个 env 当时 `numpy 1.26.4 < 2.0` 过不了 `依赖包` 闸。**正确的解法是升级依赖**，
+#: 不是放行 —— 而且那两条命令**本来就不会在 CV env 里执行这道闸**：
+#: `cli/commands/chartscan.py` 切 env 后跑的是 `python -m ...chartscan.server`（模块），
+#: 不是 `python -m GolemQ.cli`。只有「在 CV env 里直接敲 CLI」才会碰到闸 ——
+#: 那种跑法就该被拦住。
+#:
+#: ⇒ `REPAIR_COMMANDS` 是**唯一**的放行集合，它只装「修配置」那四条。
+
 
 def _parse_version(text):
     """``'8.3.11'`` → ``(8, 3, 11)`` —— 只认打头的数字段，非数字尾巴丢掉。

@@ -61,12 +61,12 @@
 
 | 模块 | 定位 | 当前状态 |
 |:--|:--|:--|
-| `fetch/` | **抽象、隐含的 datasource 接口** —— 门面 | stub，待按门面实现 |
-| `features/` | **技术分析特征** —— 由 `analysis/` 技术分析产出的指标特征，**多市场通用** | stub |
+| `fetch/` | **抽象、隐含的 datasource 接口** —— 门面 | ⛔ **整包已于 2026-10-10 删除**（D33）—— 取数改经市场实例 `get_active_market()`。**别再按"待实现"理解它** |
+| `features/` | **技术分析特征** —— 由 `analysis/` 技术分析产出的指标特征，**多市场通用** | ⛔ **整包已于 2026-10-16 删除**（D50）—— 5 个函数零调用方。⚠️ **特征计算的实际落点是 `analysis/`**（D39/D40/D49 一路都落那儿），不是这个包 |
 | `models/` | **features 的技术分析特征集合** | 多为 stub（`poolcoef.py` 371 行是真实代码）|
 | `pipeline/` | **默认市场的批处理管线** —— 多股、多核计算的抽象封装，结果提交给 `portfolio` | 真实代码，但 import 悬空 |
 | `cookbooks/` | 研究笔记本 | 真实内容 |
-| `analysis/` | 技术分析算子（重采样/时间轴）—— `features` 的上游 | stub |
+| `analysis/` | 技术分析算子（重采样/时间轴）—— `features` 的上游 | 🟢 **已不再是 stub**（2026-10-17）：`timing`（累积器/事件间隔）、`timeseries`（`rolling_poly9_v2`）、`quadrant`（四量图，**D39**）、`rsrs`（**D40**）、`stages`（Garident STAGE）、`poly9`、`magic_nine`、`indicators`（`TA_HMA`）、`regtree`、`renko`、`peak`、`pivot`、`cv/scopes`。⚠️ 仍缺生产者的是 **M9T 的 `_dummy`/`_baseline`**（前置未到，见 `D49` 第五节）|
 | `markets/StockCN/` | **A 股市场的具体实现** | 已就位（`kline83.py` `refdata*.py` `datasource/`）|
 
 ### 与已落地代码的关系

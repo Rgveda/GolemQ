@@ -139,8 +139,15 @@ def GQ_markup_daily_ChartScaned(code, kline_data, market_type, verbose=False):
         traceback.print_exc()
 
 
-def GQ_markup_ChartScaned(code, kline_data, market_type, verbose=False):
-    """「没探到」时在**60min 族**留一行只有 `ChartScaned` 的标记（照旧 `:146-166`）。"""
+def GQ_markup_ChartScaned(code, kline_data, market_type, verbose=False,
+                          family='60min'):
+    """「没探到」时在 **`family` 族**留一行只有 `ChartScaned` 的标记（照旧 `:146-166`）。
+
+    :param family: 落哪个分钟族（`'60min'` / `'15min'`）。⚠️ 旧树的同名函数收的是
+        ``collections=`` —— 两个调用点分别传 60min 与 15min **两张表**（`:380`/`:385`）。
+        搬过来时把参数换成 `family`（收 `market_type` 由 `reality_feat_name` 出前缀），
+        默认 `'60min'` **保持旧默认行为**。
+    """
     from ..reality_save import save_reality_feat
     try:
         frame = pd.DataFrame([{
@@ -149,7 +156,7 @@ def GQ_markup_ChartScaned(code, kline_data, market_type, verbose=False):
             'datetime': pd.to_datetime(kline_data.tail(1).index.get_level_values(level=0)[-1]),
             'ChartScaned': _chart_scaned_flag(kline_data),
         }]).set_index(['datetime', 'code'], drop=False)
-        save_reality_feat(frame, '60min', market_type, verbose=verbose)
+        save_reality_feat(frame, family, market_type, verbose=verbose)
     except Exception:                     # noqa: BLE001
         traceback.print_exc()
 
@@ -244,9 +251,15 @@ def GQ_predict_ChartScanAI(code: str = '300085', market_type=MARKET_TYPE.STOCK_C
         anchor = closest['date'] if freq == 'day' else closest['datetime']
         if (anchor - closest[key]) < timedelta(days=31):
             closest[key] = closest[key].tz_localize('Asia/Shanghai').timestamp() * 1000
-            fam = 'day' if freq == 'day' else ('15min' if freq == '15min' else '60min')
+            # ⚠️ **第一笔永远是日族** —— 旧树三条支路（`:342` / `:363` / `:406`）都调
+            # `GQ_save_daily_metadata_reality`。**分钟频率也往日族写**，因为
+            # `calc_ChartScaned_persistence` 读的正是日族里的 `CoordinatesMin` /
+            # `Coordinates` 两列来判「要不要重扫」。索引传 date 还是 datetime 无所谓：
+            # 该写口按 level0 的 **`.date`** 取 `date_stamp`（见 `reality_feat_rows`）。
+            # ⚠️ 曾把这里写成「按 freq 选族」，后果是日族永远收不到分钟列的检出 ⇒
+            # `all_nat_min` 恒真 ⇒ **每天全量重扫 618 交易日 × 3 频率**。
             save_reality_feat(pd.DataFrame([closest]).set_index(['date', 'code'], drop=False),
-                              'day' if freq == 'day' else fam, market_type, verbose=verbose)
+                              'day', market_type, verbose=verbose)
             if freq == '15min':
                 # 15min 的检出**同时**写 60min 与 15min 两个族（照旧 `:367-377`），
                 # 但 60min 只认「收盘那几根」。
@@ -254,17 +267,22 @@ def GQ_predict_ChartScanAI(code: str = '300085', market_type=MARKET_TYPE.STOCK_C
                 for family in (('60min', '15min') if ok60 else ('15min',)):
                     save_reality_feat(pd.DataFrame([closest]).set_index(['datetime', 'code'], drop=False),
                                       family, market_type, verbose=verbose)
+            elif freq != 'day':
+                # 60min：**无条件**写 60min 族（照旧 `:411-414`，没有收盘时刻闸）
+                save_reality_feat(pd.DataFrame([closest]).set_index(['datetime', 'code'], drop=False),
+                                  '60min', market_type, verbose=verbose)
         else:
             if verbose:
                 print(f'远端买卖点，自动放弃：{closest[key]}')
             if freq == 'day':
                 return
+            if closest['datetime'].strftime('%H:%M') in CLOSE_TIMES:
+                GQ_markup_ChartScaned(code, kline_data, market_type, verbose)
             if freq == '15min':
-                if closest['datetime'].strftime('%H:%M') in CLOSE_TIMES:
-                    GQ_markup_ChartScaned(code, kline_data, market_type, verbose)
-            else:
-                if closest['datetime'].strftime('%H:%M') in CLOSE_TIMES:
-                    GQ_markup_ChartScaned(code, kline_data, market_type, verbose)
+                # ⚠️ 旧树 15min 这条**无条件**再写一张 15min 表（`:385`）——
+                # 漏掉它 ⇒ 15min 族在「探到但太远」时永远没有 `ChartScaned` 记录。
+                GQ_markup_ChartScaned(code, kline_data, market_type, verbose,
+                                      family='15min')
             GQ_markup_daily_ChartScaned(code, kline_data, market_type, verbose)
     except Exception:                     # noqa: BLE001 照旧：整段吞掉打栈
         traceback.print_exc()

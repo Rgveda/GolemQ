@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""`stock_metadata_day` 的落库契约。
+"""`stock_reality_feat_day` 的落库契约。
 
 为什么这份用例值得存在
 ======================
@@ -32,8 +32,9 @@ import unittest
 
 from GolemQ.datasource.writer import upsert_fields
 from GolemQ.markets.StockCN.metadata_save import (
-    MAX_TURNOVER_RATIO, METADATA_DAY_COLL, SOURCES, TURNOVER_BS, TURNOVER_DC,
-    UNIQUE_KEYS, _date_range, day_date, day_stamp, metadata_day_doc, turnover_rows,
+    MAX_TURNOVER_RATIO, REALITY_FEAT_DAY_COLL, SOURCES, TURNOVER_BS, TURNOVER_DC,
+    UNIQUE_KEYS, _date_range, day_date, day_stamp, fill_turnover, metadata_day_doc,
+    turnover_from_volume, turnover_rows,
 )
 
 
@@ -179,7 +180,7 @@ class TestSourceTable(unittest.TestCase):
         self.assertNotIn('revision', UNIQUE_KEYS)
 
     def test_collection_name(self):
-        self.assertEqual(METADATA_DAY_COLL, 'stock_metadata_day')
+        self.assertEqual(REALITY_FEAT_DAY_COLL, 'stock_reality_feat_day')
 
 
 def _has_83():
@@ -243,6 +244,106 @@ class TestUpsertFieldsDoesNotClobber(unittest.TestCase):
                                      TURNOVER_DC: 0.01}], key)
         doc = self.coll.find_one({'code': 'x'}, {'_id': 0})
         self.assertNotIn(TURNOVER_BS, doc, '整文档替换应当抹掉未出现在本次行里的列')
+
+
+class TestTurnoverFromVolume(unittest.TestCase):
+    """补算换手率的**量纲**：`vol` 以手计、`liutongguben` 以股计。
+
+    老树那三处内联（`ChipDistribution_jit.py:785/:819/:865`）与 `realtime.py` 那份
+    都写 `(vol * 100 / liutongguben) / 100` —— **多除了一个 100，恒小 100 倍**。
+    2026-10-13 起只此一份，且**不照搬**那个式子（`DECISIONS.md` D44）。
+    """
+
+    #: 600519 / 2026-09-28 的实测三元组（`stock_reality_feat_day` 里 baostock `turnover`）
+    VOL, GUBEN, BAOSTOCK = 28218, 1250081562.5, 0.0022572926
+
+    def test_reproduces_baostock_turnover(self):
+        """按流通股本现算 ⇒ 与 baostock 的 `turnover` 逐位（6 位）相同。"""
+        self.assertEqual(turnover_from_volume(self.VOL, self.GUBEN), 0.002257)
+
+    def test_does_not_reproduce_the_legacy_100x_error(self):
+        legacy = round((self.VOL * 100 / self.GUBEN) / 100, 6)
+        self.assertEqual(legacy, 0.000023)                    # 老式子给的就是这个
+        # 差的是**整整 100 倍**，不是舍入（先 round 再 ×100 与后 round 差在末位）
+        self.assertAlmostEqual(turnover_from_volume(self.VOL, self.GUBEN),
+                               legacy * 100, places=4)
+
+    def test_threshold_switches_the_share_unit(self):
+        """超阈值就判 `vol` 已经是**股**，去掉那个 ×100。"""
+        self.assertEqual(turnover_from_volume(1e6, 1e9, threshold=0.01), 0.001)
+
+    def test_missing_share_capital_is_none_not_a_number(self):
+        self.assertIsNone(turnover_from_volume(1e7, 0))
+        self.assertIsNone(turnover_from_volume(1e7, float('nan')))
+        self.assertIsNone(turnover_from_volume(1e7, None))
+
+
+class TestFillTurnover(unittest.TestCase):
+    """`fill_turnover`：只补**真的缺**的日子，写 `turnover` 那列。"""
+
+    CODE = '600519'
+    DAYS = ['2026-09-28', '2026-09-29', '2026-09-30']
+
+    def _frame(self, days=None):
+        import pandas as pd
+        days = days or self.DAYS
+        idx = pd.MultiIndex.from_arrays(
+            [pd.to_datetime(days), [self.CODE] * len(days)], names=['ts', 'code'])
+        return pd.DataFrame({'date': days, 'volume': [28218, 26366, 38330]}, index=idx)
+
+    def _have(self, days=None, col=TURNOVER_BS):
+        import pandas as pd
+        days = days or []
+        idx = pd.MultiIndex.from_arrays(
+            [pd.to_datetime(days), [self.CODE] * len(days)], names=['date', 'code'])
+        return pd.DataFrame({col: [0.01] * len(days)}, index=idx)
+
+    def _run(self, have, frame=None, guben=1250081562.5, codes=None):
+        from unittest import mock
+        import pandas as pd
+        written = []
+        market = mock.Mock()
+        market.get_kline_price_v3.return_value = (
+            mock.Mock(data=frame if frame is not None else self._frame()), self.CODE)
+        info = pd.DataFrame({'liutongguben': [guben]})
+        with mock.patch('GolemQ.core.market_registry.get_active_market',
+                        return_value=market), \
+             mock.patch('GolemQ.markets.StockCN.refdata.GQ_fetch_stock_info',
+                        return_value=info), \
+             mock.patch('GolemQ.markets.StockCN.refdata.GQ_fetch_stock_reality_feat_day',
+                        return_value=have), \
+             mock.patch('GolemQ.datasource.writer.upsert_fields',
+                        side_effect=lambda c, d, k: (written.append(list(d)),
+                                                     {'upserted': len(d), 'modified': 0})[1]), \
+             mock.patch('GolemQ.markets.StockCN.metadata_save._db',
+                        return_value=mock.MagicMock()):
+            out = fill_turnover(codes or [self.CODE], verbose=False)
+        return out, [d for batch in written for d in batch]
+
+    def test_fills_only_the_missing_days(self):
+        out, docs = self._run(self._have(['2026-09-28', '2026-09-29']))
+        self.assertEqual([d['date'] for d in docs], ['2026-09-30'])
+        self.assertEqual(out['filled'], 1)
+
+    def test_writes_the_baostock_column_not_the_eastmoney_one(self):
+        """补算值按**流通**股本 ⇒ 只能进 `turnover`（东财那列按自由流通股本，两个量）。"""
+        _, docs = self._run(self._have([]))
+        self.assertIn(TURNOVER_BS, docs[0])
+        self.assertNotIn(TURNOVER_DC, docs[0])
+
+    def test_covered_by_either_column_counts_as_present(self):
+        """东财列有值也算覆盖 —— 两列取并集才是「这天有换手率」。"""
+        out, docs = self._run(self._have(self.DAYS, col=TURNOVER_DC))
+        self.assertEqual(out['filled'], 0)
+        self.assertEqual(docs, [])
+
+    def test_missing_share_capital_skips_the_code(self):
+        out, docs = self._run(self._have([]), guben=0)
+        self.assertEqual((out['filled'], docs), (0, []))
+
+    def test_no_codes_is_a_usage_error(self):
+        with self.assertRaises(ValueError):
+            fill_turnover([])
 
 
 if __name__ == '__main__':

@@ -343,7 +343,8 @@ suspended = (vol is None) or (float(vol) < 1)     # < 1 而不是 == 0，见上
 
 **约束（新增订阅器必须遵守）**：**所有订阅函数必须可零参数调用。**
 `sub_l1_from_tencent` 已补默认值（`database_realtime=None` → 8.3 的
-`golemq_stock_cn_realtime`），`sub_l2_from_tencent` 一开始就按此约定写。
+`golemq_stock_cn_realtime`）。（当年与之并列的 `sub_l2_from_tencent`
+**2026-10-15 已整条删除**，见 `docs/decisions/D47.md` —— 别拿它当范例。）
 现在这条由测试守着：`test_cases/test_subscribers.py` 对
 `GQSUBSCRIBER` 里**每一个**函数做签名检查（不允许有必填参数），新增订阅器若违规会直接红。
 
@@ -1168,3 +1169,118 @@ ProxyError 是"有东西在中间"、RemoteDisconnected 是"对端主动断开" 
 
 > 项目所有者 2026-10-12：「这也是我重构的原因，老树耦合 4.4 数据太脏了」——
 > **4.4 的脏数据不是个例**，本条只是撞见的一个。
+### P34. `git rm -r` 删掉一个**包**之后，目录还在 —— Python 把它当**命名空间包**照样 import
+
+**位置**：任何「删整包」的操作（本例：2026-10-16 删 `GolemQ/features/`，见 `D50`）。
+
+**症状**：`git rm -r GolemQ/features/` 之后 `git status` 看着干净（三个 `.py` 都是 `D`），
+但**磁盘上目录还在** —— 里面只剩 `__pycache__/`。而 Python 3 对**没有 `__init__.py` 的目录**
+会当作**命名空间包**，于是：
+
+```python
+>>> import GolemQ.features          # ← 删完了却**照样成功**
+>>> GolemQ.features.__path__
+_NamespacePath(['...\GolemQ\features'])   # 一个空目录，什么都没装
+```
+
+**为什么危险**：`from GolemQ.features import attach_reality_features` 会 `ImportError`（还算好），
+但**任何依赖 `importlib.util.find_spec(...)` / `pkgutil.iter_modules(...)` 的代码都会把它当成存在**
+—— 探测式注册、按包遍历文档、`--check` 那类工具全会**给出错答案**。
+而 `git` 只管**文件**、不管**目录**，所以「`git status` 干净」**证明不了包已消失**。
+
+**该怎么办**：删包时**连目录一起删**（`rm -rf`，别只 `git rm -r`），删完**验一句**：
+
+```bash
+python -c "import GolemQ.features"     # 必须 ImportError
+```
+
+**扫描同类残留**（内容里只剩 `__pycache__` 的目录）：
+
+```bash
+python -c "import os; [print(r) for r,d,f in os.walk('GolemQ') if '__pycache__' in d and not [x for x in d if x!='__pycache__'] and not [x for x in f if not x.endswith('.pyc')]]"
+```
+
+⚠️ 与 `MIGRATION_STATUS.md` 记的「`features.py` / **`features/` 同名陷阱**」是**同一族**：
+那次是「同名模块没删」，这次是「空目录没删」，**都是「以为删干净了、其实没有」**。
+
+
+### P35. pandas 3 的 `datetime64` **精度按输入而定** —— 写死 `// 10 ** 9` 会静默错，**换成单个"版本系数"也照样错**
+
+**位置**：`core/constants.py`（`EPOCH_UNIT_TO_SECONDS` / `epoch_divisor`）、
+`markets/StockCN/kline83.py`（`epoch_seconds`）、`markets/StockCN/realtime.py`。
+决策见 `DECISIONS.md` **D52**；守卫见 `test_cases/test_epoch_divisor.py`。
+
+**症状**：pandas 3.0 把 `pd.to_datetime` 的默认精度从 `datetime64[ns]` 改成
+`datetime64[us]`，于是
+
+```python
+series.astype(np.int64) // 10 ** 9     # pandas 2 ⇒ 秒；pandas 3 ⇒ **秒/1000**
+```
+
+**不报错**，只是把 `date_stamp` / `time_stamp` 这类**键**写成另一个数量级
+（实测：`1767596400` → `1767596`）。
+
+**更深一层（这才是本条的重点）**：pandas 3 是**按输入推精度**的，
+**同一次运行里几种精度并存**（本机 3.0.6 实测）：
+
+| 构造方式 | dtype | 秒系数 |
+|:--|:--|--:|
+| `pd.to_datetime(date 对象)` | `datetime64[s]` | **1** |
+| `pd.to_datetime(字符串)` | `datetime64[us]` | 1e6 |
+| `pd.to_datetime(Series)` | `datetime64[us]` | 1e6 |
+| pandas 2 的默认 | `datetime64[ns]` | 1e9 |
+
+⇒ **"启动时按 pandas 版本算一个全局系数"也是错的**：版本号只说明"默认是 µs"，
+说明不了**这一条序列**是什么精度。实测拿 1e6 去处理 `date` 对象那条路
+（`reality_save` 的 `day_dt`）⇒ `date_stamp` 变成 `1767`。
+
+**该怎么办**：
+
+```python
+from GolemQ.core.constants import epoch_divisor
+seconds = series.astype('int64') // epoch_divisor(series.dtype)   # 按**这条序列**查
+```
+
+或直接用 `kline83.epoch_seconds(series)`（tz-aware；`Series` / `DatetimeIndex` 都收）。
+
+⚠️ **两个例外别顺手统一**：
+* `analysis/pivot.py` 是**纳秒域**（与 `Timestamp.value` 比 `searchsorted`，
+  而 `Timestamp.value` 恒为 ns）—— 换成秒**会错**；
+* `metadata_save.day_stamp` / `kline83.bj_date` 走 Python `datetime.timestamp()`，
+  与 pandas 精度**无关**，不用动。
+
+**守卫**：`test_epoch_divisor.py` 会**扫全树 token**（跳过注释与字符串）找
+`// 10 ** 9` / `// 1000000000` / `// 1e9`。已验它会红。
+
+### P36. 多线程服务端 + matplotlib **GUI 后端** ⇒ 每个标的都「静默渲染失败」，一条结果都写不进库
+
+**位置**：`markets/StockCN/chartscan/render.py`（2026-10-18 修复）。
+
+**症状**（真机，`chartscan.ps1` 起 4 端口服务端）：
+
+```
+UserWarning: Starting a Matplotlib GUI outside of the main thread will likely fail.
+  fig = plt.figure()
+...
+  File "render.py", line 58, in GQ_generate_chart_stock
+    plt.close()
+  ...
+RuntimeError: main thread is not in main loop
+```
+
+**机制**：`server.main` 对**每个端口开一个线程**（`run_server(port, is_thread=True)`），
+而 matplotlib 默认走 **TkAgg**（GUI 后端）。Tk 只能在主线程跑 ⇒
+`plt.figure()` 告警、`plt.close()` 直接抛。
+
+**为什么危险（这是它进本文档的理由）**：`predict.GQ_predict_ChartScanAI` 的渲染段
+被 `except Exception: traceback.print_exc()` 兜着 ⇒ **不中断、不返回错误**，
+只是**这一条没有结果**。而屏上同时刷着 YOLO 的 `0: 256x640 … Speed: …`，
+那几行 traceback 混在中间**极容易被当成噪声**。后果是：服务端「看起来在跑」，
+**库里一行新检出都没有**。
+
+**该怎么办**：`render.py` **在模块导入时**就 `os.environ['MPLBACKEND'] = 'Agg'`，
+并在函数内 `matplotlib.use('Agg', force=True)` 再钉一次（防别处先 import 了 pyplot）。
+本模块只把图存进内存 `BytesIO`，**从不需要窗口**。
+⚠️ 别用 `setdefault` —— 用户环境里残留的 `MPLBACKEND=TkAgg` 会把它顶掉。
+
+**守卫**：`test_chartscan_predict.TestHeadlessRendering`（2 条）。

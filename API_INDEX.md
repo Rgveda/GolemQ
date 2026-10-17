@@ -53,6 +53,30 @@
 |:--|:--|:--|
 | f | `find_zs(points)` | 输入笔或线段标记点，输出中枢识别结果。 `[dt]` |
 
+### `indicators`
+技术指标的小工具 —— 目前只有 TA_HMA。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `available()` | talib 在不在（TA_HMA 全靠它）。 |
+| f | `TA_HMA(close, period)` | 赫尔移动平均（Hull Moving Average）。 `[dt]` |
+
+### `magic_nine`
+神奇九转（Magic Nine Turns，TD-Sequential 风格）—— 纯算法核。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `calc_magic_nine_turns_np_vXs(truthPrice)` | 收盘价序列 → 神奇九转标记（float32，与输入等长）。 |
+
+### `magic_nine_jit`
+magic_nine 的 numba 加速版（analysis/magic_nine.py 的 jit 对照实现）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `available()` | numba 在不在。 |
+| f | `magic_nine_jit_status()` | 排障用：numba 版本 + jit 是否真的开了（DISABLE_JIT 环境变量会关掉它）。 |
+| f | `calc_magic_nine_turns_np_vXs_jit(truthPrice)` | magic_nine.calc_magic_nine_turns_np_vXs 的 jit 版 —— 返回值逐值相同。 |
+
 ### `peak`
 鲁棒性极值点识别（PEAK_POINT）—— 基于方差统计与 ZSCORE 排序。
 
@@ -80,6 +104,14 @@
 | f | `plot_pivots_plotly(fig, pivots, x_last, row, col, box_color, edge_color, line_width, label, show_ggdd, strict)` | 在 Plotly K 线图上绘制中枢箱体（矩形 + GG/DD 因果台阶 + ZG/ZD 标注）。 |
 | f | `attach_pivot_features(features, symbol, max_bi_count, strict)` | 把中枢字段（ZD/ZG/GG/DD/direction）作为列附加到特征 DataFrame 上。 |
 
+### `poly9`
+Poly9 家族的编排层 —— 把 rolling_poly9_v2 / mapower 串成指标列。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `calc_polynomial9_vXIs(ohlc_data, features, annual, verbose)` | POLYNOMIAL9 / POLYNOMIAL9_DELTA / POLYNOMIAL9_TIMING_LAG 三列。 |
+| f | `calc_polynomial9_norm_vXIs(features, annual)` | POLYNOMIAL9_NORM —— MA 均线多头排列能量强度（0..1）。 |
+
 ### `quadrant`
 四量图（calc_four_quadrant_boost）与四象限体系的特征计算 —— 逐字搬自老树。
 
@@ -97,6 +129,18 @@
 | f | `calc_mainstream_feats(ohlc, features)` | 主力资金吸筹 —— 产出 MsLeadinBf / MsLeadinx3Bf / MsLeadinx5Bf。 |
 | f | `calc_bs_before(features)` | 8 个 BS*Bf* —— 买卖/星线信号的「距上一次」计数（Timeline_duration）。 |
 | f | `calc_pivot_timing_lag(features)` | ZenPivotLag —— 距出中枢（ZenPivotZD 变 NaN）以来的 lag。 |
+| f | `inv_nums(series)` | 序列的逆序数（inversion count）—— 前面比后面大的对数。 `[dt]` |
+| f | `mapower_np_vXIIs(price, range_list)` | MA 均线多头排列能量强度（POLYNOMIAL9_NORM 的生产核）—— 输出 0..1。 `[dt]` |
+
+### `quadrant_jit`
+quadrant 里 mapower 那一族的 numba 加速版（D36 形态的 jit 对照实现）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `available()` | numba 在不在。 |
+| f | `quadrant_jit_status()` | 排障用：numba 版本 + jit 是否真的开了（DISABLE_JIT 环境变量会关掉它）。 |
+| f | `inv_nums_jit(series)` | quadrant.inv_nums 的 jit 版。numba 不在场时回落到纯 Python 版（宁可慢，不要抛）。 |
+| f | `mapower_np_vXIIs_jit(price, range_list)` | quadrant.mapower_np_vXIIs 的 jit 版 —— 返回值逐值相同。 |
 
 ### `regtree`
 回归树（CART）与 regtree 拟合线 —— 从旧树 analysis/regtree.py 搬运。
@@ -171,6 +215,17 @@ RSRS（阻力支撑相对强度）指标计算 —— 逐字搬自老树 signal/
 |:--|:--|:--|
 | f | `pre_rsrs_data_func(data)` | 准备 RSRS 数据 —— 逐字搬自老树 signal/rsrs.py:54。 `[dt]` |
 
+### `stages`
+Garident STAGE —— 用 K-Means 把收盘价聚成「支撑/压力带」，再判断当前价落在哪一带。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `calc_garident_price(closep)` | 收盘价序列 → 排好序的「支撑/压力带」列表 [[上沿, 下沿], ...]。 |
+| f | `garident_bands_to_ratio(bands, anchor_close)` | 带（绝对价位）→ 相对锚 bar close 的比值带。 `[dt]` |
+| f | `garident_bands_from_ratio(ratio_bands, anchor_close)` | 比值带 → 绝对价位带（乘锚 bar 的 close）。 `[dt]` |
+| f | `calc_garident_stage(curr_closep, curr_garident_prices)` | 当前收盘价落在第几条带里 → STAGE。 |
+| f | `calc_garident_stages(checkpoints, features, verbose, echo)` | 在 checkpoints 逐行定带，把 AKA.STAGE 及其伴随列写进 features。 |
+
 ### `timeseries`
 时间序列工具 —— 多频重采样与时间轴对齐。
 
@@ -178,6 +233,7 @@ RSRS（阻力支撑相对强度）指标计算 —— 逐字搬自老树 signal/
 |:--|:--|:--|
 | f | `GQ_data_min_resample(min_data, type_)` | 分钟线 → 更大周期的分钟线（5min / 15min / 30min / 60min / 1D）。 |
 | f | `GQ_data_min_to_day(min_data, type_)` | 分钟线 → 日线。QUANTAXIS QA_data_min_to_day 的忠实回迁。 |
+| f | `rolling_poly9_v2(s, w)` | 滚动九次多项式拟合，取每个窗口的端点值作输出（第二版）。 `[dt]` |
 
 ### `timing`
 时域累积器与金叉/死叉时间间隔。
@@ -196,6 +252,17 @@ RSRS（阻力支撑相对强度）指标计算 —— 逐字搬自老树 signal/
 | f | `strided_app(a, L, S)` | pandas.rolling 的 numpy 版：把一维数组切成 (nrows, L) 的滑窗视图。 `[dt]` |
 | f | `rolling_zscore(s, w)` | 滚动标准分：每个窗口取最后一个元素的 zscore。 `[dt]` |
 | f | `lineareg_intercept(slope1, y1, slope2, y2)` | 两条直线的交点横坐标：y = slope*x + y 两式相等解 x。 `[dt]` |
+
+## GolemQ.analysis.cv
+
+### `scopes`
+scan scope 解析 —— 从旧树 perpar_symbol_range 搬来的 6 个分支。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `ScanDataset` | scope 解析所需的数据落点。跨市场：换市场 = 换一个实例。 |
+| f | `focus_block_codes(dataset, verbose, echo)` | focus_block 的成分股（去重、6 位、排序）。 |
+| f | `perpar_symbol_range(eval_range, dataset, verbose, echo)` | --eval <scope> → 代码列表；解析不出来返回 False（沿用旧树约定）。 `[dt]` |
 
 ## GolemQ.cli
 
@@ -265,6 +332,26 @@ CLI 命令注册表 —— 机制层，不认识任何具体命令。
 | f | `pick(args)` | 按登记顺序找第一个命中的命令；都不命中 → None。 |
 | f | `dispatch(args)` | pick + run 的便捷版。 |
 
+### `chartscan`
+ChartScan（CV 图形识别）的两条 CLI 入口 —— --scan / --server。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `cv_python()` | GolemAI env 的 python 路径。 `[dt]` |
+| f | `in_cv_env()` | 当前进程是不是就跑在 GolemAI env 里（→ 不必再起子进程）。 |
+| f | `add_scan_arguments(parser)` |  |
+| f | `add_server_arguments(parser)` |  |
+| f | `run_chartscan_scan(args)` | --scan ChartScan → chartscan.client.run_client。 |
+| f | `run_chartscan_server(args)` | --server ChartScan → chartscan.server.main（含逗号分隔的多端口）。 |
+
+### `fill_turnover`
+--fill-turnover —— 用「成交量 ÷ 流通股本」现算补齐 stock_reality_feat_day 缺的换手率。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `add_fill_turnover_arguments(parser)` |  |
+| f | `run_fill_turnover(args)` | --fill-turnover 的处理体：只做参数校验，干活在 metadata_save.fill_turnover。 |
+
 ### `heartbeat`
 心跳监控：--heartbeat-watchdog（查看）与 --stop-heartbeat-monitor（停止）。
 
@@ -276,7 +363,7 @@ CLI 命令注册表 —— 机制层，不认识任何具体命令。
 | f | `run_stop(args)` |  |
 
 ### `metadata_align`
---metadata-align —— stock_metadata_day 对 K 线的覆盖率报告（只读）。
+--metadata-align —— stock_reality_feat_day 对 K 线的覆盖率报告（只读）。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -292,9 +379,13 @@ CLI 命令注册表 —— 机制层，不认识任何具体命令。
 | f | `run_migrate_turnover(args)` | --migrate-turnover 的处理体：只做参数校验，干活在 metadata_save。 |
 | f | `add_index_list_arguments(parser)` |  |
 | f | `run_migrate_index_list(args)` | --migrate-index-list 的处理体：只做参数校验，干活在 refdata_save。 |
+| f | `add_metadata_merge_arguments(parser)` |  |
+| f | `run_migrate_metadata_merge(args)` | --migrate-metadata-merge / --migrate-metadata-verify 的处理体。 |
+| f | `add_reality_feat_arguments(parser)` |  |
+| f | `run_migrate_reality_feat(args)` | --migrate-reality-feat 的处理体：只做参数校验，干活在 reality_save。 |
 
 ### `moneyflow`
---moneyflow —— 抓资金流 / 千股千评并落 stock_metadata_day。
+--moneyflow —— 抓资金流 / 千股千评并落 stock_reality_feat_day。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -399,6 +490,7 @@ GolemQ Constants Module
 | C | `FEATURES` | Feature column name constants (stub — to be populated). |
 | C | `TREND_STATUS` | Trend status constants (stub — to be populated). |
 | C | `STATE` | State constants (stub — to be populated). |
+| f | `epoch_divisor(dtype)` | datetime64 的 dtype（naive 或 tz-aware）→ 秒系数。 `[dt]` |
 
 ### `gq_logging`
 日志接口 —— 替代 QUANTAXIS 的 QA_util_log_info。
@@ -564,25 +656,6 @@ GolemQ Constants Module
 | f | `save_block_collection(coll, rows, batch, verbose)` | stock_block 专用：键是 (blockname, code)，删除分两层。 |
 | f | `save_bar_chunk(coll, docs)` | 时间序列集合专用写口：只 drop 掉本次要写的那几根，再插。 |
 | f | `replace_code_rows(coll, docs)` | 按 code 整体替换：delete_many({'code': code}) → 插。 |
-
-## GolemQ.features
-
-### `empirical`
-Feature empirical data stubs (to be populated).
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `load_massive_reviews(symbol, start, end, compact, collections)` | Load massive review features (stub). |
-| f | `load_massive_model(revision, eval_range, start, end, collections)` | Load massive reality model (stub). |
-| f | `save_stock_metadata(data, collections)` | Save stock metadata (stub). |
-| f | `GQ_fetch_stock_metadata_major(code, verbose, start, end, collections)` | Fetch major stock metadata (stub). |
-
-### `reviews`
-Feature review stubs (to be populated).
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `attach_reality_features(features_dummy, annual, collections)` | Attach reality features to a baseline dataframe (stub). |
 
 ## GolemQ.gateway.xtquant
 
@@ -755,6 +828,7 @@ A 股 K 线读取器 —— 走 MongoDB 8.3 时序库（golemq_stock_cn）。
 |:--|:--|:--|
 | C | `KlineResult` | 与 QUANTAXIS QA_DataStruct_* 对齐的最小接口 —— 调用方只取 .data。 |
 | f | `bj_date(x)` | 北京时间的裸值 → UTC-aware datetime（给 ts 字段用）。 |
+| f | `epoch_seconds(series)` | tz-aware 时间 Series → 秒级 epoch（int64）。与 pandas 版本无关。 `[dt]` |
 | f | `normalize_frequency(frequence)` | 频率别名 → 规范频率；不认识的值抛 ValueError。 |
 | f | `market_prefix(codelist, market_type)` | 决定读哪一族集合 —— 'stock' / 'index' / 'etf'。 `[dt]` |
 | f | `get_kline_price_min(codelist, start, market_type, frequency, verbose, end, realtime, if_fq)` | 分钟线读取（8.3 时序）。返回 (KlineResult, codename)。 |
@@ -833,28 +907,32 @@ pytdx bar / xdxr → 8.3 时序文档的纯函数核心（写侧契约）。
 | f | `GQ_restore_suspended(targets, removed_by, verbose)` | 回迁：把 <集合名>_removed 里由清理移走的内容搬回主集合，幂等。 |
 
 ### `metadata_align`
-把 stock_metadata_day 的列对齐到任意频率的 K 线。
+把 stock_reality_feat_day 的列对齐到任意频率的 K 线。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `align_metadata_frame(kline, meta, columns)` | 纯函数：把 meta（索引 (date, code)）对齐到 kline 的每一行。 `[dt]` |
-| f | `align_metadata_to_kline(kline, columns, database)` | 读 stock_metadata_day 并把它对齐到 kline（见 :func:align_metadata_frame）。 |
+| f | `align_metadata_to_kline(kline, columns, database)` | 读 stock_reality_feat_day 并把它对齐到 kline（见 :func:align_metadata_frame）。 |
 
 ### `metadata_save`
-stock_metadata_day —— 日频元数据的统一落点。
+stock_reality_feat_day —— 日频元数据的统一落点。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `day_stamp(day)` | 'YYYY-MM-DD'（或带时分秒）→ 本表 date_stamp（秒，int）。 `[dt]` |
 | f | `day_date(date_str)` | 源端日期 → '%Y-%m-%d'。 `[dt]` |
-| f | `metadata_day_doc(code, day, field, rate, created_at)` | 一行元数据 → stock_metadata_day 文档（只带一列载荷）。 `[dt]` |
+| f | `metadata_day_doc(code, day, field, rate, created_at)` | 一行元数据 → stock_reality_feat_day 文档（只带一列载荷）。 `[dt]` |
 | f | `metadata_day_doc_multi(code, day, fields, created_at)` | 一行多列元数据 → 文档。:func:metadata_day_doc 是它的单列特例。 `[dt]` |
-| f | `turnover_rows(rows, src_field, dst_field, created_at)` | 某个源的源行 → stock_metadata_day 文档列表。 `[dt]` |
-| f | `save_turnover(since, until, batch, verbose, echo, created_at, dry_run)` | 把 4.4 两源的换手率搬进 8.3 stock_metadata_day（两列，各写各的）。 |
+| f | `turnover_rows(rows, src_field, dst_field, created_at)` | 某个源的源行 → stock_reality_feat_day 文档列表。 `[dt]` |
+| f | `save_turnover(since, until, batch, verbose, echo, created_at, dry_run)` | 把 4.4 两源的换手率搬进 8.3 stock_reality_feat_day（两列，各写各的）。 |
 | f | `refresh_turnover(days, verbose, echo)` | 增量刷新最近 days 个自然日的换手率（供 --save 调用）。 |
+| f | `turnover_from_volume(vol, liutongguben, threshold)` | 成交量(手) / 流通股本(股) → 换手率。纯函数。 `[dt]` |
+| f | `fill_turnover(codes, start, end, verbose, echo, created_at)` | 把「成交量 ÷ 流通股本」现算的换手率补进 stock_reality_feat_day。 |
+| f | `merge_metadata_into_feat(batch, limit, dry_run, verbose, echo)` | 把 :data:LEGACY_METADATA_DAY_COLL 的行原样搬进 :data:REALITY_FEAT_DAY_COLL。 |
+| f | `verify_metadata_merge(sample, verbose, echo)` | 只读核对：抽样比对源表与目标表在 (code, date_stamp) 上是否逐字段相同。 |
 
 ### `moneyflow_save`
-资金流 / 千股千评 → stock_metadata_day（旧 CLI --moneyflow 的搬运）。
+资金流 / 千股千评 → stock_reality_feat_day（旧 CLI --moneyflow 的搬运）。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -864,9 +942,9 @@ stock_metadata_day —— 日频元数据的统一落点。
 | f | `last_trade_day()` | 8.3 口径的最后交易日（'YYYY-MM-DD'）—— 同花顺的日期靠它。 |
 | f | `fetch_eastmoney_comment()` | 东财千股千评（ak.stock_comment_em）—— 实测 5200 行 / 11 次分页 / ~3s。 |
 | f | `fetch_ths_fundflow()` | 同花顺全市场当日资金流（ak.stock_fund_flow_individual('即时')）。 |
-| f | `rows_eastmoney(df, created_at)` | 千股千评帧 → stock_metadata_day 文档列表。 |
-| f | `rows_ths(df, day, created_at)` | 同花顺资金流帧 → stock_metadata_day 文档列表（day 由调用方给）。 |
-| f | `save_moneyflow(source, created_at, verbose, echo, dry_run)` | 取数 → 组行 → upsert_fields 落 stock_metadata_day。 |
+| f | `rows_eastmoney(df, created_at)` | 千股千评帧 → stock_reality_feat_day 文档列表。 |
+| f | `rows_ths(df, day, created_at)` | 同花顺资金流帧 → stock_reality_feat_day 文档列表（day 由调用方给）。 |
+| f | `save_moneyflow(source, created_at, verbose, echo, dry_run)` | 取数 → 组行 → upsert_fields 落 stock_reality_feat_day。 |
 
 ### `quotes`
 
@@ -885,6 +963,8 @@ stock_metadata_day —— 日频元数据的统一落点。
 | f | `reality_feat_rows(features, family, created_at)` | CV 结果帧 → *_reality_feat_* 文档列表。纯函数（不碰 DB）。 `[dt]` |
 | f | `save_reality_feat(features, family, market_type, verbose, echo, created_at)` | 取数（其实只组行）→ upsert_fields 落 golemq_stock_cn。 |
 | f | `fetch_reality_feat(codes, start, end, family, market_type)` | 读回 *_reality_feat_*；空结果返回 None（不是空帧）。 |
+| f | `migrate_reality_feat_from44(families, sources, limit, dry_run, verbose, echo)` | 把 4.4 的 CV 检出结果搬进 8.3（一次性，DECISIONS.md D51）。 |
+| f | `verify_reality_feat_migration(families, sources, sample, verbose, echo)` | 只读核对：4.4 的 CV 行是否都在 8.3 的对应表里、且逐值相同。 |
 
 ### `realtime`
 
@@ -896,7 +976,6 @@ stock_metadata_day —— 日频元数据的统一落点。
 | f | `formater_l1_ticks(l1_ticks, codelist, stacks, symbol_list)` | 处理 l1 ticks 数据 |
 | f | `sub_l1_from_tencent(database_realtime)` | 从腾讯获取 L1 数据（成交快照，含五档）。 |
 | f | `realtime_ts_collection(database, name)` | 取（必要时创建）实时用的时间序列集合。 |
-| f | `sub_l2_from_tencent(database_realtime, sleep_time, etf_codelist, verbose)` | L2（五档盘口）订阅：全市场走腾讯；ETF 那条留给 MiniQMT（已停服）。 |
 | f | `GQ_fetch_stock_realtime_adv(code, num, collections, verbose, suffix, day, source)` | 返回当日的上下五档, code可以是股票可以是list, num是每个股票获取的数量 |
 | f | `GQ_data_tick_resample_1min(tick, type_, if_drop, stack_vol)` | tick 采样为 分钟数据 |
 | f | `GQ_fetch_stock_day_realtime_adv(codelist, data_day, market_type, verbose)` | 查询日线实盘数据，支持多股查询 |
@@ -917,7 +996,7 @@ A 股参考数据的读取层 —— 一律走 MongoDB 8.3 的 golemq_stock_cn�
 | f | `GQ_fetch_index_list(codes, database)` | 指数名单（code 6 位，另有 name/pre_close/sse/volunit/ |
 | f | `GQ_fetch_stock_block(blocknames, codes, database)` | 板块成分。 |
 | f | `GQ_fetch_financial(codes, report_date, database)` | 季频财务。一行 = 一个 (code, report_date)。 |
-| f | `GQ_fetch_stock_metadata_day(code, start, end, columns, database)` | stock_metadata_day（日频元数据，一行 = 一标的 × 一交易日）的读取口。 |
+| f | `GQ_fetch_stock_reality_feat_day(code, start, end, columns, database)` | stock_reality_feat_day（日频元数据，一行 = 一标的 × 一交易日）的读取口。 |
 
 ### `refdata_save`
 A 股参考集合的取数与落库编排 —— 对应 CLI 的 --save <SOURCE> 的参考数据段。
@@ -927,25 +1006,19 @@ A 股参考集合的取数与落库编排 —— 对应 CLI 的 --save <SOURCE> 
 | f | `refdata_ttl_hours(collection, now)` | 该集合此刻该用的刷新间隔（小时）—— 查 :data:TTL_HOURS 的 (盘中, 盘后)。 `[dt]` |
 | f | `mark_refdata_success(collection, echo)` | 把「该集合刚刚成功完成」记进 supervisor 的签到表。只该在真写完之后调。 |
 | f | `refdata_age_hours(collection, now)` | 该集合距上次成功完成过去了多少小时；从没成功过 → None（调用方按「该取」处理）。 |
+| f | `snapshot_universe(verbose, echo)` | 8.3 的 stock_list ∪ etf_list ∪ index_list → 带交易所前缀的码表。 |
+| f | `refresh_stock_codes_cache(verbose, echo)` | 把 8.3 stock_list 的码表导出到 easyquotation 的本地缓存文件。 |
 | f | `save_index_list_from44(dry_run, verbose, echo)` | 把 4.4 的 quantaxis.index_list 补进 8.3 的 index_list（只补缺）。 |
 | f | `save_refdata(collections, source, codelist, exclude_sources, verbose, on_progress, echo, ttl_hours)` | 把参考集合取回并落库到 8.3 的 golemq_stock_cn。 |
 | f | `refdata_status()` | 各集合当前的源可用性与库存量 —— 排障用。 |
 | f | `format_status(report)` | 把 save_refdata 的结果或 refdata_status() 渲染成可读文本。 |
-
-### `scopes`
-ChartScan 的 scan scope 解析 —— 从旧树 perpar_symbol_range 搬来的 6 个分支。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `etf_scope_codes()` | etf scope 的码表（排序后的列表）。纯函数。 `[dt]` |
-| f | `focus_block_codes(verbose, echo)` | focus_block 的成分股（去重、6 位、排序）。 |
-| f | `perpar_symbol_range(eval_range, verbose, echo)` | --eval <scope> → 代码列表；解析不出来返回 False（沿用旧树约定）。 |
 
 ### `symbol`
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | C | `EXCHANGE` |  |
+| f | `etf_scope_codes()` | etf scan scope 的码表（排序后的列表）。纯函数。 `[dt]` |
 | f | `normalize_code(symbol, pre_close, market_type)` | 归一化证券代码 |
 | f | `is_stock_cn(code)` | 判断 股票代码，市场来源，板块。 `[dt]` |
 
@@ -985,7 +1058,7 @@ ChartScan 的推理与编排 —— 搬自旧树 GolemAI/GolemQ/CV/charts.py:124
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `GQ_markup_daily_ChartScaned(code, kline_data, market_type, verbose)` | 「没探到」时在日族留一行只有 ChartScaned 的标记（照旧 :124-143）。 |
-| f | `GQ_markup_ChartScaned(code, kline_data, market_type, verbose)` | 「没探到」时在60min 族留一行只有 ChartScaned 的标记（照旧 :146-166）。 |
+| f | `GQ_markup_ChartScaned(code, kline_data, market_type, verbose, family)` | 「没探到」时在 family 族留一行只有 ChartScaned 的标记（照旧 :146-166）。 |
 | f | `GQ_predict_ChartScanAI(code, market_type, freq, end_date, chunk_size, model, if_fq, verbose)` | 单标的 × 单频率：取数 → 出图 → YOLO → 挑最近 end_date 的框 → 落库。 |
 | f | `calc_ChartScaned_persistence(ticker, market_type, start_date, end_date, ret_metadata)` | 读回已扫结果，决定该标的要重扫什么 —— 搬自旧树 charts.py:448-565。 |
 | f | `calc_ChartScanAI_reality(ticker, market_type, start_date, end_date, enforce, model, if_fq)` | 编排：读回已扫状态 → 取日线 baseline → 逐日 × 三频率跑预测。搬自 :568-742。 |
@@ -1359,6 +1432,15 @@ Poolcoef Benchmark 子类
 
 ## GolemQ.test_cases
 
+### `old_tree`
+载入 GolemQ_old/ 里任意模块的公用 harness —— 对拍用例共用。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `old_tree_available()` | GolemQ_old/ 在不在。用例拿它做 skipIf。 |
+| f | `load_old(relpath, override, patch_attrs)` | 按命名空间包载入 GolemQ_old/<relpath>，绕开老树的 __init__.py。 |
+| f | `field_compat()` | 取（并缓存）那个兼容代理。老树不在场时退化成"只用新树常量"。 |
+
 ### `run_tests`
 GolemQ 测试运行脚本
 
@@ -1383,12 +1465,54 @@ BLAS / OpenMP 线程数守卫（GolemQ/__init__.py 顶部）。
 | f | `TestBlasThreadGuard.test_guard_sets_one_in_a_clean_interpreter()` | 真回归：起一个剥掉这些变量的新解释器，import GolemQ 之后必须变成 '1'。 |
 | f | `TestBlasThreadGuard.test_guard_does_not_override_explicit_setting()` | setdefault 语义：调用方自己 export 的都该原样保留。 |
 
+### `test_chartscan_cli`
+--scan ChartScan / --server ChartScan 两条 CLI 入口（cli/commands/chartscan.py）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestCommandShape` |  |
+| f | `TestCommandShape.test_both_registered()` |  |
+| f | `TestCommandShape.test_scan_parses()` |  |
+| f | `TestCommandShape.test_server_parses()` |  |
+| f | `TestCommandShape.test_short_scan_alias()` | 旧树的 -sc 保留；-s 已归 --setup ⇒ --server 只有长选项。 |
+| f | `TestCommandShape.test_bad_value_is_usage_error()` | 旧链对非 ChartScan 的值静默忽略；新 CLI 按 D19 判成用法错（2）。 |
+| C | `TestFenceHasNoExemption` |  |
+| f | `TestFenceHasNoExemption.test_chartscan_commands_are_not_repair_commands()` | 围栏只装「修配置」那四条 —— ChartScan 不许混进去。 |
+| f | `TestFenceHasNoExemption.test_gate_still_fires_for_these_commands()` | 把它们当成「普通命令」判严格度 —— 硬拦项不过时照拦。 |
+| C | `TestEnvResolution` |  |
+| f | `TestEnvResolution.test_override_wins()` |  |
+| f | `TestEnvResolution.test_derived_from_interpreter()` |  |
+| f | `TestEnvResolution.test_in_cv_env_compares_real_prefix()` |  |
+| C | `TestReExec` | 不在 CV env 时起子进程 —— 参数、cwd、线程数、退出码。 |
+| f | `TestReExec.test_missing_interpreter_is_failure()` |  |
+| f | `TestReExec.test_command_and_cwd()` |  |
+| f | `TestReExec.test_threads_and_unbuffered()` | 父进程的 BLAS 守卫把它们设成 1 ⇒ 子进程必须显式改回 4，否则 torch 单线程。 |
+| f | `TestReExec.test_threads_override()` |  |
+| C | `TestRunDelegates` |  |
+| f | `TestRunDelegates.test_scan_in_cv_env_calls_module_in_process()` |  |
+| f | `TestRunDelegates.test_scan_outside_cv_env_re_execs()` |  |
+| f | `TestRunDelegates.test_server_in_cv_env_calls_module_in_process()` |  |
+| f | `TestRunDelegates.test_server_outside_cv_env_re_execs()` |  |
+
+### `test_chartscan_predict`
+chartscan/predict.py 的写库路由用例（DECISIONS.md D51）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestHeadlessRendering` | ⚠️ 多线程服务端 + matplotlib GUI 后端 = 每个标的都静默渲染失败。 |
+| f | `TestHeadlessRendering.test_mpbackend_is_forced_to_agg()` |  |
+| f | `TestHeadlessRendering.test_render_module_sets_it_at_import()` | 不是靠调用方传 —— 模块导入那一刻就得钉住（matplotlib 可能已被别人先导入）。 |
+
 ### `test_chip_distribution`
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | C | `TestChipDistributionPerformance` | 性能基准（原为命令行脚本，已纳入 unittest 以便记录依赖缺口） |
 | f | `TestChipDistributionPerformance.test_performance()` | 测试优化前后的性能对比 |
+| C | `TestMissingTurnoverRaises` | 缺换手率 ⇒ 抛，且点名 fill_turnover（DECISIONS.md D44）。 |
+| f | `TestMissingTurnoverRaises.test_missing_turnover_raises_and_names_the_fill_function()` |  |
+| f | `TestMissingTurnoverRaises.test_full_coverage_runs_to_completion()` | 全覆盖时一路跑通，并把 MA250 / MACD 三件套 / 滞回列都算出来。 |
+| f | `TestMissingTurnoverRaises.test_partial_coverage_still_raises()` | 只缺一天也抛 —— 不设「差几天才报」的余地。 |
 | f | `test_performance()` | 命令行直接运行入口（保持原脚本用法） |
 
 ### `test_cli_bootstrap`
@@ -1528,6 +1652,12 @@ cli/commands/ 的注册表契约。
 | f | `TestSaveStageStartDoneLines.test_caption_matches_what_actually_runs()` | ⚠️ --save qmt 不取 K 线（只做参考数据）—— 给它打 "klines" 就是假话。 |
 | f | `TestSaveStageStartDoneLines.test_no_done_line_when_it_crashes()` | ⚠️ 中途炸了不许打 done. —— 那一段没 done。 |
 | f | `TestSaveStageStartDoneLines.test_no_escape_codes_when_not_a_tty()` |  |
+| C | `TestFillTurnoverCli` | --fill-turnover：CLI 只做参数校验 + 委托（DECISIONS.md D44）。 |
+| f | `TestFillTurnoverCli.test_defaults_are_the_last_seven_days()` | 不给边界 ⇒ 与 --save-turnover-days 同口径：今天往前 7 个自然日。 |
+| f | `TestFillTurnoverCli.test_codes_are_split_on_commas()` |  |
+| f | `TestFillTurnoverCli.test_codes_without_any_code_is_a_usage_error()` |  |
+| f | `TestFillTurnoverCli.test_start_after_end_is_a_usage_error()` |  |
+| f | `TestFillTurnoverCli.test_explicit_bounds_win_over_the_default()` |  |
 
 ### `test_cli_tools`
 测试 CLI 工具功能
@@ -1549,6 +1679,25 @@ cli/commands/ 的注册表契约。
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `load_tests(loader, tests, ignore)` | unittest 的收集协议：把各模块的 doctest 挂进本次发现。 |
+
+### `test_epoch_divisor`
+EPOCH_DIVISOR —— datetime → 秒的唯一换算系数（DECISIONS.md D52）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestTheConstantItself` |  |
+| f | `TestTheConstantItself.test_divisor_matches_live_pandas_unit()` | 系数必须等于「当前 pandas 默认精度」的倒数 —— 不是某个写死的数。 |
+| f | `TestTheConstantItself.test_divisor_is_positive_int()` |  |
+| C | `TestPerDtypeLookup` | 系数按 dtype 查，不是一个全局标量 —— 这条是本次的核心教训。 |
+| f | `TestPerDtypeLookup.test_all_units()` |  |
+| f | `TestPerDtypeLookup.test_tz_aware_dtype()` |  |
+| f | `TestPerDtypeLookup.test_second_resolution_input_is_handled()` | ⚠️ 就是这条当初红的：pd.to_datetime(date 对象) 给 datetime64[s]。 |
+| C | `TestEpochSecondsUsesIt` |  |
+| f | `TestEpochSecondsUsesIt.test_known_anchor()` | 北京 15:00 → 07:00Z = 1767596400（与 4.4 存量实测同值）。 |
+| f | `TestEpochSecondsUsesIt.test_accepts_datetimeindex()` |  |
+| f | `TestEpochSecondsUsesIt.test_seconds_are_seconds_not_microseconds()` | 钉住量级：天数换算出来的秒必须落在 10 位数量级（不是 13 位）。 |
+| C | `TestNoHardcodedNanosecondDivisor` | 全树守卫：datetime → 秒 只准走 EPOCH_DIVISOR。 |
+| f | `TestNoHardcodedNanosecondDivisor.test_tree_is_clean()` |  |
 
 ### `test_etf_routing`
 ETF 独立成 ETF_CN / etf_* 之后的路由测试。
@@ -1621,6 +1770,21 @@ markets/StockCN/fq.py 的复权因子 —— 重点是分段常数这条不变�
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `test_timeout_instance_cleanup()` | 测试超时实例清理功能 |
+
+### `test_indicators`
+analysis/indicators.py（TA_HMA）的结构性钉子。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestHMA` | TA_HMA —— 赫尔均线。 |
+| f | `TestHMA.test_warmup_is_eleven_for_period_ten()` | ⚠️ period=10 ⇒ 前 11 个是 NaN。 |
+| f | `TestHMA.test_linear_series_is_reproduced()` | 线性输入 ⇒ 输出也是同斜率的线性（2*WMA(n/2) − WMA(n) 消掉了滞后）。 |
+| f | `TestHMA.test_is_the_talib_composition()` | 就是那条公式本身（WMA(2·WMA(n/2) − WMA(n), √n)）—— 自证同构。 |
+| f | `TestHMA.test_length_always_matches_input()` |  |
+| f | `TestHMA.test_poly9_input_has_no_nan()` | 老树拼 POLYNOMIAL9 输入的那一招：拼完不许留 NaN。 |
+| C | `TestAvailability` |  |
+| f | `TestAvailability.test_available_is_bool()` |  |
+| f | `TestAvailability.test_missing_talib_raises_import_error()` | 缺 talib 时给人话，不是裸 NameError。 |
 
 ### `test_kline83`
 markets/StockCN/kline83.py 的展示名解析（_display_name）。
@@ -1771,6 +1935,47 @@ K 线保存的本地水位短路（DECISIONS.md D25）。
 | f | `TestFastPathDoesNotSurviveTheNextSession.test_everything_expires_after_the_next_close()` | 周一收盘后：since_close 归零 ⇒ 四个组合全都不许跳 ⇒ 去取周一那批。 |
 | f | `TestFastPathDoesNotSurviveTheNextSession.test_since_close_resets_at_each_close()` | 直接钉那个机械原因：新收盘让 since_close 归零。 |
 
+### `test_magic_nine`
+analysis/magic_nine.py 的逐值对拍 + 它的 jit 版一致性。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestMatchesOld` | 与老树 calc_magic_nine_turns_np_vXs 逐值相同。 |
+| f | `TestMatchesOld.test_random_walks()` |  |
+| f | `TestMatchesOld.test_strong_uptrend_hits_nine()` | 单调上涨 ⇒ 必然走满 9 天 ⇒ 输出里必须有 1。 |
+| f | `TestMatchesOld.test_strong_downtrend_hits_nine()` |  |
+| f | `TestMatchesOld.test_flat_series()` | 全平 ⇒ 走 i == _list_t 分支。 |
+| f | `TestMatchesOld.test_sample_paths()` |  |
+| C | `TestJitMatchesPure` | jit 版必须与纯 Python 版逐值一致（DECISIONS.md D36）。 |
+| f | `TestJitMatchesPure.test_status_shape()` |  |
+| f | `TestJitMatchesPure.test_jit_equals_pure()` |  |
+| f | `TestJitMatchesPure.test_jit_accepts_non_float32_input()` | 入参不是 float32 时两版都要先转 —— 否则会在最低位上分叉。 |
+| C | `TestShape` | 结构性钉子（不依赖老树）。 |
+| f | `TestShape.test_length_matches_input()` |  |
+| f | `TestShape.test_dtype_is_float32()` |  |
+| f | `TestShape.test_values_are_in_known_set()` | 取值只可能是 {1, -1, 2, -2, NaN} —— 出现别的就是算法走岔了。 |
+
+### `test_mapower`
+analysis/quadrant.py 的 mapower 一族 —— 与老树逐值对拍 + jit 一致性。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestMatchesOld` | 与老树 inv_nums / mapower_np_vXIIs 逐值相同。 |
+| f | `TestMatchesOld.test_inv_nums_small_cases()` |  |
+| f | `TestMatchesOld.test_mapower_random_walks()` |  |
+| f | `TestMatchesOld.test_mapower_custom_range_list()` | 非默认窗口列表也要一致（老树这个形参是可传的）。 |
+| f | `TestMatchesOld.test_mapower_monotone_series()` | 严格下行 ⇒ 短均线恒高于长均线 ⇒ 逆序数为 0 ⇒ 末值 0。 |
+| C | `TestJitMatchesPure` | jit 版必须与纯 Python 版逐值一致（DECISIONS.md D36）。 |
+| f | `TestJitMatchesPure.test_status_shape()` |  |
+| f | `TestJitMatchesPure.test_mapower_jit_equals_pure()` |  |
+| f | `TestJitMatchesPure.test_inv_nums_jit_equals_pure()` |  |
+| f | `TestJitMatchesPure.test_jit_accepts_float64_input()` | 入参不是 float32 时两版都要先转 —— 否则会在最低位上分叉。 |
+| C | `TestContract` | 不依赖老树的结构性钉子。 |
+| f | `TestContract.test_output_shape_and_range()` |  |
+| f | `TestContract.test_warmup_prefix_is_zero_not_nan()` | 前 max(range_list)-1 个是 0 不是 NaN —— 下游别当"无数据"去 drop。 |
+| f | `TestContract.test_perfect_bullish_alignment_is_one()` | 严格上行 ⇒ 完美多头排列 ⇒ 1.0。 |
+| f | `TestContract.test_perfect_bearish_alignment_is_zero()` |  |
+
 ### `test_market_quotes`
 
 | | 名称 | 摘要 |
@@ -1837,7 +2042,7 @@ markets/StockCN/metadata_align.py —— 元数据对 K 线的对齐。
 | f | `TestShapeContract.test_columns_subset()` |  |
 
 ### `test_metadata_save`
-stock_metadata_day 的落库契约。
+stock_reality_feat_day 的落库契约。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -1871,6 +2076,17 @@ stock_metadata_day 的落库契约。
 | f | `TestUpsertFieldsDoesNotClobber.test_second_column_does_not_wipe_the_first()` |  |
 | f | `TestUpsertFieldsDoesNotClobber.test_unique_index_is_created()` |  |
 | f | `TestUpsertFieldsDoesNotClobber.test_save_collection_would_wipe_it()` | 反证：证明「用 $set」不是洁癖 —— ReplaceOne 真会抹掉别列。 |
+| C | `TestTurnoverFromVolume` | 补算换手率的量纲：vol 以手计、liutongguben 以股计。 |
+| f | `TestTurnoverFromVolume.test_reproduces_baostock_turnover()` | 按流通股本现算 ⇒ 与 baostock 的 turnover 逐位（6 位）相同。 |
+| f | `TestTurnoverFromVolume.test_does_not_reproduce_the_legacy_100x_error()` |  |
+| f | `TestTurnoverFromVolume.test_threshold_switches_the_share_unit()` | 超阈值就判 vol 已经是股，去掉那个 ×100。 |
+| f | `TestTurnoverFromVolume.test_missing_share_capital_is_none_not_a_number()` |  |
+| C | `TestFillTurnover` | fill_turnover：只补真的缺的日子，写 turnover 那列。 |
+| f | `TestFillTurnover.test_fills_only_the_missing_days()` |  |
+| f | `TestFillTurnover.test_writes_the_baostock_column_not_the_eastmoney_one()` | 补算值按流通股本 ⇒ 只能进 turnover（东财那列按自由流通股本，两个量）。 |
+| f | `TestFillTurnover.test_covered_by_either_column_counts_as_present()` | 东财列有值也算覆盖 —— 两列取并集才是「这天有换手率」。 |
+| f | `TestFillTurnover.test_missing_share_capital_skips_the_code()` |  |
+| f | `TestFillTurnover.test_no_codes_is_a_usage_error()` |  |
 
 ### `test_moneyflow_save`
 markets/StockCN/moneyflow_save.py —— 两个源的行构造与单位换算。
@@ -1947,6 +2163,39 @@ analysis/peak.py（PEAK_POINT）—— jit 与纯实现的对拍，以及加权�
 | f | `TestPivotNoLookahead.test_closed_pivots_survive_truncation()` |  |
 | C | `TestPivotRealData` |  |
 | f | `TestPivotRealData.test_000711_60min_end_to_end()` |  |
+
+### `test_poly9`
+analysis/timeseries.py 的 rolling_poly9_v2 —— 与老树的逐值对拍。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestMatchesOld` | 与老树 rolling_poly9_v2 逐值相同。 |
+| f | `TestMatchesOld.test_window_sweep()` |  |
+| f | `TestMatchesOld.test_length_sweep()` | 长度跨过 w、w/2 两条边界（递归折半的两个分支）。 |
+| f | `TestMatchesOld.test_short_and_flat()` |  |
+| f | `TestMatchesOld.test_empty_input_raises_on_both_sides()` | ⚠️ 空序列两边都不支持（Chebyshev.fit 不吃空数组）。 |
+| C | `TestContract` | 不依赖老树的结构性钉子。 |
+| f | `TestContract.test_output_length_equals_input()` |  |
+| f | `TestContract.test_linear_series_is_reproduced_exactly()` | 线性序列上九次拟合是精确的 ⇒ 端点值就是原值（w 大于序列长时）。 |
+| f | `TestContract.test_no_nan_when_window_halves()` | w=252 作用在 900 长序列上要走递归折半 —— 不许留 NaN。 |
+
+### `test_poly9_chain`
+analysis/poly9.py（Poly9 编排层）与老树的逐值对拍。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestMatchesOld` | 与老树 calc_polynomial9_vXIs 逐值相同。 |
+| f | `TestMatchesOld.test_lengths_and_seeds()` |  |
+| f | `TestMatchesOld.test_short_series_falls_back_to_close()` | HMA10 长度 ≤ 12 时退化成纯收盘价 —— 那条分支也要覆盖。 |
+| f | `TestMatchesOld.test_none_features_returns_none_on_both()` |  |
+| C | `TestContract` | 不依赖老树的结构性钉子。 |
+| f | `TestContract.test_writes_three_columns()` |  |
+| f | `TestContract.test_is_idempotent()` | 列已在 ⇒ 整段跳过（老树语义）。第二次调用不得改动已有值。 |
+| f | `TestContract.test_spliced_input_has_no_nan()` | s = [close[:11], HMA10[11:]] 拼完不许有 NaN —— 否则 Chebyshev 会扩散。 |
+| C | `TestNormGate` | POLYNOMIAL9_NORM 的 annual > 200 闸。 |
+| f | `TestNormGate.test_written_when_annual_above_gate()` |  |
+| f | `TestNormGate.test_not_written_below_gate()` | 闸不满足 ⇒ 不写该列（不是写 0）。 |
+| f | `TestNormGate.test_gate_boundary_is_strict()` | 判据是 > 不是 >=：annual == 200 不算。 |
 
 ### `test_presentation_banner`
 core/presentation.py 的状态 banner —— 纯渲染、显示宽度、光标行数记账、三态。
@@ -2180,6 +2429,36 @@ analysis/rsrs.py（RSRS 指标计算）的正确性测试。
 | f | `TestShape.test_columns_and_index()` |  |
 | f | `TestShape.test_missing_high_low_raises()` | 入参不再支持 QUANTAXIS DataStruct —— 缺 high/low 列要报错，不静默。 |
 
+### `test_stages`
+analysis/stages.py（Garident STAGE）与老树的逐值对拍。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestGaridentPriceMatchesOld` | K-Means 定带：带数与每一对 [上沿, 下沿] 都要逐值相同。 |
+| f | `TestGaridentPriceMatchesOld.test_same_seed_same_bands()` |  |
+| f | `TestGaridentPriceMatchesOld.test_short_series()` |  |
+| C | `TestGaridentStageMatchesOld` | 落带判定是纯函数（无随机），可以逐值硬比。 |
+| f | `TestGaridentStageMatchesOld.test_matrix_of_positions()` |  |
+| f | `TestGaridentStageMatchesOld.test_tuple_input_is_accepted()` |  |
+| f | `TestGaridentStageMatchesOld.test_float_input_returns_nan()` | 老树把某一根的 GAR_P 存成了标量 —— 这条分支必须一致（返回 NaN）。 |
+| C | `TestGaridentStagesMatchesOld` | 整条编排：8 列逐值相同。 |
+| f | `TestGaridentStagesMatchesOld.test_all_columns_equal()` |  |
+| f | `TestGaridentStagesMatchesOld.test_garident_price_column_equal()` | GAR_P 那列装的是带本身（tuple 或 NaN），不能走 to_numeric —— 单独比。 |
+| C | `TestStructure` | 不依赖老树的结构性钉子。 |
+| f | `TestStructure.test_existing_stage_is_not_overwritten()` | STAGE 只在原本是 NaN 时才写（np.where(np.isnan(...))）。 |
+| f | `TestStructure.test_skipped_checkpoints_do_not_raise()` | 定带失败 ⇒ 跳过该 checkpoint，不抛（老树行为）。 |
+| C | `TestDroppedColumnsStayDropped` | 老树那条 STOCK_TREND_* 链必须是删掉的（2026-10-16 用户定）。 |
+| f | `TestDroppedColumnsStayDropped.test_constants_are_gone()` |  |
+| f | `TestDroppedColumnsStayDropped.test_not_in_output()` |  |
+| f | `TestDroppedColumnsStayDropped.test_surviving_columns_are_present()` | 正面钉子：活下来的几列一个都不能少（尤其新加的锚日期）。 |
+| C | `TestRatioForm` | GAR_P 落比值（docs/decisions/D49.md）—— 不变量与陷阱都钉住。 |
+| f | `TestRatioForm.test_alg_is_scale_equivariant()` | 核心不变量：整窗乘常数 k ⇒ 带等比例缩放（实测精确，不是近似）。 |
+| f | `TestRatioForm.test_ratio_is_invariant_to_future_event()` | 未来除权 = 锚及整窗均匀缩放 ⇒ 比值不变（到机器精度，非逐位）。 |
+| f | `TestRatioForm.test_round_trip_is_lossless_enough()` | 绝对 ↔ 比值往返无系统性损失（乘回锚 close）。 |
+| f | `TestRatioForm.test_missing_bands_stay_missing()` |  |
+| f | `TestRatioForm.test_stage_survives_rebasing_via_anchor()` | 复权后 STAGE 不变 —— 前提是乘锚 close 还原。 |
+| f | `TestRatioForm.test_multiplying_by_current_close_is_the_trap()` | ⚠️ 反面钉子：乘当前 close 还原 ⇒ STAGE 塌成常数。 |
+
 ### `test_stock_cn`
 
 | | 名称 | 摘要 |
@@ -2188,6 +2467,39 @@ analysis/rsrs.py（RSRS 指标计算）的正确性测试。
 | f | `TestStockCN.setUpClass()` | 测试类初始化 |
 | f | `TestStockCN.test_get_all_etf_list()` | 测试get_all_etf_list方法 |
 | f | `TestStockCN.test_realtime_data_fetch()` | 测试实时数据获取功能 |
+
+### `test_stock_codes_cache`
+~/.GolemQ/datastore/cache/stock_cn/stock_codes.conf 的刷新契约。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestOnlyWritesOnDelta` | 码表没有增减就不写盘 —— 每日 --save tdx 大多数天是这种。 |
+| f | `TestOnlyWritesOnDelta.test_no_delta_leaves_file_byte_identical()` |  |
+| f | `TestOnlyWritesOnDelta.test_delta_is_reported_and_written()` |  |
+| f | `TestOnlyWritesOnDelta.test_missing_cache_is_created()` | 缓存文件不存在（全新机器）时，是建而不是"无增减"。 |
+| C | `TestRefusesToClobberOnEmpty` | 空表是大灾难：订阅器会静默地一台标的都取不到。低于下限就拒写。 |
+| f | `TestRefusesToClobberOnEmpty.test_refuses_below_floor()` |  |
+| f | `TestRefusesToClobberOnEmpty.test_floor_is_above_any_plausible_accident()` | 下限得高于"一次抽风返回几十条"这种量级。 |
+| f | `TestRefusesToClobberOnEmpty.test_exactly_at_floor_is_allowed()` | 边界：等于下限允许写（判据是 <，不是 <=）。 |
+| C | `TestWriteShape` | 落盘形态：{"stock": [...]}、去重有序、原子。 |
+| f | `TestWriteShape.test_sorted_deduped_codes()` |  |
+| f | `TestWriteShape.test_no_tmp_file_left_behind()` | 原子写的中间文件不许留在缓存目录里（留着会被当成第二张码表读到）。 |
+| f | `TestWriteShape.test_creates_missing_parent_dirs()` | ~/.GolemQ/datastore/cache/stock_cn/ 在全新机器上不存在。 |
+| C | `TestSingleWritePath` | 该文件只有一个写口 —— 两份写法必然分叉。 |
+| f | `TestSingleWritePath.test_update_stock_codes_delegates()` | 上游那个 shdjt.com 版本必须走同一个写口（并因此拿到原子写 + 建目录）。 |
+| f | `TestSingleWritePath.test_get_stock_codes_falls_back_to_vendored()` | 缓存不存在时读仓库内那份（行为不变，basequotation 依赖它）。 |
+| C | `TestSnapshotUniverse` | 码表宇宙 = stock_list ∪ etf_list ∪ index_list，一律带交易所前缀。 |
+| f | `TestSnapshotUniverse.test_prefix_comes_from_the_sse_column()` |  |
+| f | `TestSnapshotUniverse.test_same_number_two_markets_stay_distinct()` | 这条是同码陷阱的钉子：000001 在 stock_list 是平安银行（sz）、 |
+| f | `TestSnapshotUniverse.test_blocked_prefix_is_dropped()` | 880xxx（通达信自编指数）腾讯一只都不供，不该占名额。 |
+| f | `TestSnapshotUniverse.test_rows_without_sse_are_skipped_not_guessed()` | sse 缺失时跳过，绝不猜 —— 猜错就是静默取错标的。 |
+| f | `TestSnapshotUniverse.test_dedupes_across_collections()` | 同一只标的出现在两个集合（如 ETF 也可能在 index_list）只算一次。 |
+| f | `TestSnapshotUniverse.test_covers_all_three_collections_by_default()` | 默认口径就是三集合 —— 少一个都意味着「ETF 或指数又掉出流了」。 |
+| C | `TestQuietUnlessVerbose` | 成功静默，「更新了几只」只在 -v 下打（用户 2026-10-15 定）。 |
+| f | `TestQuietUnlessVerbose.test_success_is_silent_without_verbose()` |  |
+| f | `TestQuietUnlessVerbose.test_verbose_reports_what_changed()` |  |
+| f | `TestQuietUnlessVerbose.test_no_delta_is_silent_even_with_verbose_off()` |  |
+| f | `TestQuietUnlessVerbose.test_refusal_speaks_regardless_of_verbose()` | 拒写照打 —— 这次真的没写，静默会被读成"写成功了"。 |
 
 ### `test_stockcn_singleton`
 测试 StockCN 单例自动注册功能
@@ -2211,7 +2523,7 @@ analysis/rsrs.py（RSRS 指标计算）的正确性测试。
 | C | `TestSubscriberRegistry` | GQSUBSCRIBER 的两条契约（cli/__main__.py 的 --sub 依赖它们）。 |
 | f | `TestSubscriberRegistry.test_legacy_tencent_key_points_to_l1()` | 老树的 --sub tencent 必须仍可用，且与 l1_tencent 是同一个函数。 |
 | f | `TestSubscriberRegistry.test_every_subscriber_is_callable_without_args()` | 表里每个订阅函数都必须能零参调用 —— 否则 CLI 一跑就 TypeError。 |
-| f | `TestSubscriberRegistry.test_expected_keys_are_present()` | 当前应支持的三条实时订阅键（新增/改名时这个用例会红 —— 那是有意的）。 |
+| f | `TestSubscriberRegistry.test_expected_keys_are_present()` | 当前应支持的两条实时订阅键（新增/改名时这个用例会红 —— 那是有意的）。 |
 
 ### `test_symbol_classify`
 symbol.is_stock_cn 的号段分类回归测试。
