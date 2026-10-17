@@ -143,6 +143,7 @@
 | **CV-ROUTE-FIX** | ChartScan 写库路由 4 处分叉（日族漏写 / 60min 索引错 / 60min 少一笔 / 15min 标记少一张） | ✅ D51 第四节，14 条用例钉住 |
 | **CV-CLI** | `--scan ChartScan` / `--server ChartScan` 进 CLI，**自动切 GolemAI env**（re-exec），围栏无豁免 | ✅ D51 五之二，18 条用例 |
 | **PANDAS3** | pandas 3.0 / numpy 2 兼容（µs 精度 / `Series[int]` / `float(1×1 matrix)` / 日族 datetime 类型） | ✅ D52 / P35 |
+| **PROPHET** | `FBPROPHET_{LB,UB}{,_MAJOR}` 四列搬入 `analysis/fbprophet.py`：**只搬算术**（拟合→区间对齐），落库存 **`yhat/close` 比值**；4.4 存量不搬。⚠️ 比值**不是**数学不变（先验是绝对量纲，重算差 0.82%）—— 收益是"历史不用重写"。⚠️ **区间是抽样出来的**（同数据两次预测差 0.22）⇒ 已固定 `UNCERTAINTY_SEED`，否则重跑不幂等 | ✅ D53，**10 条**用例（含**与老树逐位对拍**）；prophet 1.1.7→**1.5.0**（1.1.7 在 pandas 3 上 fit 就崩） |
 | **EPOCH-DIVISOR** | datetime → 秒的系数 = `constants.epoch_divisor(dtype)`（**按每条序列的 dtype 查**，不是全局标量） | ✅ D52 / P35，9 条守卫用例 |
 
 ---

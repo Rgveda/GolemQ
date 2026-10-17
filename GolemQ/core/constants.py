@@ -456,8 +456,13 @@ class FIELD(metaclass=_StubMeta):
     MAPOWER30_MAJOR = 'mpwr3Maj'
     MA5_MAJOR = 'maVMaj'
     MA10_MAJOR = 'maXMaj'
+    #: Prophet 预测区间（**存的是相对同一 bar close 的比值**，不是绝对价 ——
+    #: 与 `GAR_P` 同一条纪律：绝对价一落库就跟着复权过期。见 `D53`。
+    #: `1.0` = 与 close 持平；还原价 = 比值 × 当日 close。
     FBPROPHET_LB_MAJOR = 'prophetLbMaj'
+    FBPROPHET_UB_MAJOR = 'prophetUbMaj'
     FBPROPHET_LB = 'prophetLb'
+    FBPROPHET_UB = 'prophetUb'
     GARIDENT_PRICE = 'garP'
     GARIDENT_PRICE_COUNT = 'garPCount'
     GARIDENT_PRICE_CLEARANCE = 'garPClr'

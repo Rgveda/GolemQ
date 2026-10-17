@@ -53,6 +53,16 @@
 |:--|:--|:--|
 | f | `find_zs(points)` | 输入笔或线段标记点，输出中枢识别结果。 `[dt]` |
 
+### `fbprophet`
+Prophet 价格区间（旧树 FBPROPHET_* 四列）—— 只搬算术，落库存比值。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `prophet_band(ohlc, periods, changepoint_range)` | 单只标的 → 绝对价区间（yhat / yhat_lower / yhat_upper）。 |
+| f | `fbp_bands_to_ratio(bands, close)` | 绝对价带 → 相对同一 bar close 的比值带。 `[dt]` |
+| f | `fbp_bands_from_ratio(ratios, close)` | 比值带 → 绝对价带（比值 × 当日 close）。与 :func:fbp_bands_to_ratio 互逆。 `[dt]` |
+| f | `calc_fbprophet_bands(ohlc, features, major_ohlc, periods, changepoint_range)` | 在 features 上写 4 列比值：当前频率两列 + 日线两列。 |
+
 ### `indicators`
 技术指标的小工具 —— 目前只有 TA_HMA。
 
@@ -1499,6 +1509,10 @@ chartscan/predict.py 的写库路由用例（DECISIONS.md D51）。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
+| C | `TestPersistenceReadsAcrossFamilies` | 读的一侧：重扫判定读日族、按 market_type 取表，并把三套坐标一起转时间戳。 |
+| f | `TestPersistenceReadsAcrossFamilies.test_reads_day_family_with_market_type()` |  |
+| f | `TestPersistenceReadsAcrossFamilies.test_coords_are_converted_to_datetime()` |  |
+| f | `TestPersistenceReadsAcrossFamilies.test_missing_coord_columns_do_not_raise()` | 缺列的旧文档不能炸 —— 缺的那套按 None 处理（否则整只标的读不动）。 |
 | C | `TestHeadlessRendering` | ⚠️ 多线程服务端 + matplotlib GUI 后端 = 每个标的都静默渲染失败。 |
 | f | `TestHeadlessRendering.test_mpbackend_is_forced_to_agg()` |  |
 | f | `TestHeadlessRendering.test_render_module_sets_it_at_import()` | 不是靠调用方传 —— 模块导入那一刻就得钉住（matplotlib 可能已被别人先导入）。 |
@@ -1733,6 +1747,27 @@ ETF 独立成 ETF_CN / etf_* 之后的路由测试。
 |:--|:--|:--|
 | f | `test_data_conversion()` | 测试数据转换功能 |
 | f | `test_cli_help()` | 测试CLI帮助信息 |
+
+### `test_fbprophet`
+analysis/fbprophet.py —— Prophet 区间（存比值）的用例（DECISIONS.md D53）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestRatioHelpers` |  |
+| f | `TestRatioHelpers.test_roundtrip()` |  |
+| f | `TestRatioHelpers.test_ratio_is_one_at_close()` | 区间上下界都等于 close ⇒ 比值恒 1（口径的锚点）。 |
+| C | `TestReindexByDate` |  |
+| f | `TestReindexByDate.test_daily_values_map_onto_intraday_bars()` |  |
+| C | `TestProphetBand` |  |
+| f | `TestProphetBand.setUpClass()` |  |
+| f | `TestProphetBand.test_columns_and_index()` |  |
+| f | `TestProphetBand.test_ordering_and_no_nan()` |  |
+| f | `TestProphetBand.test_multi_code_raises()` |  |
+| C | `TestCalcBands` |  |
+| f | `TestCalcBands.test_writes_four_ratio_columns()` |  |
+| f | `TestCalcBands.test_major_equals_own_when_no_daily_frame()` | major_ohlc=None ⇒ 认为 ohlc 就是日线，_MAJOR 直接沿用（旧树同做法）。 |
+| C | `TestScaleBehaviour` | ⚠️ 比值不是"数学不变" —— 把上界钉住，防吹。 |
+| f | `TestScaleBehaviour.test_rescale_deviation_is_small_but_not_zero()` |  |
 
 ### `test_fq`
 markets/StockCN/fq.py 的复权因子 —— 重点是分段常数这条不变量。
