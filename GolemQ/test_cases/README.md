@@ -3,14 +3,38 @@
 ## 怎么跑
 
 ```bash
-python GolemQ/test_cases/run_tests.py                                        # 全部
-python -m unittest GolemQ.test_cases.test_messenger -v                       # 单模块
-python -m unittest GolemQ.test_cases.test_messenger.TestDingtalkConfig.test_check_config_success -v   # 单方法
-python -m unittest GolemQ.test_cases.test_doctests -v                        # 只跑 docstring 里的 doctest
+python GolemQ/test_cases/run_tests.py                                     # 全部（递归发现子目录）
+python -m unittest GolemQ.test_cases.markets.test_kline83 -v              # 单模块
+python -m unittest GolemQ.test_cases.markets.test_kline83.<类>.<方法> -v  # 单方法
+python -m unittest GolemQ.test_cases.test_doctests -v                     # 只跑 docstring 里的 doctest
 ```
 
-⚠️ 模块路径是 **`GolemQ.test_cases.*`**，不是 `GolemQ.tests.*` —— 本 README 的**上一版**
-把三条示例命令全写成了 `GolemQ.tests.…`（那目录**不存在**），照着敲必然 `ModuleNotFoundError`。
+⚠️ 模块路径是 **`GolemQ.test_cases.<层>.<模块>`**（2026-10-18 起按层分了子目录），
+不是 `GolemQ.tests.*` —— 本 README 的**更早一版**把示例全写成 `GolemQ.tests.…`
+（那目录**不存在**），照着敲必然 `ModuleNotFoundError`。
+
+## 目录结构（按**被测层**分，不按功能随机分）
+
+| 目录 | 放什么 | 被测代码 |
+|:--|:--|:--|
+| `markets/` | 行情 / 参考数据 / 实时 / 元数据 / 路由 / ChartScan 写库 | `GolemQ/markets/**` |
+| `analysis/` | 指标算法、与老树逐值对拍的模块 | `GolemQ/analysis/**` |
+| `cli/` | 环境自检、banner、命令注册表 | `GolemQ/cli/**` |
+| `core/` | 常量 / 表现层 / 全树守卫 + **基础设施**（`agents/` `supervisor/` `gateway/`） | `GolemQ/core/**` 等 |
+| 顶层 | `old_tree.py`（老树对拍夹具）、`run_tests.py`、`test_doctests.py` | — |
+
+⚠️ **`old_tree.py` / `run_tests.py` / `test_doctests.py` 必须留在顶层** ——
+前两个被多处用**绝对导入** `from GolemQ.test_cases.old_tree import …` 引用，
+最后一个靠 `discover` 从顶层收集。
+
+### ⚠️ 搬动测试文件时，`sys.path` 的**深度**要跟着改（会静默跳过）
+
+48 个用例用 `os.path.join(os.path.dirname(__file__), '..', '..')` 推仓库根，
+另有几处 `Path(__file__).parents[N]` 与 `'..', '..', 'GolemQ_old'`。
+**少改一层不会报 `ImportError`** —— 而是让依赖老树的用例 `skipUnless(路径存在)` **静默跳过**。
+
+2026-10-18 拆分实测：漏改 3 处 ⇒ **18 个用例从"跑"变成"跳过"**，而套件照样报 **OK**。
+⇒ 拆完必须核对 **skipped 数**是否回到基线（当时 1，跳完变 2 才露馅）。
 
 ## 这一层放什么
 

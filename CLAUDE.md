@@ -216,11 +216,11 @@ gives a false pass. The `Stop` hook also surfaces path errors on session exit.
 # Run all tests
 python GolemQ/test_cases/run_tests.py
 
-# Run a specific test module
-python -m unittest GolemQ.test_cases.test_messenger -v
+# Run a specific test module（⚠️ 2026-10-18 起按被测层分了子目录：markets/ analysis/ cli/ core/）
+python -m unittest GolemQ.test_cases.core.test_messenger -v
 
 # Run a single test method
-python -m unittest GolemQ.test_cases.test_messenger.TestDingtalkConfig.test_check_config_success -v
+python -m unittest GolemQ.test_cases.core.test_messenger.TestDingtalkConfig.test_check_config_success -v
 
 # CLI - configuration
 python -m GolemQ.cli --setup              # Initialize MongoDB, DingTalk, Server酱
