@@ -205,6 +205,42 @@ class TestWriteNulls(unittest.TestCase):
         self.assertIsNone(with_nulls[0]['x'])
 
 
+class TestPersistence(unittest.TestCase):
+    """`persistence_features`：按**目标表已有哪些 review 行**决定还算哪些 bar。"""
+
+    def _fake(self, values):
+        from GolemQ.pipeline.review.contract import DAY_COLUMNS
+        idx = pd.MultiIndex.from_tuples(
+            [(pd.Timestamp(d), '600519') for d in ('2026-01-05', '2026-01-06')],
+            names=['date', 'code'])
+        data = {c: [np.nan, np.nan] for c in DAY_COLUMNS}
+        data[DAY_COLUMNS[0]] = values
+        return pd.DataFrame(data, index=idx)
+
+    def test_skips_persisted_and_cv_only_rows(self):
+        from GolemQ.pipeline.review.persistence import missing_targets
+        src = pd.DatetimeIndex(['2026-01-05', '2026-01-06', '2026-01-07'])
+        fake = self._fake([1.0, np.nan])       # 01-05 有 review 列；01-06 只有 CV/空
+        with unittest.mock.patch(
+                'GolemQ.markets.StockCN.reality_save.fetch_reality_feat',
+                return_value=fake):
+            got = missing_targets(src, '600519', 'day', MARKET_TYPE.STOCK_CN,
+                                  db=object())
+        self.assertEqual([str(t.date()) for t in got],
+                         ['2026-01-06', '2026-01-07'])
+
+    def test_min_columns_is_parameterized(self):
+        from GolemQ.pipeline.review.persistence import missing_targets
+        src = pd.DatetimeIndex(['2026-01-05', '2026-01-06'])
+        fake = self._fake([1.0, 2.0])
+        with unittest.mock.patch(
+                'GolemQ.markets.StockCN.reality_save.fetch_reality_feat',
+                return_value=fake):
+            got = missing_targets(src, '600519', 'day', MARKET_TYPE.STOCK_CN,
+                                  db=object(), min_columns=2)
+        self.assertEqual(len(got), 2, '只有 1 列非空 ⇒ 不满足 min_columns=2')
+
+
 class TestDbInjection(unittest.TestCase):
     """落库/水位必须**接收调用方传入的 DB 实例**，不能自己取库名句柄。"""
 

@@ -338,13 +338,19 @@ def turnover_rows(rows, src_field, dst_field, created_at=None) -> tuple:
     return docs, skipped
 
 
-def _flush_batch(out, dst, buf, src_field, dst_field, upsert_fields, created_at) -> None:
-    """把一批源行转文档并 upsert 进目标，累计统计。"""
+def _flush_batch(out, db, buf, src_field, dst_field, created_at) -> None:
+    """把一批源行转文档，经**统一写口** `save_reality_feat` 落库。"""
+    import pandas as pd
+
+    from .reality_save import save_reality_feat
+
     docs, skipped = turnover_rows(buf, src_field, dst_field, created_at=created_at)
     out['skipped'] += skipped
     if not docs:
         return
-    stats = upsert_fields(dst, docs, list(UNIQUE_KEYS))
+    frame = pd.DataFrame(docs).set_index(['date', 'code'])
+    stats = save_reality_feat(frame, 'day', MARKET_TYPE.STOCK_CN,
+                              verbose=False, created_at=created_at, db=db)
     out['upserted'] += stats['upserted']
     out['modified'] += stats['modified']
     out['written'] += len(docs)
@@ -368,11 +374,10 @@ def save_turnover(since=None, until=None, batch: int = 5000, verbose: bool = Tru
     :returns: ``{源名: {'read','written','skipped','upserted','modified'}}``
     """
     from GolemQ.core.migrate44 import db44
-    from GolemQ.datasource.writer import upsert_fields
 
     say = echo or print
     g44 = db44('golemq')
-    dst = None if dry_run else _db()[REALITY_FEAT_DAY_COLL]
+    dst = None if dry_run else _db()
 
     out = {}
     for coll_name, src_field, dst_field, date_fmt in SOURCES:
@@ -392,11 +397,11 @@ def save_turnover(since=None, until=None, batch: int = 5000, verbose: bool = Tru
                 if len(buf) >= batch:
                     if dst is not None:
                         _flush_batch(stats, dst, buf, src_field, dst_field,
-                                     upsert_fields, created_at)
+                                     created_at)
                     buf = []
             if buf and dst is not None:
                 _flush_batch(stats, dst, buf, src_field, dst_field,
-                             upsert_fields, created_at)
+                             created_at)
         finally:
             cursor.close()
         out[coll_name] = stats
@@ -537,9 +542,12 @@ def fill_turnover(codes, start=None, end=None, verbose: bool = True, echo=None,
         （`filled` 是**写进去的天数**，`skipped` 是缺量/缺股本/越界而没写的天数）
     """
     from GolemQ.core.market_registry import get_active_market
-    from GolemQ.datasource.writer import upsert_fields
+    import pandas as pd
+
+    from GolemQ.datasource.writer import upsert_fields  # noqa: F401 其他写口仍在用
 
     from .refdata import GQ_fetch_stock_info, GQ_fetch_stock_list, GQ_fetch_stock_reality_feat_day
+    from .reality_save import save_reality_feat
 
     say = echo or print
     if codes is None:
@@ -555,7 +563,7 @@ def fill_turnover(codes, start=None, end=None, verbose: bool = True, echo=None,
                          '（要全市场请传 `None`）')
 
     market = get_active_market()
-    dst = _db()[REALITY_FEAT_DAY_COLL]
+    db = _db()
     out = {'codes': len(codes), 'filled': 0, 'skipped': 0, 'upserted': 0, 'modified': 0}
 
     for code in codes:
@@ -589,7 +597,7 @@ def fill_turnover(codes, start=None, end=None, verbose: bool = True, echo=None,
                 say(f'[fill_turnover] {code}: 取不到日线，跳过')
             continue
 
-        docs = []
+        rows = []
         for row in frame.reset_index().to_dict('records'):
             day = str(row.get('ts'))[:10]
             if day in covered:
@@ -598,20 +606,19 @@ def fill_turnover(codes, start=None, end=None, verbose: bool = True, echo=None,
             if rate is None or rate < 0 or rate > MAX_TURNOVER_RATIO:
                 out['skipped'] += 1
                 continue
-            doc = metadata_day_doc(code, day, TURNOVER_BS, rate, created_at)
-            if TURNOVER_BS in doc:
-                docs.append(doc)
-            else:
-                out['skipped'] += 1
+            rows.append({'date': day, 'code': code, TURNOVER_BS: rate})
 
-        if docs:
-            stats = upsert_fields(dst, docs, list(UNIQUE_KEYS))
-            out['filled'] += len(docs)
+        if rows:
+            # 统一入口：`save_reality_feat`（D55）
+            df_rows = pd.DataFrame(rows).set_index(['date', 'code'])
+            stats = save_reality_feat(df_rows, 'day', MARKET_TYPE.STOCK_CN,
+                                      verbose=False, created_at=created_at, db=db)
+            out['filled'] += len(rows)
             out['upserted'] += stats['upserted']
             out['modified'] += stats['modified']
         if verbose:
             say('[fill_turnover] {}: 补 {} 天 / 未覆盖共 {} 天'.format(
-                code, len(docs), len(covered)))
+                code, len(rows), len(covered)))
     return out
 
 
@@ -640,12 +647,12 @@ def merge_metadata_into_feat(batch: int = 5000, limit=None, dry_run: bool = Fals
     :param echo: 输出汇（默认 `print`）—— 见 CLI 那条「banner 活跃时输出要走 echo」
     :returns: ``{'read': n, 'written': n, 'skipped': n, 'upserted': n, 'modified': n}``
     """
-    from GolemQ.datasource.writer import upsert_fields
+    import pandas as pd
 
     say = echo or print
     db = _db()
     src = db[LEGACY_METADATA_DAY_COLL]
-    dst = None if dry_run else db[REALITY_FEAT_DAY_COLL]
+    from .reality_save import save_reality_feat
 
     stats = {'read': 0, 'written': 0, 'skipped': 0, 'upserted': 0, 'modified': 0}
     # ⚠️ `no_cursor_timeout=True`：全量 1,700 万行要跑几十分钟，默认游标
@@ -664,8 +671,11 @@ def merge_metadata_into_feat(batch: int = 5000, limit=None, dry_run: bool = Fals
             chunk.append(doc)
             if len(chunk) >= batch:
                 stats['written'] += len(chunk)
-                if dst is not None:
-                    r = upsert_fields(dst, chunk, list(UNIQUE_KEYS), verbose=False)
+                if not dry_run:
+                    r = save_reality_feat(
+                        pd.DataFrame(chunk).set_index(['date', 'code']),
+                        'day', MARKET_TYPE.STOCK_CN, verbose=False,
+                        write_nulls=True, db=db)
                     stats['upserted'] += r['upserted']
                     stats['modified'] += r['modified']
                 chunk = []
@@ -674,8 +684,11 @@ def merge_metadata_into_feat(batch: int = 5000, limit=None, dry_run: bool = Fals
                         stats['written'], stats['read']))
         if chunk:
             stats['written'] += len(chunk)
-            if dst is not None:
-                r = upsert_fields(dst, chunk, list(UNIQUE_KEYS), verbose=False)
+            if not dry_run:
+                r = save_reality_feat(
+                    pd.DataFrame(chunk).set_index(['date', 'code']),
+                    'day', MARKET_TYPE.STOCK_CN, verbose=False,
+                    write_nulls=True, db=db)
                 stats['upserted'] += r['upserted']
                 stats['modified'] += r['modified']
     finally:

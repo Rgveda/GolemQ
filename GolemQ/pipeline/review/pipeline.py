@@ -36,6 +36,11 @@ MIN_LOOKBACK_DAYS = 900
 REVIEW_ANCHOR_DAY = '2016-01-01'
 REVIEW_ANCHOR_15MIN = '2017-01-01'
 
+#: **写库目标**的回看上限（不是取数窗口）：首次回填也最多算这么多天，
+#: 与老树一致（日线 `last_day-2560d`；60/15min 默认 800 天）。
+#: 早于这个下界的数据只用来做暖机，不产生新行。
+TARGET_LOOKBACK_DAYS = {'day': 2560, '60min': 800, '15min': 800}
+
 
 @dataclass
 class ReviewOptions:
@@ -116,25 +121,29 @@ class ReviewPipeline(BasePipeline):
     # ------------------------------------------------------------------ #
     def _targets(self, ctx: ReviewContext, family: str,
                  db=None) -> pd.DatetimeIndex:
+        """以**目标表里已有哪些 review 行**为准，返回还没算/没写的 bar。
+
+        判据见 :mod:`pipeline.review.persistence`：一行里任一契约列非空即算已持久化；
+        CV-only 行（4.4 迁移来的 `ClsMaj` 等）不算。`pipeline_watermarks` 不参与判据。
+        """
+        from GolemQ.pipeline.review.persistence import missing_targets
+
         src = ctx.frames.get(family)
         if src is None or len(src) == 0:
             return pd.DatetimeIndex([])
-        last_written = None
-        if not (self.options.force or self.options.from_date):
-            from GolemQ.markets.StockCN.reality_save import get_watermark, reality_feat_name
-            table = reality_feat_name(family, ctx.market_type)
-            wm = get_watermark(PIPELINE_NAME, table, ctx.code, db=db)
-            if wm is not None:
-                last_written = wm.get('last_written_ts')
-        if last_written is not None and self.options.recheck_days:
-            last_written -= int(self.options.recheck_days) * 86400
-        only_after = pd.Timestamp(last_written, unit='s') if last_written else None
-        if self.options.from_date:
-            only_after = pd.Timestamp(self.options.from_date)
         as_of = ctx.as_of
         if self.options.offset:
             as_of = min(as_of, pd.Timestamp(self.options.offset))
-        return target_times(src, as_of, only_after=only_after)
+        source_index = target_times(src, as_of)
+        # 首次回填的**目标下界**：更早的数据只做暖机、不落新行（与老树 2560/800 天一致）。
+        lookback = TARGET_LOOKBACK_DAYS.get(family)
+        if lookback:
+            floor = as_of - pd.Timedelta(days=int(lookback))
+            source_index = source_index[source_index >= floor]
+        return missing_targets(
+            source_index, ctx.code, family, ctx.market_type, db,
+            force=self.options.force, from_date=self.options.from_date,
+            recheck_days=self.options.recheck_days)
 
     @staticmethod
     def _restrict_to_targets(frame: pd.DataFrame, targets) -> pd.DataFrame:
@@ -153,6 +162,10 @@ class ReviewPipeline(BasePipeline):
         frame = frame.rename(columns={k: v for k, v in LEGACY_RENAME.items()
                                       if k in frame.columns})
         payload = frame.loc[:, [c for c in cols if c in frame.columns]]
+        # 暖机不足的行可能整行 NaN —— 不写空行（否则持久化检查会把它当"已持久化"）。
+        payload = payload.loc[payload.notna().any(axis=1)]
+        if len(payload) == 0:
+            return None
         if self.options.dry_run:
             return {'name': family, 'rows': len(payload), 'dry_run': True}
         from GolemQ.markets.StockCN.reality_save import (save_reality_feat,

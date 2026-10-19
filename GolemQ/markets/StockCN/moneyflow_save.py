@@ -57,7 +57,6 @@ import time
 import pandas as pd
 
 from GolemQ.core.constants import FIELD as FLD
-from GolemQ.datasource.writer import upsert_fields
 
 from .metadata_save import (REALITY_FEAT_DAY_COLL, _db, day_date, day_stamp,
                             metadata_day_doc_multi)
@@ -283,9 +282,16 @@ def save_moneyflow(source: str = 'eastmoney', created_at=None, verbose=True,
         say('[moneyflow] {}：**没取到任何行**，不写库'.format(source))
         return out
 
-    stats = upsert_fields(_db()[REALITY_FEAT_DAY_COLL], docs,
-                          ['code', 'date_stamp'], payload_keys=payload,
-                          verbose=False)
+    from GolemQ.core.constants import MARKET_TYPE
+    from .reality_save import save_reality_feat
+
+    # 统一入口（D55）：只把**本模块 payload 白名单**里的列交给 save_reality_feat，
+    # 别的列不会被写、更不会被清。
+    frame = pd.DataFrame(docs)
+    keep = [c for c in ('code', 'date', *payload) if c in frame.columns]
+    frame = frame.loc[:, keep].set_index(['date', 'code'])
+    stats = save_reality_feat(frame, 'day', MARKET_TYPE.STOCK_CN,
+                              verbose=False, db=_db())
     out.update({k: stats.get(k, 0) for k in ('upserted', 'modified')})
     if verbose:
         say('[moneyflow] {} → {}：交易日 {}，读 {} 行 / 写 {} 文档 '

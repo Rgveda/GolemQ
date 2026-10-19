@@ -262,7 +262,7 @@ def restore_price_columns(df: pd.DataFrame, close, columns=PRICE_RATIO_COLUMNS):
 
 
 def fetch_reality_feat(codes, start, end, family='day', market_type=None,
-                       restore_price=None, close=None, db=None):
+                       restore_price=None, close=None, db=None, columns=None):
     """读回 ``*_reality_feat_*``；**空结果返回 `None`**（不是空帧）。
 
     ⚠️ 这里刻意**偏离** `refdata.py` 那边「空返回空帧」的惯例：唯一的消费方
@@ -285,7 +285,12 @@ def fetch_reality_feat(codes, start, end, family='day', market_type=None,
     lo, hi = day_stamp(str(start)[:10]), day_stamp(str(end)[:10]) + 86400 * 1
     q = {'code': {'$in': codes}, key: {'$gte': lo, '$lte': hi}}
     target_db = _db() if db is None else db
-    cur = target_db[reality_feat_name(family, market_type)].find(q, {'_id': 0}).sort(key, 1)
+    proj = {'_id': 0}
+    if columns:
+        # 键 + 索引层（`date`/`datetime`）必须一起投影，否则下面的 `df[lvl]` 会 KeyError。
+        proj.update({key: 1, 'code': 1, 'date': 1, 'datetime': 1,
+                     **{c: 1 for c in columns}})
+    cur = target_db[reality_feat_name(family, market_type)].find(q, proj).sort(key, 1)
     df = pd.DataFrame(list(cur))
     if df.empty:
         return None
@@ -432,11 +437,12 @@ def migrate_reality_feat_from44(families=('day', '60min', '15min'),
     :returns: ``{目标集合: {'read','written','upserted','modified','skipped'}}``
     """
     from GolemQ.core.migrate44 import db44
+    import pandas as pd
+
     from GolemQ.core.constants import MARKET_TYPE
-    from GolemQ.datasource.writer import upsert_fields
     from .symbol import is_stock_cn
-    # ⚠️ 写库**复用** `upsert_fields`，不为本次搬运另写一个 upsert 帮手 ——
-    # 平行实现不会报错、只会分叉（`helpers.save_stock_codes` 那一课）。
+    # ⚠️ 写库**复用** `save_reality_feat`（D55 的唯一入口），不为本次搬运另写 upsert 帮手
+    # —— 平行实现不会报错、只会分叉（`helpers.save_stock_codes` 那一课）。
     # 本函数只负责「取数 → 组行 → 路由 → 分批」。
 
     say = echo or print
@@ -480,25 +486,32 @@ def migrate_reality_feat_from44(families=('day', '60min', '15min'),
                                         {'read': 0, 'written': 0, 'upserted': 0,
                                          'modified': 0, 'skipped': 0})
                     st['read'] += 1
-                    buckets.setdefault(dst_name, []).append(doc)
+                    buckets.setdefault(mt, []).append(doc)
 
                     if sum(len(v) for v in buckets.values()) >= 4000:
+                        lvl = 'date' if family == 'day' else 'datetime'
                         if not dry_run:
-                            for name, rows in buckets.items():
-                                r = upsert_fields(_db()[name], rows, keys,
-                                                  verbose=False)
+                            for mt, rows in buckets.items():
+                                name = reality_feat_name(family, mt)
+                                r = save_reality_feat(
+                                    pd.DataFrame(rows).set_index([lvl, 'code']),
+                                    family, mt, verbose=False, db=_db())
                                 out[name]['upserted'] += r['upserted']
                                 out[name]['modified'] += r['modified']
-                        for name, rows in buckets.items():
-                            out[name]['written'] += len(rows)
+                        for mt, rows in buckets.items():
+                            out[reality_feat_name(family, mt)]['written'] += len(rows)
                         buckets = {}
                 if buckets and not dry_run:
-                    for name, rows in buckets.items():
-                        r = upsert_fields(_db()[name], rows, keys, verbose=False)
+                    lvl = 'date' if family == 'day' else 'datetime'
+                    for mt, rows in buckets.items():
+                        name = reality_feat_name(family, mt)
+                        r = save_reality_feat(
+                            pd.DataFrame(rows).set_index([lvl, 'code']),
+                            family, mt, verbose=False, db=_db())
                         out[name]['upserted'] += r['upserted']
                         out[name]['modified'] += r['modified']
-                for name, rows in buckets.items():
-                    out[name]['written'] += len(rows)
+                for mt, rows in buckets.items():
+                    out[reality_feat_name(family, mt)]['written'] += len(rows)
             finally:
                 cursor.close()
             if verbose:

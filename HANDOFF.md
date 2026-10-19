@@ -39,7 +39,9 @@
 ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Prophet **已并入 60min 表**
 （无独立 `*_coldstart_reviews`）；Review 精简到 5 个 step；
 3 个死 benchmark 壳与 `BaseBenchmark` 已删 —— `pipeline/` 只剩 `BasePipeline` + `review/`；
-840 条测试全绿。
+落库/水位已改为 **Active Market 取 DB 实例 + 参数注入**；持久化检查见
+`pipeline/review/persistence.py`（按目标表已有 review 行选缺失 bar，不看侧表水位；
+目标下界 day 2560 / min 800 天）。846 条测试全绿。
 
 **下一步**：全量对拍分类（`compare_review_golden.py`）、coldstart `m9tBsl`
 （需 compact 特征链）、`--eval fast/etf/index/all` 回填；`--review-runtime` 端到端冒烟。

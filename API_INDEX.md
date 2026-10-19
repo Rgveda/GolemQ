@@ -1003,7 +1003,7 @@ stock_reality_feat_day —— 日频元数据的统一落点。
 | f | `reality_feat_rows(features, family, created_at, write_nulls)` | CV 结果帧 → *_reality_feat_* 文档列表。纯函数（不碰 DB）。 `[dt]` |
 | f | `save_reality_feat(features, family, market_type, verbose, echo, created_at, write_nulls, db)` | 取数（其实只组行）→ upsert_fields 落 golemq_stock_cn。 |
 | f | `restore_price_columns(df, close, columns)` | 把存成比值的价格列乘回 close，还原价格量纲。纯函数。 |
-| f | `fetch_reality_feat(codes, start, end, family, market_type, restore_price, close, db)` | 读回 *_reality_feat_*；空结果返回 None（不是空帧）。 |
+| f | `fetch_reality_feat(codes, start, end, family, market_type, restore_price, close, db, columns)` | 读回 *_reality_feat_*；空结果返回 None（不是空帧）。 |
 | f | `migrate_reality_feat_from44(families, sources, limit, dry_run, verbose, echo)` | 把 4.4 的 CV 检出结果搬进 8.3（一次性，DECISIONS.md D51）。 |
 | f | `verify_reality_feat_migration(families, sources, sample, verbose, echo)` | 只读核对：4.4 的 CV 行是否都在 8.3 的对应表里、且逐值相同。 |
 | f | `get_watermark(pipeline, table, code, db)` | 读某条水位；不存在返回 None。 |
@@ -1325,6 +1325,14 @@ coldstart 最小集：M9T major / Poly9 / Prophet（模型层消费）。
 review 管线的列契约（唯一真相源）。
 
 *(无公开成员)*
+
+### `persistence`
+持久化检查 —— 以目标表里已有哪些 review 行为准，决定还算/还写哪些 bar。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `persisted_keys(code, family, market_type, db, columns, min_columns, start, end)` | 读回该 code 在目标表里已持久化 review 行的时间键集合。 |
+| f | `missing_targets(source_index, code, family, market_type, db, force, from_date, recheck_days, columns, min_columns)` | 源帧里尚未持久化的目标时间（升序）。 |
 
 ### `pipeline`
 ReviewPipeline —— 逐码、逐快照、因果的 review 批处理管线。
@@ -2867,6 +2875,9 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `TestRouting.test_reality_feat_name()` |  |
 | C | `TestWriteNulls` |  |
 | f | `TestWriteNulls.test_review_can_clear_stale_values()` |  |
+| C | `TestPersistence` | persistence_features：按目标表已有哪些 review 行决定还算哪些 bar。 |
+| f | `TestPersistence.test_skips_persisted_and_cv_only_rows()` |  |
+| f | `TestPersistence.test_min_columns_is_parameterized()` |  |
 | C | `TestDbInjection` | 落库/水位必须接收调用方传入的 DB 实例，不能自己取库名句柄。 |
 | f | `TestDbInjection.test_save_uses_passed_db()` |  |
 | f | `TestDbInjection.test_watermark_uses_passed_db()` |  |
