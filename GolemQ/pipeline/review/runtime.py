@@ -98,7 +98,9 @@ def compute_runtime(code: str,
 def _attach_persisted(out: Dict[str, pd.DataFrame], code: str, market_type,
                       families: Iterable[str], as_of: pd.Timestamp) -> Dict[str, pd.DataFrame]:
     from GolemQ.markets.StockCN.reality_save import fetch_reality_feat
+    from GolemQ import get_active_market
 
+    db = get_active_market().GOLEMQ_STOCK_CN
     start = (as_of - pd.Timedelta(days=365 * 5)).strftime('%Y-%m-%d')
     end = as_of.strftime('%Y-%m-%d')
     for fam in families:
@@ -108,7 +110,7 @@ def _attach_persisted(out: Dict[str, pd.DataFrame], code: str, market_type,
             continue
         try:
             got = fetch_reality_feat([code], start, end, family=fam,
-                                     market_type=market_type)
+                                     market_type=market_type, db=db)
         except Exception:        # noqa: BLE001 读不到就当没有
             got = None
         if got is None or len(got) == 0:

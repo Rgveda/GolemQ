@@ -114,7 +114,8 @@ class ReviewPipeline(BasePipeline):
     # ------------------------------------------------------------------ #
     # 目标行 / 水位
     # ------------------------------------------------------------------ #
-    def _targets(self, ctx: ReviewContext, family: str) -> pd.DatetimeIndex:
+    def _targets(self, ctx: ReviewContext, family: str,
+                 db=None) -> pd.DatetimeIndex:
         src = ctx.frames.get(family)
         if src is None or len(src) == 0:
             return pd.DatetimeIndex([])
@@ -122,7 +123,7 @@ class ReviewPipeline(BasePipeline):
         if not (self.options.force or self.options.from_date):
             from GolemQ.markets.StockCN.reality_save import get_watermark, reality_feat_name
             table = reality_feat_name(family, ctx.market_type)
-            wm = get_watermark(PIPELINE_NAME, table, ctx.code)
+            wm = get_watermark(PIPELINE_NAME, table, ctx.code, db=db)
             if wm is not None:
                 last_written = wm.get('last_written_ts')
         if last_written is not None and self.options.recheck_days:
@@ -144,7 +145,7 @@ class ReviewPipeline(BasePipeline):
         return frame.loc[ts.isin(pd.DatetimeIndex(pd.to_datetime(targets)))]
 
     def _write_family(self, ctx: ReviewContext, family: str,
-                      frame: pd.DataFrame) -> Optional[dict]:
+                      frame: pd.DataFrame, db=None) -> Optional[dict]:
         cols = [c for c in FAMILY_COLUMNS.get(family, ()) if c in frame.columns]
         if not cols or len(frame) == 0:
             return None
@@ -158,13 +159,13 @@ class ReviewPipeline(BasePipeline):
                                                          set_watermark)
         stats = save_reality_feat(payload, family, ctx.market_type,
                                   verbose=self.options.verbose,
-                                  write_nulls=True)
+                                  write_nulls=True, db=db)
         if len(payload):
             ts = pd.DatetimeIndex(pd.to_datetime(payload.index.get_level_values(0)))
             set_watermark(PIPELINE_NAME, stats['name'], family, ctx.code,
                           last_written_ts=int(ts.max().timestamp()),
                           last_source_ts=int(ts.max().timestamp()),
-                          rows=len(payload))
+                          rows=len(payload), db=db)
         return stats
 
     # ------------------------------------------------------------------ #
@@ -175,6 +176,10 @@ class ReviewPipeline(BasePipeline):
                              pd.Timestamp.now())
         market_type = self.market_type_of(code)
         families = tuple(self.options.families)
+        # 「库名不外泄」：pipeline 不拼库名，只从 **Active Market** 取实例，
+        # 再作为参数传给写口/水位函数。
+        from GolemQ import get_active_market
+        db = get_active_market().GOLEMQ_STOCK_CN
         frames = self._fetch_frames(code, as_of,
                                     freqs=self._required_freqs(families))
         if not frames:
@@ -185,7 +190,7 @@ class ReviewPipeline(BasePipeline):
                             verbose=self.options.verbose)
         # ⚠️ 目标要为**所有族**准备：依赖闭包里的 15min step 即使不落库也要有 targets。
         for fam in DEFAULT_FAMILIES:
-            ctx.targets[fam] = self._targets(ctx, fam)
+            ctx.targets[fam] = self._targets(ctx, fam, db=db)
 
         requested_tiers = {TIER_RUNTIME, TIER_DAILY}
         outs = self._runner.run(ctx, self.steps, families=families,
@@ -195,7 +200,7 @@ class ReviewPipeline(BasePipeline):
             if fam not in FAMILY_COLUMNS or fam not in families:
                 continue
             frame = self._restrict_to_targets(frame, ctx.targets.get(fam))
-            got = self._write_family(ctx, fam, frame)
+            got = self._write_family(ctx, fam, frame, db=db)
             if got is not None:
                 stats[fam] = got
         return CodeResult(code=code, status='ok', result=stats,

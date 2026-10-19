@@ -202,11 +202,14 @@ def reality_feat_rows(features: pd.DataFrame, family: str, created_at=None,
 
 def save_reality_feat(features: pd.DataFrame, family: str, market_type,
                       verbose: bool = True, echo=None, created_at=None,
-                      write_nulls: bool = False) -> dict:
+                      write_nulls: bool = False, db=None) -> dict:
     """取数（其实只组行）→ `upsert_fields` 落 ``golemq_stock_cn``。
 
     :param market_type: **该 code 的**市场类型（一只 code 一次调用，同旧 `charts.py`）；
         决定落 ``stock_`` 还是 ``index_`` 前缀，见 :func:`reality_feat_name`。
+    :param db: ``golemq_stock_cn`` 的**数据库实例**（调用方从市场实例取，
+        如 ``get_active_market().GOLEMQ_STOCK_CN``）。``None`` ⇒ 本模块自己取
+        （仅供**市场层内部**调用；pipeline/CLI 必须显式传，见 CLAUDE.md 的「库名不外泄」）。
     :returns: ``{'name','rows','written','upserted','modified'}``
     """
     from GolemQ.datasource.writer import upsert_fields
@@ -219,7 +222,8 @@ def save_reality_feat(features: pd.DataFrame, family: str, market_type,
         if verbose:
             (echo or print)(f'[reality] {name}: 0 行，跳过')
         return stats
-    out = upsert_fields(_db()[name], rows, list(UNIQUE_KEYS[family]))
+    target_db = _db() if db is None else db
+    out = upsert_fields(target_db[name], rows, list(UNIQUE_KEYS[family]))
     stats.update(written=len(rows), upserted=out['upserted'], modified=out['modified'])
     if verbose:
         (echo or print)('[reality] {}: 写 {} 行 / upserted {} / modified {}'.format(
@@ -258,7 +262,7 @@ def restore_price_columns(df: pd.DataFrame, close, columns=PRICE_RATIO_COLUMNS):
 
 
 def fetch_reality_feat(codes, start, end, family='day', market_type=None,
-                       restore_price=None, close=None):
+                       restore_price=None, close=None, db=None):
     """读回 ``*_reality_feat_*``；**空结果返回 `None`**（不是空帧）。
 
     ⚠️ 这里刻意**偏离** `refdata.py` 那边「空返回空帧」的惯例：唯一的消费方
@@ -280,7 +284,8 @@ def fetch_reality_feat(codes, start, end, family='day', market_type=None,
     # 旧树两边各写一遍公式，这里收敛到 `metadata_save.day_stamp`（带 doctest）。
     lo, hi = day_stamp(str(start)[:10]), day_stamp(str(end)[:10]) + 86400 * 1
     q = {'code': {'$in': codes}, key: {'$gte': lo, '$lte': hi}}
-    cur = _db()[reality_feat_name(family, market_type)].find(q, {'_id': 0}).sort(key, 1)
+    target_db = _db() if db is None else db
+    cur = target_db[reality_feat_name(family, market_type)].find(q, {'_id': 0}).sort(key, 1)
     df = pd.DataFrame(list(cur))
     if df.empty:
         return None
@@ -582,15 +587,16 @@ WATERMARK_COLL = 'pipeline_watermarks'
 WATERMARK_KEYS = ('pipeline', 'table', 'code')
 
 
-def get_watermark(pipeline: str, table: str, code: str):
+def get_watermark(pipeline: str, table: str, code: str, db=None):
     """读某条水位；不存在返回 ``None``。"""
-    return _db()[WATERMARK_COLL].find_one(
+    target_db = _db() if db is None else db
+    return target_db[WATERMARK_COLL].find_one(
         {'pipeline': pipeline, 'table': table, 'code': str(code)[:6]})
 
 
 def set_watermark(pipeline: str, table: str, family: str, code: str,
                   last_written_ts=None, last_source_ts=None, rows: int = 0,
-                  status: str = 'ok', error=None) -> dict:
+                  status: str = 'ok', error=None, db=None) -> dict:
     """写/更新水位（`upsert_fields`，键 `(pipeline, table, code)`）。"""
     import time as _time
     from GolemQ.datasource.writer import upsert_fields
@@ -606,14 +612,17 @@ def set_watermark(pipeline: str, table: str, family: str, code: str,
         'error': error,
         'updated_at': int(_time.time()),
     }
-    return upsert_fields(_db()[WATERMARK_COLL], [doc], list(WATERMARK_KEYS))
+    target_db = _db() if db is None else db
+    return upsert_fields(target_db[WATERMARK_COLL], [doc], list(WATERMARK_KEYS))
 
 
-def clear_watermark(pipeline: str, table: str = None, code: str = None) -> int:
+def clear_watermark(pipeline: str, table: str = None, code: str = None,
+                    db=None) -> int:
     """删除水位（`--force`/测试用）。返回删除数。"""
     q = {'pipeline': pipeline}
     if table is not None:
         q['table'] = table
     if code is not None:
         q['code'] = str(code)[:6]
-    return _db()[WATERMARK_COLL].delete_many(q).deleted_count
+    target_db = _db() if db is None else db
+    return target_db[WATERMARK_COLL].delete_many(q).deleted_count

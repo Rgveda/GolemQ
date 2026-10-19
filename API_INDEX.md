@@ -1001,14 +1001,14 @@ stock_reality_feat_day —— 日频元数据的统一落点。
 |:--|:--|:--|
 | f | `reality_feat_name(family, market_type)` | (族, 市场类型) → 集合名。 `[dt]` |
 | f | `reality_feat_rows(features, family, created_at, write_nulls)` | CV 结果帧 → *_reality_feat_* 文档列表。纯函数（不碰 DB）。 `[dt]` |
-| f | `save_reality_feat(features, family, market_type, verbose, echo, created_at, write_nulls)` | 取数（其实只组行）→ upsert_fields 落 golemq_stock_cn。 |
+| f | `save_reality_feat(features, family, market_type, verbose, echo, created_at, write_nulls, db)` | 取数（其实只组行）→ upsert_fields 落 golemq_stock_cn。 |
 | f | `restore_price_columns(df, close, columns)` | 把存成比值的价格列乘回 close，还原价格量纲。纯函数。 |
-| f | `fetch_reality_feat(codes, start, end, family, market_type, restore_price, close)` | 读回 *_reality_feat_*；空结果返回 None（不是空帧）。 |
+| f | `fetch_reality_feat(codes, start, end, family, market_type, restore_price, close, db)` | 读回 *_reality_feat_*；空结果返回 None（不是空帧）。 |
 | f | `migrate_reality_feat_from44(families, sources, limit, dry_run, verbose, echo)` | 把 4.4 的 CV 检出结果搬进 8.3（一次性，DECISIONS.md D51）。 |
 | f | `verify_reality_feat_migration(families, sources, sample, verbose, echo)` | 只读核对：4.4 的 CV 行是否都在 8.3 的对应表里、且逐值相同。 |
-| f | `get_watermark(pipeline, table, code)` | 读某条水位；不存在返回 None。 |
-| f | `set_watermark(pipeline, table, family, code, last_written_ts, last_source_ts, rows, status, error)` | 写/更新水位（upsert_fields，键 (pipeline, table, code)）。 |
-| f | `clear_watermark(pipeline, table, code)` | 删除水位（--force/测试用）。返回删除数。 |
+| f | `get_watermark(pipeline, table, code, db)` | 读某条水位；不存在返回 None。 |
+| f | `set_watermark(pipeline, table, family, code, last_written_ts, last_source_ts, rows, status, error, db)` | 写/更新水位（upsert_fields，键 (pipeline, table, code)）。 |
+| f | `clear_watermark(pipeline, table, code, db)` | 删除水位（--force/测试用）。返回删除数。 |
 
 ### `realtime`
 
@@ -2867,6 +2867,9 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `TestRouting.test_reality_feat_name()` |  |
 | C | `TestWriteNulls` |  |
 | f | `TestWriteNulls.test_review_can_clear_stale_values()` |  |
+| C | `TestDbInjection` | 落库/水位必须接收调用方传入的 DB 实例，不能自己取库名句柄。 |
+| f | `TestDbInjection.test_save_uses_passed_db()` |  |
+| f | `TestDbInjection.test_watermark_uses_passed_db()` |  |
 | C | `TestRestorePrice` |  |
 | f | `TestRestorePrice.test_ratio_columns_multiply_back_by_close()` |  |
 | C | `TestRuntimeNoWrites` |  |

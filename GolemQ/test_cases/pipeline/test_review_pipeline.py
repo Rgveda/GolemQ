@@ -205,6 +205,34 @@ class TestWriteNulls(unittest.TestCase):
         self.assertIsNone(with_nulls[0]['x'])
 
 
+class TestDbInjection(unittest.TestCase):
+    """落库/水位必须**接收调用方传入的 DB 实例**，不能自己取库名句柄。"""
+
+    def test_save_uses_passed_db(self):
+        from GolemQ.markets.StockCN import reality_save as rs
+        idx = pd.MultiIndex.from_tuples(
+            [(pd.Timestamp('2026-01-05'), '600519')], names=['ts', 'code'])
+        df = pd.DataFrame({'x': [1.0]}, index=idx)
+        fake_db = {'stock_reality_feat_day': object()}
+        with unittest.mock.patch('GolemQ.datasource.writer.upsert_fields',
+                                 return_value={'upserted': 0, 'modified': 0}) as up, \
+                unittest.mock.patch.object(rs, '_db',
+                                           side_effect=AssertionError('must not call _db')):
+            rs.save_reality_feat(df, 'day', MARKET_TYPE.STOCK_CN,
+                                 verbose=False, db=fake_db)
+        self.assertTrue(up.called)
+
+    def test_watermark_uses_passed_db(self):
+        from GolemQ.markets.StockCN import reality_save as rs
+        fake_coll = unittest.mock.MagicMock()
+        fake_coll.find_one.return_value = None
+        fake_db = unittest.mock.MagicMock()
+        fake_db.__getitem__.return_value = fake_coll
+        with unittest.mock.patch.object(rs, '_db',
+                                        side_effect=AssertionError('must not call _db')):
+            self.assertIsNone(rs.get_watermark('review', 't', '600519', db=fake_db))
+
+
 class TestRestorePrice(unittest.TestCase):
     def test_ratio_columns_multiply_back_by_close(self):
         from GolemQ.markets.StockCN.reality_save import restore_price_columns
