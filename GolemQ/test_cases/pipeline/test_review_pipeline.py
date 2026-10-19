@@ -240,6 +240,58 @@ class TestPersistence(unittest.TestCase):
                                   db=object(), min_columns=2)
         self.assertEqual(len(got), 2, '只有 1 列非空 ⇒ 不满足 min_columns=2')
 
+    def test_force_recomputes_persisted_rows(self):
+        from GolemQ.pipeline.review.persistence import missing_targets
+        src = pd.DatetimeIndex(['2026-01-05', '2026-01-06'])
+        fake = self._fake([1.0, 2.0])          # 两天都已持久化
+        with unittest.mock.patch(
+                'GolemQ.markets.StockCN.reality_save.fetch_reality_feat',
+                return_value=fake):
+            got = missing_targets(src, '600519', 'day', MARKET_TYPE.STOCK_CN,
+                                  db=object(), force=True)
+        self.assertEqual(len(got), 2, 'force 必须忽略已持久化集合')
+
+    def test_from_date_is_exclusive_lower_bound(self):
+        from GolemQ.pipeline.review.persistence import missing_targets
+        src = pd.DatetimeIndex(['2026-01-05', '2026-01-06', '2026-01-07'])
+        with unittest.mock.patch(
+                'GolemQ.markets.StockCN.reality_save.fetch_reality_feat',
+                return_value=None):             # 表里一行都没有
+            got = missing_targets(src, '600519', 'day', MARKET_TYPE.STOCK_CN,
+                                  db=object(), from_date='2026-01-05')
+        self.assertEqual([str(t.date()) for t in got],
+                         ['2026-01-06', '2026-01-07'],
+                         'from_date 当天不算，只算其后的目标')
+
+    def test_recheck_days_reopens_recent_window(self):
+        from GolemQ.pipeline.review.persistence import missing_targets
+        src = pd.DatetimeIndex(pd.date_range('2026-01-01', periods=10))
+        idx = pd.MultiIndex.from_tuples(
+            [(d, '600519') for d in src], names=['date', 'code'])
+        data = {c: [np.nan] * len(src) for c in DAY_COLUMNS}
+        data[DAY_COLUMNS[0]] = [np.nan] * 10
+        fake = pd.DataFrame(data, index=idx)
+        # 01-01..01-05 与 01-09 已持久化；01-09 落在 recheck 窗口内，必须重算
+        for d in pd.date_range('2026-01-01', '2026-01-05'):
+            fake.loc[(d, '600519'), DAY_COLUMNS[0]] = 1.0
+        fake.loc[(pd.Timestamp('2026-01-09'), '600519'), DAY_COLUMNS[0]] = 1.0
+        with unittest.mock.patch(
+                'GolemQ.markets.StockCN.reality_save.fetch_reality_feat',
+                return_value=fake):
+            got = missing_targets(src, '600519', 'day', MARKET_TYPE.STOCK_CN,
+                                  db=object(), recheck_days=2)
+        got = [str(t.date()) for t in got]
+        self.assertIn('2026-01-09', got, '最近 2 天内的已持久化行应被重算')
+        self.assertNotIn('2026-01-05', got, '窗口外的已持久化行不应重算')
+        self.assertEqual(got[:4], ['2026-01-06', '2026-01-07',
+                                   '2026-01-08', '2026-01-09'])
+
+    def test_empty_source_returns_empty(self):
+        from GolemQ.pipeline.review.persistence import missing_targets
+        got = missing_targets(pd.DatetimeIndex([]), '600519', 'day',
+                              MARKET_TYPE.STOCK_CN, db=object())
+        self.assertEqual(len(got), 0)
+
 
 class TestDbInjection(unittest.TestCase):
     """落库/水位必须**接收调用方传入的 DB 实例**，不能自己取库名句柄。"""
