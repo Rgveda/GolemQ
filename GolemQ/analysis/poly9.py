@@ -28,11 +28,13 @@ import numpy as np
 import pandas as pd
 
 from GolemQ.core.constants import AKA, FIELD as FLD
+from .indicators import TA_HMA
 from .quadrant import mapower_np_vXIIs
 from .timeseries import rolling_poly9_v2
 from .timing import calc_event_timing_lag
 
-__all__ = ['calc_polynomial9_vXIs', 'calc_polynomial9_norm_vXIs']
+__all__ = ['calc_polynomial9_vXIs', 'calc_polynomial9_norm_vXIs',
+           'calc_polynomial9_weekly_vXIs']
 
 #: `rolling_poly9_v2` 的窗口 —— 老树在 `features/base.py:2110` 写死 252。
 POLY9_WINDOW = 252
@@ -127,3 +129,85 @@ def calc_polynomial9_norm_vXIs(features: pd.DataFrame, annual: int = 252):
             features[FLD.POLYNOMIAL9].values,
             range_list=np.array(range(5, 30)).astype(np.int16))
     return features
+
+
+#: 周线重采样规则。A 股一周最后一个交易日是周五 ⇒ `W-FRI`（标签落在周五）。
+WEEKLY_FREQ = 'W-FRI'
+
+
+def calc_polynomial9_weekly_vXIs(ohlc_data: pd.DataFrame, features=None,
+                                 annual: int = 52,
+                                 freq: str = WEEKLY_FREQ) -> pd.Series:
+    """**周线 `POLYNOMIAL9`** → `POLYNOMIAL9_WEEKLY`（`poly9Wek`）。
+
+    老树口径（`features/base.py:3632`）
+    ==================================
+    ```python
+    features_week[FLD.POLYNOMIAL9_WEEKLY] = features_week[FLD.POLYNOMIAL9]
+    ```
+    即：**在周线帧上跑同一条 Poly9**（同一套 `rolling_poly9_v2` + `HMA10` 暖机），
+    再把结果**按日期 `ffill` 回填**到主帧的每一根 bar 上。
+
+    ⚠️ **为什么要它**：`analysis/quadrant_coef.py` 的 `calc_wavlet_coef_of_fractal`
+    在算稳健对数积水率时**优先**拿这一列当参照序列（老树
+    `analysis/pool_coef.py:299` 的 `if FLD.POLYNOMIAL9_WEEKLY in target_features`），
+    没有才退到 `LINEAREG_PRICE`。两条序列算出来的系数**几乎不相关**
+    （2026-10-19 实测相关系数 **-0.01**）。
+
+    ⚠️ **它只服务老树的 `OMNIPATH_UPRISING_I_COEF`**，**不参与** `QUprICoefD`
+    —— 后者是 `CANDIDATE × log10(有效 MACD lag)`，与参照序列无关
+    （2026-10-19 实查更正，见 `docs/worklog/2026-10.md`）。
+
+    :param ohlc_data: 主帧（索引 `(ts, code)` 两层，**单只**标的，含 OHLC）。
+    :param features: 可选，**周线**帧上的已有特征（可含 `POLYNOMIAL9`）。
+        ``None`` ⇒ 本函数自己造 `HMA10` 再算。
+    :param annual: 传给 :func:`calc_polynomial9_vXIs`（该函数**不用**它，只为签名兼容）。
+    :param freq: 周线重采样规则，默认 :data:`WEEKLY_FREQ`。
+    :returns: 与 `ohlc_data` **等长**的 `Series`（索引相同）；周线不足 `HMA_WARMUP`
+        根时返回全 `NaN` 的 Series（调用方据此退回 `LINEAREG_PRICE`）。
+    """
+    if ohlc_data is None or len(ohlc_data) == 0:
+        return pd.Series(dtype=np.float64)
+    code = str(ohlc_data.index.get_level_values(1)[0])
+
+    # ---- 主帧 → 周线帧 ----
+    daily = ohlc_data.copy()
+    daily.index = pd.to_datetime(daily.index.get_level_values(0))
+    weekly = daily.resample(freq).agg({
+        AKA.OPEN: 'first', AKA.HIGH: 'max', AKA.LOW: 'min',
+        AKA.CLOSE: 'last', AKA.VOLUME: 'sum',
+    }).dropna()
+    if len(weekly) == 0:
+        return pd.Series(np.nan, index=ohlc_data.index)
+    # ---- 周线索引改回「该周最后一个实际交易日」----
+    # ⚠️ **不能用重采样标签**（`W-FRI` 落在周五）。老树
+    # `QA_data_day_resample`（`QUANTAXIS/QAData/QADataStruct.py`）的 CONVERSION 是
+    # `'date': 'last'` ⇒ 周线帧的索引是**该周实际交易日里最晚的那天**。
+    # 差别只在**未走完的最后一周**：数据停在周四时，重采样标签是周五（未来日期），
+    # `reindex(dates)` 匹配不上 ⇒ 末根会 ffilling 到**上一周**的值（实测差 0.115）。
+    _daily_dates = pd.DatetimeIndex(pd.to_datetime(daily.index))
+    _week_periods = _daily_dates.to_period(freq)
+    _last_actual = pd.Series(_daily_dates, index=_week_periods).groupby(level=0).max()
+    # ⚠️ 必须**显式**传 `freq`：分钟帧重采样后的索引 `freq` 可能是 `None`，
+    # `pd.PeriodIndex(idx)` 会因推不出频率而抛 `'NoneType' object has no attribute 'n'`。
+    weekly.index = pd.DatetimeIndex(
+        _last_actual.reindex(pd.PeriodIndex(weekly.index, freq=freq)).to_numpy())
+    weekly.index = pd.MultiIndex.from_arrays(
+        [weekly.index, [code] * len(weekly)], names=['ts', 'code'])
+
+    # ---- 周线上算 POLYNOMIAL9（需要 HMA10 暖机列）----
+    wk_feats = features
+    if wk_feats is None or FLD.HMA10 not in getattr(wk_feats, 'columns', ()):
+        wk_feats = pd.DataFrame(index=weekly.index)
+        wk_feats[FLD.HMA10] = TA_HMA(
+            pd.to_numeric(weekly[AKA.CLOSE], errors='coerce'), 10)
+    out = calc_polynomial9_vXIs(weekly, features=wk_feats, annual=annual)
+    if out is None or FLD.POLYNOMIAL9 not in out.columns:
+        return pd.Series(np.nan, index=ohlc_data.index)
+
+    # ---- 按**日期** ffill 回填到主帧（老树也是 ffill，不是精确 reindex）----
+    src = out[FLD.POLYNOMIAL9].copy()
+    src.index = pd.Index(pd.to_datetime(src.index.get_level_values(0))).normalize()
+    src = src[~src.index.duplicated(keep='last')]
+    dates = pd.Index(pd.to_datetime(ohlc_data.index.get_level_values(0))).normalize()
+    return pd.Series(src.reindex(dates).ffill().to_numpy(), index=ohlc_data.index)

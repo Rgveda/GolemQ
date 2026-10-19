@@ -41,7 +41,7 @@
 ## 为什么放在 `markets/StockCN` 而不是根目录
 
 复权因子来自 A 股特有的 `stock_adj` 集合，换市场不适用。与 `symbol.py` /
-`scribe.py` / `kline83.py` 同层。
+`refdata.py` / `kline83.py` 同层（旧树那个 `scribe.py` 已随 D12 删除）。
 
 ## 调用面之外的东西一律没实现
 

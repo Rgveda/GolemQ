@@ -40,7 +40,8 @@ from GolemQ.core.mongo import (
 
 DEFAULT_MONGO = os.getenv('MONGODB', 'localhost')
 DEFAULT_DB_URI = 'mongodb://{}:27017'.format(DEFAULT_MONGO)
-CONFIGFILE_PATH = os.path.join(setting_path, 'config.ini')
+CONFIGFILE_PATH = os.path.join(setting_path, 'config.ini')
+
 
 #: **只从 INI 读、不回落到 MongoDB 的段**（凭证类）。
 #: ⚠️ 原先这串在 `get_config` / `set_config` 里**各写了一遍**，两处一旦不同步
@@ -271,11 +272,14 @@ def setup_mongodb_config() -> None:
 
 GQSETTING = GQ_Setting()
 
-#: 8.3 的**框架运维库**（心跳、函数签到、关注列表）。**名字即库名**（用户 2026-10-08 定的命名规则）。
+#: 8.3 的**框架运维库**（心跳、函数签到）。**名字即库名**（用户 2026-10-08 定的命名规则）。
 #:
 #: 为什么定义在这里而不是 `markets/StockCN/`：里面装的是**与市场无关的运维数据**，
-#: 三个消费者（`supervisor/heartbeat`、`supervisor/function_checkin`、`cli/watchdog_manager`）
-#: 都在根层/CLI 层 —— 让它们反向 import 某个市场包会违反 D1/D4 的分层。
+#: 消费者（`supervisor/heartbeat`、`supervisor/function_checkin`）都在根层 ——
+#: 让它们反向 import 某个市场包会违反 D1/D4 的分层。
+#:
+#: ⚠️ **关注列表 2026-10-18 已搬走**：它属于「行情标的的名单」，落点改为**行情库**
+#: （`services/watchlist` 收 `db` 参数，由 CLI 经市场实例取），`golemq` 只剩运维。
 GOLEMQ_NAME = 'golemq'
 GOLEMQ = GQ_util_mongodb_client(
     GQSETTING.get_config('MONGODB', 'uri'))[GOLEMQ_NAME]

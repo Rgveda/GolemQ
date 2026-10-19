@@ -25,6 +25,7 @@ from . import (      # noqa: F401 导入即注册（见上）
     migrate,
     moneyflow,
     purge,
+    review,
     save,
     save_report,
     setup,
@@ -56,6 +57,10 @@ register([
     save_report.SAVE_COVERAGE,   # ⚠️ 必须在 SAVE 之前
     save.SAVE,
     save_report.SAVE_STATUS,
+    # —— 复盘（统一因果管线；写 reality_feat_{day,60min,15min}）——
+    # `--review` / `--daily` 是同一个批量入口；`--review-runtime` 是只读内存 API。
+    review.REVIEW_DAILY,
+    review.REVIEW_RUNTIME,
     # —— 外部抓取（HTTP，落 stock_reality_feat_day）——
     moneyflow.MONEYFLOW,             # --moneyflow {eastmoney|ths|all}
     # 现算补齐（不连 4.4、不抓外网）—— 与 MONEYFLOW 同层，都落 stock_reality_feat_day

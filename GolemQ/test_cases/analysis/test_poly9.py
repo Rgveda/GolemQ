@@ -99,3 +99,54 @@ class TestContract(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestWeeklyPoly9(unittest.TestCase):
+    """`calc_polynomial9_weekly_vXIs` —— 周线 `POLYNOMIAL9`（`poly9Wek`）。
+
+    它是 `quadrant_coef.calc_wavlet_coef_of_fractal` 的**首选参照序列**
+    （老树 `pool_coef.py:299` 的优先分支）—— 选错会让上升系数与老树**几乎不相关**。
+    """
+
+    @staticmethod
+    def _ohlc(n=800, code='600519'):
+        import pandas as pd
+        idx = pd.MultiIndex.from_arrays(
+            [pd.bdate_range('2020-01-01', periods=n), [code] * n],
+            names=['ts', 'code'])
+        close = 10 + np.cumsum(np.random.default_rng(0).normal(0, 0.1, n)) \
+            + np.arange(n) * 0.01
+        return pd.DataFrame({'open': close, 'high': close * 1.01,
+                             'low': close * 0.99, 'close': close,
+                             'volume': np.full(n, 1e4)}, index=idx)
+
+    def test_aligned_and_non_null(self):
+        from GolemQ.analysis.poly9 import calc_polynomial9_weekly_vXIs
+        ohlc = self._ohlc()
+        got = calc_polynomial9_weekly_vXIs(ohlc)
+        self.assertEqual(len(got), len(ohlc), '必须与输入等长（ffill 回填）')
+        self.assertTrue(got.index.equals(ohlc.index))
+        self.assertGreater(int(got.notna().sum()), 0)
+
+    def test_matches_poly9_of_the_weekly_frame(self):
+        """口径 = **周线帧上的 POLYNOMIAL9**（老树 `features_week[POLYNOMIAL9_WEEKLY]`）。"""
+        import pandas as pd
+        from GolemQ.analysis.poly9 import (calc_polynomial9_vXIs,
+                                           calc_polynomial9_weekly_vXIs)
+        from GolemQ.core.constants import AKA, FIELD as FLD
+        ohlc = self._ohlc()
+        got = calc_polynomial9_weekly_vXIs(ohlc)
+
+        d = ohlc.copy()
+        d.index = pd.to_datetime(d.index.get_level_values(0))
+        w = d.resample('W-FRI').agg({'open': 'first', 'high': 'max', 'low': 'min',
+                                     'close': 'last', 'volume': 'sum'}).dropna()
+        w.index = pd.MultiIndex.from_arrays([w.index, ['600519'] * len(w)],
+                                            names=['ts', 'code'])
+        from GolemQ.analysis.indicators import TA_HMA
+        wf = pd.DataFrame(index=w.index)
+        wf[FLD.HMA10] = TA_HMA(pd.to_numeric(w[AKA.CLOSE], errors='coerce'), 10)
+        direct = calc_polynomial9_vXIs(w, features=wf, annual=52)[FLD.POLYNOMIAL9]
+
+        # 末根对齐：周线最后一根 ffill 后应等于主帧末值
+        self.assertAlmostEqual(float(got.iloc[-1]), float(direct.iloc[-1]), places=6)

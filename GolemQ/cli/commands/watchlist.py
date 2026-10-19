@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 
-from GolemQ.cli.watchdog_manager import (
+from GolemQ.services.watchlist import (
     add_symbols_to_watchlist,
     list_watchlist_symbols,
     parse_symbols,
@@ -17,6 +17,17 @@ from GolemQ.cli.watchdog_manager import (
 )
 
 from ._registry import Command, usage_error
+
+
+def _watchlist_db():
+    """关注列表所在的库句柄 —— **经市场实例取**。
+
+    ⚠️ 「**库名不外泄**」：行情库句柄只能在 `markets/StockCN/` 里定义，
+    别处一律经市场对象取值 —— **不要**在这里 import 句柄常量或拼库名。
+    服务层（`services/watchlist.py`）收 `db` 参数，不自己连库。
+    """
+    from GolemQ.core.market_registry import get_active_market
+    return get_active_market().GOLEMQ_STOCK_CN
 
 
 def add_add_arguments(parser) -> None:
@@ -77,7 +88,7 @@ def run_add(args) -> None:
             print("操作已取消")
             return
 
-    success_count = add_symbols_to_watchlist(symbols, args.verbose)
+    success_count = add_symbols_to_watchlist(symbols, _watchlist_db(), args.verbose)
     if success_count > 0:
         print("操作完成!")
     else:
@@ -97,7 +108,7 @@ def run_remove(args) -> None:
             print("操作已取消")
             return
 
-    success_count = remove_symbols_from_watchlist(symbols, args.verbose)
+    success_count = remove_symbols_from_watchlist(symbols, _watchlist_db(), args.verbose)
     if success_count > 0:
         print("操作完成!")
     else:
@@ -105,7 +116,7 @@ def run_remove(args) -> None:
 
 
 def run_list(args) -> None:
-    list_watchlist_symbols(args.verbose)
+    list_watchlist_symbols(_watchlist_db(), args.verbose)
 
 
 ENELOOP_ADD = Command('eneloop-add', ('eneloop_add',), add_add_arguments, run_add)

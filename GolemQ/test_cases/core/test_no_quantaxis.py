@@ -46,7 +46,7 @@ class TestNoQuantaxis(unittest.TestCase):
         """
         import importlib
         for m in ('GolemQ.cli.__main__', 'GolemQ.markets.StockCN',
-                  'GolemQ.supervisor.heartbeat', 'GolemQ.cli.watchdog_manager'):
+                  'GolemQ.supervisor.heartbeat', 'GolemQ.services.watchlist'):
             importlib.import_module(m)
         for root in ('QUANTAXIS', 'xtquant', 'akshare'):
             loaded = [m for m in sys.modules if m == root or m.startswith(root + '.')]

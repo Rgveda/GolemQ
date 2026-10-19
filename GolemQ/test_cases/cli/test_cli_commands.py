@@ -448,6 +448,9 @@ class TestSaveStageStartDoneLines(unittest.TestCase):
         side = RuntimeError('模拟中途炸了') if boom else None
         kw = {'side_effect': side} if boom else {'return_value': {}}
         buf = io.StringIO()
+        # ⚠️ **必须 mock 掉 xdxr 的闸**（2026-10-19 补）：不 mock 时它读**真实 DB state**，
+        # 闸一开就 `save_xdxr_tdx` 全市场拉一遍（5581 只 × 真实 pytdx 网络）——
+        # 实测本类从秒级变成 **3 分 20 秒**。本类测的是 **banner 起止行**，与 xdxr 无关。
         with contextlib.redirect_stdout(buf), \
                 _NO_TURNOVER, \
                 _NO_MONEYFLOW, \
@@ -455,7 +458,9 @@ class TestSaveStageStartDoneLines(unittest.TestCase):
                 unittest.mock.patch.object(rs, 'save_refdata', **kw), \
                 unittest.mock.patch.object(ks, 'save_kline_tdx',
                                            return_value={'kline': {}, 'universe': {}}), \
-                unittest.mock.patch.object(ks, 'kline_sweep_age_hours', return_value=1.0):
+                unittest.mock.patch.object(ks, 'kline_sweep_age_hours', return_value=1.0), \
+                unittest.mock.patch.object(ks, 'allow_xdxr_shortcircuit',
+                                           return_value=True):
             try:
                 save_cmd.run_save(args)
             except SystemExit:

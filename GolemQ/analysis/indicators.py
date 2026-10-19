@@ -9,10 +9,10 @@
 
     HMA = WMA( 2·WMA(n/2) − WMA(n), sqrt(n) )
 
-⚠️ **只搬了 `TA_HMA`。** 同族的 `CROSS` / `QA_indicator_MACD` **没有搬** ——
-实测它们在老树里的调用点**全在 `benchmark/*`**，而唯一会用 MACD 的正式链路
-（Magic Nine Turns 的 `_baseline`）**本轮挂账**（见 `docs/decisions/D49.md` 第五节）。
-**照 D39/D40「只搬用到的」** ⇒ 没有消费方就不搬；将来真要，再按需补。
+⚠️ `TA_HMA` 是先搬的；`QA_indicator_MACD` 于 **2026-10-19** 补搬
+（:func:`calc_macd_qa`）—— 上升系数链的 `MsLeadinx5BfMin` / `MACD_CROSS_SX_BEFORE`
+**必须**用 QUANTAXIS 口径，见该函数 docstring。
+同族的 `CROSS` 仍未搬（用到的两处一行就能写，`quadrant.py` 内联）。
 
 ⚠️ **对拍怎么做**：老树那份来自 QUANTAXIS 包，而 `test_no_quantaxis` 有一条
 「运行时不许加载 QUANTAXIS」的断言 ⇒ **测试里不能 import 它做对拍**。
@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
 try:
     import talib
@@ -31,7 +32,7 @@ except ImportError as exc:            # pragma: no cover
     talib = None
     _TALIB_ERROR = exc
 
-__all__ = ['available', 'TA_HMA']
+__all__ = ['available', 'TA_HMA', 'calc_macd_qa']
 
 
 def available() -> bool:
@@ -76,3 +77,30 @@ def TA_HMA(close, period: int):
     return talib.WMA(
         2 * talib.WMA(close, int(period / 2)) - talib.WMA(close, period),
         int(np.sqrt(period)))
+
+
+def calc_macd_qa(close, short: int = 12, long: int = 26, mid: int = 9):
+    """**QUANTAXIS 口径**的 MACD（`QA_indicator_MACD`，逐字等价）。
+
+    老树流水线的 15min / 60min / 日线特征**都用它**（`features/empirical.py:3431`
+    `models/mainstream.py:1053`），与 `talib.MACD` **不是同一个东西**：
+
+    * EMA 用 `pandas.ewm(span=N, min_periods=N-1, adjust=True)` —— **不是** talib 的
+      递推初始化；
+    * 柱 `MACD = (DIF - DEA) * 2` —— talib 的第三项只有 `DIF - DEA`（差 2 倍）。
+
+    ⚠️ 2026-10-19 实测：用 talib 口径喂 `calc_mainstream_feats`，`MsLeadinx5BfMin`
+    有 **1364/2075** 根与老树不同（最大 5070）—— 不是符号差，是 EMA 初始化 +
+    递推差在阈值附近翻转。**这条链必须用本函数**。
+
+    :returns: `(dif, dea, macd)` 三个 `pd.Series`（与输入同索引）
+    """
+    s = close.astype(float) if isinstance(close, pd.Series) else pd.Series(
+        np.asarray(close, dtype=float))
+
+    def _ema(x, n):
+        return x.ewm(span=n, min_periods=n - 1, adjust=True).mean()
+
+    dif = _ema(s, short) - _ema(s, long)
+    dea = _ema(dif, mid)
+    return dif, dea, (dif - dea) * 2

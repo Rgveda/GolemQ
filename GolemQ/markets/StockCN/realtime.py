@@ -829,19 +829,25 @@ def GQ_fetch_stock_day_realtime_adv(
             data_realtime['date'] = pd.to_datetime(data_realtime['datetime']).dt.strftime('%Y-%m-%d')
             data_realtime['datetime'] = pd.to_datetime(data_realtime['datetime'])
             for code in codelist:
-                # 顺便检查股票行情长度，发现低于30天直接砍掉。
+                # 检查本帧长度：<30 根只**提示**，**不再跳过合并**。
                 try:
-                    if (len(_select_code(data_day, code[:6])) < 30):
-                        print(u'{} 行情只有{}天数据，新股或者数据不足，不进行择时分析。'.format(code,
-                                                                   len(_select_code(data_day, code[:6]))))
-                        # ⚠️ **刻意不删行**：老树这里写的是 `data_day.data.drop(
-                        # data_day.select_code(code).data)` —— 把一个 DataFrame 当
-                        # labels 传给 `drop` 会 **TypeError**，而它外面那层 `except`
-                        # 把异常吞成 `continue` ⇒ **老树的有效行为就是「警告 + 跳过」**。
-                        # 2026-10-12 我一度改成 `.drop(index)`，那**真把该 code 的行删光**
-                        # 了（实测 `get_kline_price_v3` 从 23 行变 0 行）—— 与提示语
-                        # 「不进行择时分析」不符（该跳过的是分析，不是把数据抹掉）。
-                        continue
+                    _n = len(_select_code(data_day, code[:6]))
+                    if (_n < 30):
+                        # ⚠️ 2026-10-19：这行原先**无条件 print + continue**，
+                        # `fill_turnover`（全市场逐只、`start=近7天`、`verbose=False`）
+                        # 会让每只票都 <30 根 ⇒ **开盘时刷屏 5,581 行**；而且 `continue`
+                        # 把实时合并也跳过了，`realtime=True` 实际空转。
+                        # 现在：① 提示受 `verbose` 控制；② 只有**一根都没有**才跳过
+                        # （`pre_close = ...tail(1)` 需要至少一根）；1..29 根照常合并
+                        # —— 提示语说的是「不进行**择时分析**」，不是「不合并行情」。
+                        if (isinstance(verbose, tqdm)):
+                            verbose.write(u'{} 行情只有{}天数据，新股或者数据不足，'
+                                          u'不进行择时分析。'.format(code, _n))
+                        elif (verbose is True):
+                            print(u'{} 行情只有{}天数据，新股或者数据不足，'
+                                  u'不进行择时分析。'.format(code, _n))
+                        if (_n == 0):
+                            continue
                 except Exception:
                     pass
                     continue

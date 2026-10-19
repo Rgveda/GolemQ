@@ -1,0 +1,126 @@
+{
+  "old_db": "golemq",
+  "start": "2024-01-01",
+  "end": "2026-09-30",
+  "codes": {
+    "600519": {
+      "market_type": "stock_cn",
+      "old_prefix": "stock",
+      "old_code": "600519",
+      "old": {
+        "day": {
+          "collection": "stock_reality_feat_day",
+          "rows": 666,
+          "file": "day\\600519.parquet",
+          "sha256": "66d40e591174c799ebb49ca215af1c8b72040fbc5936c657207ebdc2be3ba52e",
+          "target": "reality_feat_day"
+        },
+        "minor60": {
+          "collection": "stock_metadata",
+          "rows": 2665,
+          "file": "minor60\\600519.parquet",
+          "sha256": "fd85842acce53572db37a3214f68132d9005ada778d3f4cc3a7934dfbc44d833",
+          "target": "reality_feat_60min"
+        },
+        "cv60": {
+          "collection": "stock_reality_feat_60min",
+          "rows": 2665,
+          "file": "cv60\\600519.parquet",
+          "sha256": "2dc623f538d7502597ec2bfaf71a22dc853e699d3d59428f939febc851d8cacc",
+          "target": "reality_feat_60min"
+        },
+        "cv15": {
+          "collection": "stock_reality_feat_15min",
+          "rows": 909,
+          "file": "cv15\\600519.parquet",
+          "sha256": "0bee7641331211795f999054770411508b03e6b6a3aa2718e442dc146ec78783",
+          "target": "reality_feat_15min"
+        },
+        "coldstart": {
+          "collection": "stock_coldstart_reviews",
+          "rows": 2660,
+          "file": "coldstart\\600519.parquet",
+          "sha256": "5b65d7615351f5187bc82303af8a810f04d2385499e85757af0230145ae001f8",
+          "target": "coldstart_reviews"
+        }
+      },
+      "inputs": {
+        "day": {
+          "rows": 666,
+          "file": "inputs\\600519_day.parquet",
+          "sha256": "a20330a212010901c1919d92aa2db8a5cdb38df43008673be9ad8298b70aed57"
+        },
+        "60min": {
+          "rows": 2664,
+          "file": "inputs\\600519_60min.parquet",
+          "sha256": "0ed9ceae6e63218dd3cc5956e792082e1cc7c4c52f3bfd87d819f7e9ee9c5220"
+        },
+        "15min": {
+          "rows": 10656,
+          "file": "inputs\\600519_15min.parquet",
+          "sha256": "a7b427dbdb146dde16d9374882d9a59343de6c46fa03b3e10044ab6caea04017"
+        }
+      }
+    },
+    "301308": {
+      "market_type": "stock_cn",
+      "old_prefix": "stock",
+      "old_code": "301308",
+      "old": {
+        "day": {
+          "collection": "stock_reality_feat_day",
+          "rows": 666,
+          "file": "day\\301308.parquet",
+          "sha256": "89f0acb564ce8904907830b7d19b8810cb84bb102cf528fca6c2142700ecb0e0",
+          "target": "reality_feat_day"
+        },
+        "minor60": {
+          "collection": "stock_metadata",
+          "rows": 2665,
+          "file": "minor60\\301308.parquet",
+          "sha256": "294db2071dc992537d442fd686514c4089bfbdb3f22f631b18456223125ee893",
+          "target": "reality_feat_60min"
+        },
+        "cv60": {
+          "collection": "stock_reality_feat_60min",
+          "rows": 2665,
+          "file": "cv60\\301308.parquet",
+          "sha256": "e6281e975dc19f823393b3db06e1f042ef4d09e555225db7997de63f6f317dcb",
+          "target": "reality_feat_60min"
+        },
+        "cv15": {
+          "collection": "stock_reality_feat_15min",
+          "rows": 898,
+          "file": "cv15\\301308.parquet",
+          "sha256": "0ac153d6d47e4a54714b560a5e63f4f5e952f1a1328823feb1c162e450fed4b5",
+          "target": "reality_feat_15min"
+        },
+        "coldstart": {
+          "collection": "stock_coldstart_reviews",
+          "rows": 2632,
+          "file": "coldstart\\301308.parquet",
+          "sha256": "41f0414eb23f2f78fa177f5f1854a1eced3d050a35c95cf999580e5f5625e6d1",
+          "target": "coldstart_reviews"
+        }
+      },
+      "inputs": {
+        "day": {
+          "rows": 666,
+          "file": "inputs\\301308_day.parquet",
+          "sha256": "48551d7396e8264fdd709d485f91094df7e3737cfd024d026b6da9f60e271272"
+        },
+        "60min": {
+          "rows": 2656,
+          "file": "inputs\\301308_60min.parquet",
+          "sha256": "7420c3966d07686d2cb675ef12f935fcb79e1753e2fc844e09a5e27d7f1c6331"
+        },
+        "15min": {
+          "rows": 10624,
+          "file": "inputs\\301308_15min.parquet",
+          "sha256": "2672d82807a05e4e4fc24000a801edc1c734afe4621d219af132958b18535dd5"
+        }
+      }
+    }
+  },
+  "generated_at": "2026-10-19T15:40:30.097448"
+}

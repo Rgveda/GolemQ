@@ -84,5 +84,6 @@
 | `D51` | ChartScan CV 检出结果从 4.4 搬进 8.3（+ `etf_` 前缀分支 + 写库路由的 4 处分叉） | 2026-10-17 | [decisions/D51.md](docs/decisions/D51.md) |
 | `D52` | pandas 3.0 / numpy 2.x 兼容性修复（4 处，全部**静默**） | 2026-10-17 | [decisions/D52.md](docs/decisions/D52.md) |
 | `D53` | Prophet 价格区间（`FBPROPHET_*` 四列）搬进新树 —— **只搬算术，落库存比值** | 2026-10-18 | [decisions/D53.md](docs/decisions/D53.md) |
+| `D54` | 统一因果 Review 管线（daily + zen_minor + coldstart 子集 + runtime） | 2026-10-19 | [decisions/D54.md](docs/decisions/D54.md) |
 
 <!-- END GENERATED -->

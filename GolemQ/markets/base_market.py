@@ -27,24 +27,16 @@
 from abc import ABC, abstractmethod
 from typing import List
 import pandas as pd
-import pymongo
-
-
 class BaseMarket(ABC):
     """
     金融市场抽象基类
     定义所有市场共有的接口规范
 
-    Attributes:
-        DATABASE: pymongo.MongoClient实例，用于存储市场元数据
+    ⚠️ **本类不再持有任何数据库句柄**（2026-10-18 删）。原先有一个
+    ``DATABASE`` 类属性 + ``init_db(uri, db_name)``，硬编码
+    ``market_metadata`` 库 —— **全树零调用**，且与「库名不外泄」冲突。
+    各市场的库句柄由**市场自己**持有（A 股在 `markets/StockCN/__init__.py`）。
     """
-
-    DATABASE: pymongo.MongoClient = None
-
-    @classmethod
-    def init_db(cls, uri: str = "mongodb://localhost:27017/", db_name: str = "market_metadata"):
-        """初始化MongoDB连接"""
-        cls.DATABASE = pymongo.MongoClient(uri)[db_name]
 
     @abstractmethod
     def purge_historical_collections(self) -> List[str]:

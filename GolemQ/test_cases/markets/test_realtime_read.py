@@ -130,5 +130,50 @@ class TestRealtimeReadGuard(unittest.TestCase):
         self.assertTrue(rt_db.list_collection_names.called)
 
 
+class TestShortWindowWarningGate(unittest.TestCase):
+    """⚠️ 2026-10-19 实盘事故：`--save tdx` 的 turnover 阶段全市场刷屏。
+
+    `fill_turnover` 逐只调 `get_kline_price_v3(start=近7天, verbose=False)` ——
+    窗口只有 ~5 根。`GQ_fetch_stock_day_realtime_adv` 的 `<30` 提示**无视 verbose**，
+    于是 5,581 只全打印；而且它后面的 `continue` 把**实时合并**也跳过了
+    （`realtime=True` 空转）。这两条都钉在这里。
+    """
+
+    @staticmethod
+    def _data_day(n=5):
+        import types
+        idx = k.pd.MultiIndex.from_arrays(
+            [k.pd.bdate_range('2026-10-12', periods=n), ['600519'] * n],
+            names=['date', 'code'])
+        df = k.pd.DataFrame(
+            {c: [1.0] * n for c in ('open', 'high', 'low', 'close', 'volume', 'amount')},
+            index=idx)
+        return types.SimpleNamespace(data=df)
+
+    def _run(self, verbose):
+        import contextlib
+        import io
+        from GolemQ.markets.StockCN import realtime as rt
+        # 返回**别的 code**：让循环走到提示后不再进入合并细节，隔离被测行为
+        rt_df = k.pd.DataFrame({'datetime': [k.dt.datetime(2026, 10, 19, 10, 0)],
+                                'code': ['000001']})
+        buf = io.StringIO()
+        with unittest.mock.patch.object(rt, 'GQ_fetch_stock_realtime_adv',
+                                        return_value=rt_df), \
+                contextlib.redirect_stdout(buf):
+            res = self._data_day()
+            rt.GQ_fetch_stock_day_realtime_adv(['600519'], res, verbose=verbose)
+        return buf.getvalue(), res
+
+    def test_warning_is_silent_when_verbose_false(self):
+        out, res = self._run(False)
+        self.assertNotIn('行情只有', out)
+        self.assertEqual(len(res.data), 5, '短窗口不是新股，行数不能被抹掉')
+
+    def test_warning_is_printed_when_verbose_true(self):
+        out, _ = self._run(True)
+        self.assertIn('行情只有', out)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -111,7 +111,8 @@ def _db():
     return GOLEMQ_STOCK_CN
 
 
-def reality_feat_rows(features: pd.DataFrame, family: str, created_at=None) -> list:
+def reality_feat_rows(features: pd.DataFrame, family: str, created_at=None,
+                      write_nulls: bool = False) -> list:
     """CV 结果帧 → ``*_reality_feat_*`` 文档列表。**纯函数**（不碰 DB）。
 
     :param features: 索引为 ``(时间, code)`` 两层（第 0 层 datetime64、第 1 层 6 位代码），
@@ -183,13 +184,16 @@ def reality_feat_rows(features: pd.DataFrame, family: str, created_at=None) -> l
         out['datetime'] = pd.to_datetime(out['datetime']).dt.strftime('%Y-%m-%d %H:%M:%S')
     out['created_at'] = int(created_at)
 
-    # 载荷列照原样（`NaN` → 不写该列，而不是写 `None` —— 与 `metadata_save` 同口径）
+    # 载荷列照原样。默认 `NaN` → 不写该列（与 `metadata_save` 同口径）；
+    # `write_nulls=True` 时写 `None` —— review 重算修正后需要**清掉旧值**。
     rows = []
     for _, r in out.iterrows():
         doc = {}
         for col in out.columns:
             v = r[col]
             if pd.isna(v) if not isinstance(v, (list, dict)) else False:
+                if write_nulls:
+                    doc[col] = None
                 continue
             doc[col] = v.item() if hasattr(v, 'item') else v
         rows.append(doc)
@@ -197,7 +201,8 @@ def reality_feat_rows(features: pd.DataFrame, family: str, created_at=None) -> l
 
 
 def save_reality_feat(features: pd.DataFrame, family: str, market_type,
-                      verbose: bool = True, echo=None, created_at=None) -> dict:
+                      verbose: bool = True, echo=None, created_at=None,
+                      write_nulls: bool = False) -> dict:
     """取数（其实只组行）→ `upsert_fields` 落 ``golemq_stock_cn``。
 
     :param market_type: **该 code 的**市场类型（一只 code 一次调用，同旧 `charts.py`）；
@@ -207,7 +212,8 @@ def save_reality_feat(features: pd.DataFrame, family: str, market_type,
     from GolemQ.datasource.writer import upsert_fields
 
     name = reality_feat_name(family, market_type)
-    rows = reality_feat_rows(features, family, created_at=created_at)
+    rows = reality_feat_rows(features, family, created_at=created_at,
+                             write_nulls=write_nulls)
     stats = {'name': name, 'rows': len(rows), 'written': 0, 'upserted': 0, 'modified': 0}
     if not rows:
         if verbose:
@@ -221,7 +227,38 @@ def save_reality_feat(features: pd.DataFrame, family: str, market_type,
     return stats
 
 
-def fetch_reality_feat(codes, start, end, family='day', market_type=None):
+#: **存的是「÷close」比值、读回要乘回 close** 的列（D49/D54 的双向约定）。
+#: `*Nor*` 是 0..1 的归一化强度，不是价格量纲，**不还原**。
+PRICE_RATIO_COLUMNS = (
+    'poly9MajR', 'poly9WekR',
+    'rTrePrcMajR', 'rTreSlopMajR',
+    'poly9_MAJ',
+    'PROPHET_LB', 'PROPHET_UB',
+    'PROPHET_LB_MAJ', 'PROPHET_UB_MAJ',
+)
+
+
+def restore_price_columns(df: pd.DataFrame, close, columns=PRICE_RATIO_COLUMNS):
+    """把存成**比值**的价格列乘回 close，还原价格量纲。**纯函数**。
+
+    :param df: 读回的帧（索引 `(ts, code)` 或 `(date, code)`）
+    :param close: 与 `df` 可对齐的 close 序列/帧（索引同形；或含 `close` 列）
+    :returns: `df` 的副本；只改 `columns` 中实际存在的列。
+    """
+    if df is None or len(df) == 0:
+        return df
+    out = df.copy()
+    if isinstance(close, pd.DataFrame):
+        close = close['close']
+    close = pd.Series(close).reindex(out.index)
+    for col in columns:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors='coerce') * close
+    return out
+
+
+def fetch_reality_feat(codes, start, end, family='day', market_type=None,
+                       restore_price=None, close=None):
     """读回 ``*_reality_feat_*``；**空结果返回 `None`**（不是空帧）。
 
     ⚠️ 这里刻意**偏离** `refdata.py` 那边「空返回空帧」的惯例：唯一的消费方
@@ -230,6 +267,8 @@ def fetch_reality_feat(codes, start, end, family='day', market_type=None):
 
     :param codes: 6 位代码或列表。
     :param start, end: ``'YYYY-MM-DD'``（**含**当日）。
+    :param restore_price: ``None``（默认）⇒ 帧里有 `PRICE_RATIO_COLUMNS` 才自动
+        乘回 close；``True`` 强制还原；``False`` 返回落库的原始比值。
     """
     key = UNIQUE_KEYS[family][1]          # date_stamp 或 time_stamp
     from .metadata_save import day_stamp
@@ -252,7 +291,41 @@ def fetch_reality_feat(codes, start, end, family='day', market_type=None):
     # `reindex([(last_day, ticker)])`，**扁平帧会 `KeyError: Requested level (date)…`**。
     lvl = 'date' if family == 'day' else 'datetime'
     df[lvl] = pd.to_datetime(df[lvl])
-    return df.drop_duplicates([lvl, 'code']).set_index([lvl, 'code'], drop=False)
+    out = df.drop_duplicates([lvl, 'code']).set_index([lvl, 'code'], drop=False)
+    if restore_price is None:
+        # 自动：帧里**有价格比值列**才还原（CV 读口没有这些列 ⇒ 不多取一次 K 线）。
+        restore_price = any(c in out.columns for c in PRICE_RATIO_COLUMNS)
+    if restore_price:
+        if close is None:
+            close = _close_for_restore(codes, start, end, family)
+        out = restore_price_columns(out, close)
+    return out
+
+
+def _close_for_restore(codes, start, end, family):
+    """取与 `fetch_reality_feat` 同形的 close（供比值列还原）。"""
+    from GolemQ import get_active_market
+    market = get_active_market()
+    if family == 'day':
+        res, _ = market.get_kline_price_v3(codes, start=start, end=end,
+                                           realtime=False, verbose=False)
+    else:
+        res, _ = market.get_kline_price_min(codes, start=start, end=end,
+                                            frequency=family, realtime=False,
+                                            verbose=False)
+    data = None if res is None else getattr(res, 'data', None)
+    if data is None or len(data) == 0:
+        return pd.Series(dtype=float)
+    out = data['close'].copy()
+    ts = pd.DatetimeIndex(pd.to_datetime(out.index.get_level_values(0)))
+    if family == 'day':
+        ts = ts.normalize()
+        lvl = 'date'
+    else:
+        lvl = 'datetime'
+    out.index = pd.MultiIndex.from_arrays(
+        [ts, out.index.get_level_values(1)], names=[lvl, 'code'])
+    return out[~out.index.duplicated(keep='last')]
 
 
 #: ⚠️ **刻意不保留旧树那三个名字**（`GQ_save_metadata_reality` /
@@ -264,6 +337,7 @@ def fetch_reality_feat(codes, start, end, family='day', market_type=None):
 __all__ = [
     'REALITY_FAMILIES', 'UNIQUE_KEYS',
     'reality_feat_name', 'reality_feat_rows', 'save_reality_feat', 'fetch_reality_feat',
+    'PRICE_RATIO_COLUMNS', 'restore_price_columns',
 ]
 
 
@@ -497,3 +571,49 @@ def verify_reality_feat_migration(families=('day', '60min', '15min'),
         for ex in out['examples']:
             say('    {}'.format(ex))
     return out
+
+
+# --------------------------------------------------------------------------- #
+# review 管线水位（侧表）
+# --------------------------------------------------------------------------- #
+#: 为什么用侧表：reality 表是 `$set`-only 且**跳过 NaN 列** ⇒「算过但全 NaN」与
+#: 「从没算过」在表里不可区分；侧表还能记错误状态而不往数据契约里加死列。
+WATERMARK_COLL = 'pipeline_watermarks'
+WATERMARK_KEYS = ('pipeline', 'table', 'code')
+
+
+def get_watermark(pipeline: str, table: str, code: str):
+    """读某条水位；不存在返回 ``None``。"""
+    return _db()[WATERMARK_COLL].find_one(
+        {'pipeline': pipeline, 'table': table, 'code': str(code)[:6]})
+
+
+def set_watermark(pipeline: str, table: str, family: str, code: str,
+                  last_written_ts=None, last_source_ts=None, rows: int = 0,
+                  status: str = 'ok', error=None) -> dict:
+    """写/更新水位（`upsert_fields`，键 `(pipeline, table, code)`）。"""
+    import time as _time
+    from GolemQ.datasource.writer import upsert_fields
+    doc = {
+        'pipeline': pipeline,
+        'table': table,
+        'family': family,
+        'code': str(code)[:6],
+        'last_written_ts': None if last_written_ts is None else int(last_written_ts),
+        'last_source_ts': None if last_source_ts is None else int(last_source_ts),
+        'rows': int(rows),
+        'status': status,
+        'error': error,
+        'updated_at': int(_time.time()),
+    }
+    return upsert_fields(_db()[WATERMARK_COLL], [doc], list(WATERMARK_KEYS))
+
+
+def clear_watermark(pipeline: str, table: str = None, code: str = None) -> int:
+    """删除水位（`--force`/测试用）。返回删除数。"""
+    q = {'pipeline': pipeline}
+    if table is not None:
+        q['table'] = table
+    if code is not None:
+        q['code'] = str(code)[:6]
+    return _db()[WATERMARK_COLL].delete_many(q).deleted_count

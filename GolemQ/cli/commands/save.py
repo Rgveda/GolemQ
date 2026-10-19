@@ -358,9 +358,9 @@ def run_save(args) -> None:
         # ⚠️ **排在复权之后**（2026-10-12 用户要求），理由见上面 `rows` 那处。
         # 两件事都**不可达时降级**：它们是加分项，不该拖垮整条 `--save`。
         if do_turnover:
-            # ① 换手率：**读 4.4**（同局域网 Mongo 读，**没有频次限制**）。选它而不是
-            #    东财/baostock 的在线接口做刷新，正是因为**后两者都有访问频次限制**
-            #    （用户 2026-10-10 明确）。等 4.4 下线，换源只改 `metadata_save.SOURCES`。
+            # ① 换手率：**8.3 现算**（`成交量 ÷ 流通股本`，2026-10-18 起）。
+            #    ⚠️ 此前是从 **4.4** 读的 —— 现在整条 `--save` 不再依赖 4.4 可达。
+            #    口径与 baostock 的 turnover 逐位相同（见 `turnover_from_volume`）。
             if banner is not None:
                 # 阻塞调用**之前**先点亮（`PITFALLS.md` P22；同 `xdxr_node` 那条）
                 banner.mark('turnover', RUNNING)

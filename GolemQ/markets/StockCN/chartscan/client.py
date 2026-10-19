@@ -95,14 +95,28 @@ def _remove_outdated_jobs(code_job):
 def _throttle(code_job, code_list, scope, verbose=True):
     """跑完之后的**休市节流**（旧树 `:351-392` 逐字）。
 
-    低于阈值（占 `len(code_list)` 的 0.168 / 0.382 / 0.618；`etf` 另有一条 0.832）
-    且**非交易时段**时就挂起 —— 4h（周末）/ 2h（夜间）/ 1h / 30min / 15min。
+    低于阈值且**非交易时段**时就挂起 —— 4h（周末）/ 2h（夜间）/ 1h / 30min / 15min。
+    阈值（占 `len(code_list)`）：0.168 / 0.382 / 0.618，`etf` 另有一条 0.832。
+
+    ⚠️ 分子是**涉及多少只码**（`code_job` 去重），不是请求数 —— 见下方注释。
     """
     import time
     say = print if verbose else (lambda *a, **k: None)
     if _if_tradetime():
         return
-    n, total = len(code_job), len(code_list)
+    # ⚠️ **按「还有多少只」，不是按请求数**（2026-10-18 修正，用户实测报的）。
+    # `build_jobs` 会把 **mode=1 的码拆成 ~34 个月度任务**，逐条计数会把
+    # 「13 只没扫过」放大成「429 个请求」：
+    #
+    #   etf : 码 506 / 任务 429 / **涉及码 13**  ⇒ 旧口径 0.848 ≥ 0.832 ⇒ **不休**
+    #   fast: 码 1672 / 任务 142 / 涉及码 14    ⇒ 旧口径 0.085 < 0.168 ⇒ 休
+    #
+    # 于是同一台机、同一天，股票会挂起 4 小时而 ETF 不挂 —— 而 ETF 那边的
+    # "429" 其实只是 13 只新标的（159xxx，近一月一行数据都没有 ⇒ 判 mode=1 是对的）。
+    # 旧树（`GolemAI/GolemQ/cli/__main__.py:355-357`）也是按 `len(code_job)` 数的，
+    # 这个放大同样存在，只是当时的 ETF 数据没有暴露出它。
+    n = len({job[0] for job in code_job})
+    total = len(code_list)
     weekend = dt.now().weekday() >= 5
     night = dt.now().hour >= 22 or dt.now().hour < 6
     if (n < total * 0.168) or (scope == 'etf' and n < total * 0.832):

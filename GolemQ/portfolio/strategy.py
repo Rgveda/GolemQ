@@ -61,7 +61,7 @@ class Strategy(abc.ABC):
 
             def priority(self, features_dummy):
                 # 大者优先；并列时由引擎按 code 稳定排序，避免结果不可复现
-                return features_dummy[TRD.OMNIPATH_UPRISING_I_COEF_DUMMY]
+                return features_dummy[LTT.QUADRANT_UPRISING_I_COEF_DUMMY]
     """
 
     #: 策略标识，用于落盘文件名与日志。子类必须覆盖。

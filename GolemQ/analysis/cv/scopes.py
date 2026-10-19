@@ -24,8 +24,10 @@ A 股的数据落点由 `markets/StockCN/` 提供（`StockCN.scan_dataset()`）�
 ============  ==================================================================
 `fast`        旧函数里 **没有** `fast` 分支 —— 它落 `else` 兜底 = `block` 的语义。
 `block`       同上（旧 help 写「重要指标股(默认)」）。
-`etf`         旧树那份 **506 个码的硬编码表**（⚠️ 里面混着 **30 个真指数**）——
-              表已搬去 `markets/StockCN/symbol.py::ETF_LEGACY_CODES`，经 `dataset.etf_codes` 注入。
+`etf`         **8.3 的 `etf_list`**（A 股侧 `refdata.GQ_fetch_etf_list`，经
+              `dataset.etf_codes` 注入）。⚠️ 2026-10-18 起**不再用**旧树那张 506 码
+              硬编码表（已删 —— 实测它比库里少 **1244 只**，还留着 **44 只已退市/换码**
+              的码，其中 13 只近一月无数据 ⇒ 判 mode=1 ⇒ 把休市节流的计数撑爆）。
 `etc`         全市场 **减去** `focus_block`。
 `etc_1`/`etc_2` `etc` 再按 `(int(code[4])+int(code[5])) % 2` **奇偶二分**（保留旧的 `>1700` 条件）。
 ============  ==================================================================
@@ -35,17 +37,19 @@ A 股的数据落点由 `markets/StockCN/` 提供（`StockCN.scan_dataset()`）�
 1. **旧 `_fetch_stock_blocks` 自己递归自己**（旧 `GolemQ/utils/symbol.py:631` 第一支调的是
    它自己）⇒ 必然 `RecursionError`、被 `except` 吞掉、再落回 QUANTAXIS。现在读
    `dataset.stock_block(...)`（A 股侧是 `refdata.GQ_fetch_stock_block`，读
-   ``golemq_stock_cn.stock_block``，**`--save` 写的那个**）。旧代码那段注释说
-   「``golemq`` 里没有 stock_block」是 **4.4** 的事实，**不是 8.3 的**。
+   8.3 行情库里的 `stock_block` 集合，**`--save` 写的那个**）。旧代码那段注释说
+   「`golemq` 里没有 stock_block」是 **4.4** 的事实，**不是 8.3 的**。
 2. **旧 `etc_2` 比 `etc_1` 多一步 7→6 位截断**（`:717` vs `:693` 的不对称）——
    8.3 的板块写入端**源头就截到 6 位**，这里两边都去掉。
 3. **空清单加护栏**：旧代码解析出空清单会让 scan **静默什么都不做**（CLI 只判 `is False`）
    ⇒ 这里返回 `False` 并打印原因。
 
-⚠️ **`etf` 是个「混族」清单**：那 506 个码里既有 ETF（`510300` → `etf_*` 集合）
-又有真指数（`399001` 等 30 个 → `index_*` 集合）。所以**调用方不能给它传单一
-`market_type`** —— 传 `INDEX_CN` 会让 ETF 去读 `index_60min` 而**静默读空**。
-传 `None` 让 `is_stock_cn` **逐码**分类；结果族也**逐码**选。
+⚠️ **`etf` 清单现在不混族了**（2026-10-18 起）：取自 8.3 的 `etf_list`，
+实测 **1706 个码全部是 `etf_cn`**（旧树那张 506 码表混着 30 个真指数，已删）。
+
+**但「调用方不能给它传单一 `market_type`」这条仍然成立** —— 现在它没有额外成本，
+也防着名单将来再混；传 `INDEX_CN` 会让 ETF 去读 `index_60min` 而**静默读空**。
+传 `None` 让 `is_stock_cn` **逐码**分类：它同时决定**读哪张表**与**写哪个族**。
 """
 from __future__ import annotations
 
@@ -53,7 +57,7 @@ from dataclasses import dataclass
 from typing import Callable, Sequence
 
 #: 支持的 scope。**顺序即 `--help` 的顺序**。
-SCOPES = ('fast', 'block', 'etf', 'etc', 'etc_1', 'etc_2')
+SCOPES = ('fast', 'block', 'etf', 'index', 'all', 'etc', 'etc_1', 'etc_2')
 
 
 @dataclass(frozen=True)
@@ -68,13 +72,16 @@ class ScanDataset:
         （一只股票属于多个板块、一个板块含多只股票，`refdata.GQ_fetch_stock_block` 原样）。
         空集返空帧。
     :param focus_blocks: 关注板块的**名字清单**（A 股侧是 `symbol.focus_block`）。
-    :param etf_codes: 「``etf``」这个 scope 的码表（A 股侧是那份 506 个码的硬编码表）。
+    :param etf_codes: 「``etf``」这个 scope 的码表。A 股侧取自 **8.3 的 `etf_list`**。
+    :param index_codes: 「``index``」这个 scope 的码表（8.3 `index_list`）。
+        ``all`` = stock ∪ etf ∪ index。
     """
 
     stock_list: Callable[..., 'object']
     stock_block: Callable[..., 'object']
     focus_blocks: Sequence[str]
     etf_codes: Sequence[str]
+    index_codes: Sequence[str] = ()
 
 
 def _active_dataset() -> ScanDataset:
@@ -159,6 +166,12 @@ def perpar_symbol_range(eval_range='', dataset: ScanDataset = None,
 
     if rng == 'etf':
         codes = list(ds.etf_codes)
+    elif rng == 'index':
+        codes = list(ds.index_codes)
+    elif rng == 'all':
+        df = ds.stock_list()
+        stocks = [] if df is None or len(df) == 0 else [str(c)[:6] for c in df['code']]
+        codes = sorted(set(stocks) | set(ds.etf_codes) | set(ds.index_codes))
     elif rng in ('fast', 'block'):
         codes = focus_block_codes(ds, verbose=verbose, echo=say)
     else:                                   # etc / etc_1 / etc_2

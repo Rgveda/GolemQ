@@ -28,8 +28,9 @@ MongoDB 对 UTF-8 键名无障碍。若日后确需英文键，再按实际用�
 
 ⚠️ 限频：akshare 确有访问频率控制
 =================================
-走本包 `throttle.py`，默认 30s。**不套用** `scribe.GQ_get_etf_list` 的
-`checkin_function` 闸门（15 分钟「到期前拒绝」）—— 两者语义不同，见 `throttle.py`。
+走本包 `throttle.py`，默认 30s。**不套用**旧树 `GQ_get_etf_list` 那个
+`checkin_function` 闸门（15 分钟「到期前拒绝」；该函数已删）—— 两者语义不同，
+见 `throttle.py`。
 
 ⚠️ 逐只查询，全量很慢
 =====================
@@ -48,7 +49,9 @@ from GolemQ.datasource.base import (
     register,
 )
 
-#: 与 `scribe.GQ_get_etf_list` 保持一致的列映射。改动需同步。
+#: 写进 8.3 `etf_list` 的**列名约定**（中文源列 → 库列）。改它要同步
+#: `refdata.GQ_fetch_etf_list` 的消费方 —— 旧树那个同名函数已删，这里的映射
+#: 现在是**数据契约**本身。
 ETF_COLUMN_MAP = {
     '代码': 'code',
     '名称': 'name',

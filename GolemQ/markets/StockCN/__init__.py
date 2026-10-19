@@ -250,13 +250,27 @@ class StockCN(BaseMarket):
         `refdata.GQ_fetch_stock_list`。
         """
         from GolemQ.analysis.cv.scopes import ScanDataset
-        from .refdata import GQ_fetch_stock_block, GQ_fetch_stock_list
-        from .symbol import ETF_LEGACY_CODES, focus_block
+        from .refdata import (GQ_fetch_etf_list, GQ_fetch_index_list,
+                              GQ_fetch_stock_block, GQ_fetch_stock_list)
+        from .symbol import focus_block
+
+        # `etf` scope 用 **8.3 的 `etf_list`**（2026-10-18 起）。
+        # 旧树那份 **506 码的硬编码表已删**（原 `symbol.ETF_LEGACY_CODES`）——
+        # 实测它比库里的名单**少 1244 只**，还留着 **44 只已退市/换码**的码
+        # （其中 13 只近一月一行数据都没有 ⇒ 判 mode=1 ⇒ 拆成 ~34 个月度任务 ⇒
+        # 把休市节流的计数从 13 撑到 429，ETF 因此不休）。名单以库为准。
+        etf = GQ_fetch_etf_list()
+        etf_codes = () if etf is None or len(etf) == 0 else tuple(
+            str(c)[:6] for c in etf['code'])
+        idx = GQ_fetch_index_list()
+        index_codes = () if idx is None or len(idx) == 0 else tuple(
+            str(c)[:6] for c in idx['code'])
         return ScanDataset(
             stock_list=GQ_fetch_stock_list,
             stock_block=GQ_fetch_stock_block,
             focus_blocks=focus_block,
-            etf_codes=ETF_LEGACY_CODES,
+            etf_codes=etf_codes,
+            index_codes=index_codes,
         )
 
     def purge_historical_collections(self):

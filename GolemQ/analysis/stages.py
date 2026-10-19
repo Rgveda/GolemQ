@@ -84,7 +84,7 @@ GARIDENT_WINDOW = 502
 K_RANGE = range(1, 15)
 
 
-def calc_garident_price(closep) -> list:
+def calc_garident_price(closep, random_state=None) -> list:
     """收盘价序列 → 排好序的「支撑/压力带」列表 ``[[上沿, 下沿], ...]``。
 
     做法照 <https://towardsdatascience.com/using-k-means-clustering-to-create-support-and-resistance-b13fdeeba12>：
@@ -121,7 +121,7 @@ def calc_garident_price(closep) -> list:
     X = np.array(closep)
     sum_of_squared_distances = []
     for k in K_RANGE:
-        km = KMeans(n_clusters=k)
+        km = KMeans(n_clusters=k, random_state=random_state)
         with warnings.catch_warnings():
             # 老树显式忽略收敛告警 —— 簇数偏大时 KMeans 必然报，而这里是**故意**试大 K
             warnings.filterwarnings("ignore", category=ConvergenceWarning)
@@ -129,7 +129,7 @@ def calc_garident_price(closep) -> list:
         sum_of_squared_distances.append(km.inertia_)
     kn = KneeLocator(K_RANGE, sum_of_squared_distances, S=1.0,
                      curve="convex", direction="decreasing")
-    kmeans = KMeans(n_clusters=kn.knee).fit(X.reshape(-1, 1))
+    kmeans = KMeans(n_clusters=kn.knee, random_state=random_state).fit(X.reshape(-1, 1))
 
     c = kmeans.predict(X.reshape(-1, 1))
     minmax = [[-np.inf, np.inf] for _ in range(kn.knee)]
@@ -249,7 +249,8 @@ def calc_garident_stage(curr_closep: float, curr_garident_prices) -> float:
 
 
 def calc_garident_stages(checkpoints: pd.DataFrame, features: pd.DataFrame,
-                         verbose: bool = False, echo=None) -> pd.DataFrame:
+                         verbose: bool = False, echo=None,
+                         random_state=None) -> pd.DataFrame:
     """在 `checkpoints` 逐行定带，把 `AKA.STAGE` 及其伴随列写进 `features`。
 
     写了 **5 列**：
@@ -321,7 +322,8 @@ def calc_garident_stages(checkpoints: pd.DataFrame, features: pd.DataFrame,
         startpoint_index = (endpint_index - GARIDENT_WINDOW) if (endpint_index > GARIDENT_WINDOW) else 0
         try:
             ret_garident_price = calc_garident_price(
-                features[AKA.CLOSE].values[startpoint_index + 1:endpint_index + 1])
+                features[AKA.CLOSE].values[startpoint_index + 1:endpint_index + 1],
+                random_state=random_state)
             stage = calc_garident_stage(
                 checkpoint_features[AKA.CLOSE],
                 ret_garident_price)

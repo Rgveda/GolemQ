@@ -18,6 +18,10 @@
 `QuadBsTukLag`          :func:`calc_quadrant_bs_trunk_timing_lag`      `analysis/quad_gear.py:648`
 `MsLeadinBf`/`x3`/`x5`  :func:`calc_mainstream_feats`                 `analysis/base.py:2638-2676`
 6 个 `BS*Bf*`            :func:`calc_bs_before`                        `base.py:2488` + `models/mainstream.py:1417`
+`BSStarDwn`             :func:`calc_bs_star_down`                     `base.py:2429`（**只搬星线段**）
+`4QuadStDwnCnt`         :func:`calc_quadrant_stardown_count`          `models/mainstream.py:515`
+`QLevPwrlnUprLag`       :func:`calc_quadrant_powerline_uprisal_lag`   `models/mainstream.py:530` + `:544`（**两条**）
+`4QuadZenDCnt`          :func:`calc_quadrant_zen_dash_count`          `analysis/mainstream.py:180`
 ======================  ==========================================  ==========================
 
 解耦动作（**改动影响可对拍性，逐条记**）
@@ -67,6 +71,11 @@ __all__ = [
     'kdj',
     'calc_four_quadrant_boost',
     'calc_quadrant_leverage_macd_timing_lag',
+    'calc_bs_signals',
+    'calc_bs_star_down',
+    'calc_quadrant_stardown_count',
+    'calc_quadrant_powerline_uprisal_lag',
+    'calc_quadrant_zen_dash_count',
     'calc_quadrant_bs_trunk_timing_lag',
     'calc_mainstream_feats',
     'calc_bs_before',
@@ -677,6 +686,12 @@ def calc_quadrant_leverage_macd_timing_lag(features: pd.DataFrame) -> pd.DataFra
     ⚠️ **只搬了这一条链**：老树同一处还算了 `QUADRANT_LEVERAGE_ENERGY_NEGATIVE_*`
     与 `_ENERGY_I..V_BEFORE`（**别的指标**用的），本模块**不搬** —— 用户点名的是
     `QLevMACDLagD` 一个。
+
+    ⚠️ **第二个 `OR` 分支**（老树 `models/mainstream.py:228-238`）：
+    60min `MACD_DELTA > 0` 且 `EngLag ∈ (1, MACD_CROSS_SX_BEFORE)` 且
+    `EngLag*4 > MAINSTREAM_LEADINx5_BEFORE_MINOR`。**三列都在场才启用** ——
+    缺列时保持原来的单分支行为（向后兼容）。实测 301308 2095 根里第二分支
+    **一次也没触发**；计入只是为了让换标的不丢条件（见 worklog 2026-10-19）。
     """
     features = features.reindex(
         columns=list(set([
@@ -703,12 +718,195 @@ def calc_quadrant_leverage_macd_timing_lag(features: pd.DataFrame) -> pd.DataFra
     features[LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY] = calc_event_timing_lag(
         np.where(
             (features[LTT.QUADRANT_LEVERAGE_ENERGY_DUMMY] > 0.0000168), 1, -1))
+    eng = features[LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY]
+    inner_major = calc_event_timing_lag(
+        np.where((features[FLD.MACD_DELTA_MAJOR] > 1e-12), 1, -1))
+    cond = (inner_major + eng) > 1e-12
+
+    # ⚠️ 老树 `models/mainstream.py:228-238` 还有**第二个 OR 分支**。它要三个
+    # 60min 输入：`MACD_DELTA`（60min 柱差分）、`MACD_CROSS_SX_BEFORE`（死叉计数）、
+    # `MAINSTREAM_LEADINx5_BEFORE_MINOR`（15min 主力吸筹 x5）。**三列都在场才启用**
+    # —— 保持本函数向后兼容（现有调用方/用例不受影响）。
+    _need = (FLD.MACD_DELTA, FLD.MACD_CROSS_SX_BEFORE,
+             LTT.MAINSTREAM_LEADINx5_BEFORE_MINOR)
+    if all(c in features.columns for c in _need):
+        inner_minor = calc_event_timing_lag(np.where(
+            (features[FLD.MACD_DELTA] > 1e-12) &
+            (eng > 1) &
+            (eng < features[FLD.MACD_CROSS_SX_BEFORE]) &
+            (eng * 4 > features[LTT.MAINSTREAM_LEADINx5_BEFORE_MINOR]), 1, -1))
+        cond = cond | ((inner_minor + eng) > 1e-12)
+
     features[LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY] = calc_event_timing_lag(
-        np.where(((calc_event_timing_lag(
-            np.where(
-                (features[FLD.MACD_DELTA_MAJOR] > 1e-12), 1, -1),
-            ) + features[LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY]) > 1e-12), 1, -1)
-    )
+        np.where(cond, 1, -1))
+    return features
+
+
+def _linear_regression_slope(y) -> float:
+    """最小二乘斜率（老树 `calc_bs_signals` 内联的那个）。"""
+    x = np.arange(len(y), dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    x_mean = x.mean()
+    y_mean = y.mean()
+    numerator = ((x - x_mean) * (y - y_mean)).sum()
+    denominator = ((x - x_mean) ** 2).sum()
+    return numerator / denominator if denominator != 0 else 0.0
+
+
+def calc_bs_star_down(ohlc: pd.DataFrame) -> pd.Series:
+    """`BSStarDwn` —— **只搬星线死叉那一段**（老树 `analysis/base.py:2429` 的子集）。
+
+    老树整份 `calc_bs_signals` 还产出买/卖线与四个 `BS_*`；`4QuadStDwnCnt`
+    只需要星线，所以这里**只算到星线为止** —— 这是 2026-10-19 的解耦点：
+    **不需要整条 BS 链**，更不需要 `calc_bs_signals` 就地改 `ohlc` 的副作用。
+
+    线上定义（逐字）：
+    * 买线 = `EMA(close, 2)`
+    * 卖线 = `EMA(slope21*20 + close, 42)`，`slope21` 是 close 的 21 日 OLS 斜率
+    * 指导线 = `EMA(mean(EMA(close,4), EMA(close,6), EMA(close,12), EMA(close,24)), 2)`
+    * 界 = `MA(close, 27)`
+    * 星线死叉 = **界上穿指导线**
+
+    >>> import pandas as pd
+    >>> o = pd.DataFrame({'open': range(30), 'high': range(30), 'low': range(30),
+    ...                   'close': range(30)}, dtype=float)
+    >>> int(calc_bs_star_down(o).sum())
+    0
+    """
+    close = pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce')
+    slope_21 = close.rolling(21).apply(_linear_regression_slope, raw=True)
+    sell_line = (slope_21 * 20 + close).ewm(span=42, adjust=False).mean()
+    _emas = [close.ewm(span=s, adjust=False).mean() for s in (4, 6, 12, 24)]
+    ref_line = (sum(_emas) / 4).ewm(span=2, adjust=False).mean()
+    border_line = close.rolling(27).mean()
+
+    star_down = (border_line > ref_line) & (border_line.shift(1) <= ref_line.shift(1))
+    return pd.Series(star_down.to_numpy(), index=ohlc.index).astype(np.int16)
+
+
+def calc_bs_signals(ohlc: pd.DataFrame,
+                    features: pd.DataFrame = None) -> pd.DataFrame:
+    """买/卖线 + 星线（老树 `analysis/base.py:2429` 的**纯函数**版）。
+
+    与 `calc_bs_star_down` 的区别：这里产出**完整**的 `BS_BUY/SELL/STAR_UP/STAR_DOWN`
+    及其 `*_BEFORE`（`Timeline_duration`），供 15min minor 链使用。
+
+    ⚠️ 老树会**就地修改**传入的 `ohlc`（加中文列名、删中间列）；本实现只返回
+    `features`，不碰入参。
+    """
+    if features is None:
+        features = pd.DataFrame(index=ohlc.index)
+    close = pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce')
+
+    buy_line = close.ewm(span=2, adjust=False).mean()
+    slope_21 = close.rolling(21).apply(_linear_regression_slope, raw=True)
+    sell_line = (slope_21 * 20 + close).ewm(span=42, adjust=False).mean()
+    _emas = [close.ewm(span=s, adjust=False).mean() for s in (4, 6, 12, 24)]
+    ref_line = (sum(_emas) / 4).ewm(span=2, adjust=False).mean()
+    border_line = close.rolling(27).mean()
+
+    bs_buy = (buy_line > sell_line) & (buy_line.shift(1) <= sell_line.shift(1))
+    bs_sell = (sell_line > buy_line) & (sell_line.shift(1) <= buy_line.shift(1))
+    star_up = (ref_line > border_line) & (ref_line.shift(1) <= border_line.shift(1))
+    star_down = (border_line > ref_line) & (border_line.shift(1) <= ref_line.shift(1))
+
+    features = features.reindex(columns=list(set([
+        *features.columns,
+        LTT.BS_REF_LINE, LTT.BS_BORDER_LINE,
+        LTT.BS_BUY, LTT.BS_SELL, LTT.BS_STAR_UP, LTT.BS_STAR_DOWN,
+        LTT.BS_BUY_BEFORE, LTT.BS_SELL_BEFORE,
+        LTT.BS_STAR_UP_BEFORE, LTT.BS_STAR_DOWN_BEFORE])))
+    features[LTT.BS_REF_LINE] = ref_line.to_numpy()
+    features[LTT.BS_BORDER_LINE] = border_line.to_numpy()
+    for src, dst in ((bs_buy, LTT.BS_BUY), (bs_sell, LTT.BS_SELL),
+                     (star_up, LTT.BS_STAR_UP), (star_down, LTT.BS_STAR_DOWN)):
+        features[dst] = src.fillna(False).astype(np.int16).to_numpy()
+    for src, dst in ((LTT.BS_BUY, LTT.BS_BUY_BEFORE),
+                     (LTT.BS_SELL, LTT.BS_SELL_BEFORE),
+                     (LTT.BS_STAR_UP, LTT.BS_STAR_UP_BEFORE),
+                     (LTT.BS_STAR_DOWN, LTT.BS_STAR_DOWN_BEFORE)):
+        features[dst] = Timeline_duration(
+            np.where(features[src].to_numpy() > 1e-19, 1, 0))
+    return features
+
+
+def calc_quadrant_stardown_count(features: pd.DataFrame) -> pd.DataFrame:
+    """`4QuadStDwnCnt` —— **一条 `calc_energy`**（老树 `models/mainstream.py:515-520`）。
+
+    输入 `BS_STAR_DOWN_BEFORE_MAJOR`（日线星线死叉的 `Timeline_duration`，
+    展开到主频）与 `QLevEngLagD`。
+    """
+    for col in (LTT.BS_STAR_DOWN_BEFORE_MAJOR,
+                LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY):
+        if col not in features.columns:
+            raise KeyError('calc_quadrant_stardown_count 缺少 {!r}'.format(col))
+    before = features[LTT.BS_STAR_DOWN_BEFORE_MAJOR]
+    eng = features[LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY]
+    features[LTT.QUADRANT_STARDOWN_COUNT] = calc_energy(np.where(
+        (before == 1) & (eng > 1e-12), 1,
+        np.where(eng > 1e-12, 1e-12, 0))).astype(np.int16)
+    return features
+
+
+def calc_quadrant_powerline_uprisal_lag(features: pd.DataFrame) -> pd.DataFrame:
+    """`QLevPwrlnUprLag` —— 老树 `models/mainstream.py:530` + `:544` **两条**。
+
+    ⚠️ 老树是**两条连续赋值**：第二条覆盖第一条，并在第二个 `OR` 分支里
+    **引用第一条的中间值**（`pwr1 / EngLag > 0.618`）。只搬一条会得到不同结果。
+
+    输入：`QLevEngLagD` / `QLevEngD`（由前者隐含） / `4QuadStDwnCnt` /
+    `4QPwrlnMaj` / `DEA_MAJ`。
+    """
+    need = (LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY,
+            LTT.QUADRANT_STARDOWN_COUNT,
+            LTT.QUADRANT_POWERLINE_MAJOR,
+            FLD.DEA_MAJOR)
+    for col in need:
+        if col not in features.columns:
+            raise KeyError('calc_quadrant_powerline_uprisal_lag 缺少 {!r}'.format(col))
+
+    eng = features[LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY].to_numpy(np.float64)
+    stardown = features[LTT.QUADRANT_STARDOWN_COUNT].to_numpy(np.float64)
+    pwr_major = features[LTT.QUADRANT_POWERLINE_MAJOR].to_numpy(np.float64)
+    dea_major = features[FLD.DEA_MAJOR].to_numpy(np.float64)
+
+    cond1 = (
+        (eng > 1e-12) &
+        ((stardown < 3) |
+         ((eng > 84) &
+          ((stardown - np.log10(np.where(eng >= 10, eng, 10))) < 3))) &
+        (pwr_major > dea_major))
+    pwr1 = calc_event_timing_lag(np.where(cond1, 1, -1))
+
+    with np.errstate(invalid='ignore', divide='ignore'):
+        ratio = np.where(eng > 0, pwr1 / eng, -np.inf)
+    cond2 = (
+        (eng > 1e-12) &
+        (stardown > 2.75) & (stardown < 4) &
+        (ratio > 0.618) &
+        (pwr_major > dea_major))
+
+    features[LTT.QUADRANT_LEVERAGE_POWERLINE_UPRISING_TIMING_LAG] = \
+        calc_event_timing_lag(np.where(cond1 | cond2, 1, -1))
+    return features
+
+
+def calc_quadrant_zen_dash_count(features: pd.DataFrame) -> pd.DataFrame:
+    """`4QuadZenDCnt` —— **一条 `calc_energy`**（老树 `analysis/mainstream.py:180-188`）。
+
+    输入 `zDLagD`（由 :func:`analysis.pivot.calc_zen_dash_timing_lag` 从 CZSC 笔
+    方向产出）与 `QLevMACDLagD`。
+    """
+    for col in (FLD.ZEN_DASH_TIMING_LAG_DUMMY,
+                LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY):
+        if col not in features.columns:
+            raise KeyError('calc_quadrant_zen_dash_count 缺少 {!r}'.format(col))
+    zd = features[FLD.ZEN_DASH_TIMING_LAG_DUMMY].to_numpy(np.float64)
+    lag = features[LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY].to_numpy(np.float64)
+    features[LTT.QUADRANT_ZEN_DASH_COUNT] = calc_energy(np.where(
+        (lag > 1e-12),
+        np.where((zd < lag) & (zd == 1), 1, 1e-12),
+        0)).astype(np.int16)
     return features
 
 

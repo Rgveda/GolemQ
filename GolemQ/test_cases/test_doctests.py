@@ -117,6 +117,9 @@ DOCTEST_MODULES = (
     # 是**原地改 features** 的，不适合 doctest；它们的正确性证据是
     # `test_quadrant.py` 里与老树 `analysis/base.py` 的**逐值对拍**。
     'GolemQ.analysis.quadrant',
+    # 上升系数的**自包含**生产路径（对数积水率三件套 + 编排）。
+    # 纯函数（prophet/DB 都不碰；`talib` 只在 linearreg 那一支惰性 import）。
+    'GolemQ.analysis.quadrant_coef',
     # 指标搬迁（2026-10-16，`DECISIONS.md` D49）新增的三个模块。
     # ⚠️ 三条都只给**纯函数**挂了 doctest：
     #   * `stages` 的 `garident_bands_to_ratio`/`_from_ratio`（比值 ↔ 绝对价互转）；

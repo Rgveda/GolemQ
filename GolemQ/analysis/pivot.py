@@ -39,6 +39,7 @@ import numpy as np
 import pandas as pd
 
 from ._zs import find_zs
+from .timing import calc_event_timing_lag
 
 
 def _mark_to_str(mark) -> str:
@@ -112,6 +113,47 @@ def bi_list_to_points(bi_list: List, conf_map: Optional[Dict] = None) -> List[Di
             'known_dt': conf if conf is not None else bi.fx_b.dt,
         })
     return points
+
+
+def calc_zen_dash_timing_lag(bi_list: List, index) -> pd.Series:
+    """`zDLagD`（`ZEN_DASH_TIMING_LAG_DUMMY`）—— **只由 CZSC 笔方向决定**。
+
+    逐字搬自老树 `analysis/mainstream.py:155-170`：
+
+    * 每笔在 `fx_a.dt` 处按方向写 `+1`（向上）/ `-1`（向下）；
+    * **最后一笔**的 `fx_b.dt` 写 `0`；
+    * `ffill()` 后取 `calc_event_timing_lag(>0 ? 1 : -1)`。
+
+    ⚠️ 老树这段藏在 `calc_zen_chopstickss` 那一大支里，但**实际只用了笔方向** ——
+    这是 2026-10-19 用户点出的解耦点：`4QuadZenDCnt` 不需要 ZEN 小波族。
+
+    :param bi_list: czsc 笔列表（取 `fx_a.dt` / `fx_b.dt` / `direction`）
+    :param index: 目标帧索引（单标的；`(dt, code)` 或 `dt` 均可）
+    :returns: 与 `index` 等长的 `int32` Series
+    """
+    dts = index.get_level_values(0) if isinstance(index, pd.MultiIndex) else pd.Index(index)
+    if len(dts) == 0:
+        return pd.Series(dtype=np.int32)
+
+    # 同一 dt 多代码时取第一根 —— 本函数按「单标的」使用（老树同）。
+    pos = {}
+    for i, t in enumerate(dts):
+        pos.setdefault(t, i)
+
+    arr = np.full(len(dts), np.nan)
+    _UP = ('Up', 'up', '向上')
+    for bi in (bi_list or []):
+        i = pos.get(bi.fx_a.dt)
+        if i is not None:
+            arr[i] = 1 if getattr(bi.direction, 'name', str(bi.direction)) in _UP else -1
+    if bi_list:
+        i = pos.get(bi_list[-1].fx_b.dt)
+        if i is not None:
+            arr[i] = 0
+
+    s = pd.Series(arr, index=index).ffill()
+    return pd.Series(calc_event_timing_lag(np.where(s > 1e-12, 1, -1)),
+                     index=index, dtype=np.int32)
 
 
 def calc_pivots(

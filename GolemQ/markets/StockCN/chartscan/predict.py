@@ -15,10 +15,10 @@
 ===============  ==========================================================
 旧               新
 ===============  ==========================================================
-`QA_fetch_stock_day_adv`      `get_active_market().get_kline_price_v3(..., market_type=..., realtime=True, if_fq=...)`
-`QA_fetch_index_day_adv`      同上，`market_type=INDEX_CN`
+`QA_fetch_stock_day_adv`      `get_active_market().get_kline_price_v3(..., realtime=False, if_fq=...)`
+`QA_fetch_index_day_adv`      同上（市场实例按 code 自行分 stock/index/etf，**不传 market_type**）
 `QA_fetch_stock_min_adv`      `.get_kline_price_min(..., frequency=freq, ...)`
-`QA_fetch_index_min_adv`      同上，`market_type=INDEX_CN`
+`QA_fetch_index_min_adv`      同上
 `QA_fetch_stock_name(code)`   **读口的第二个返回值 `codename`**（真名，查不到回落代码）
 =========================  ==========================================================
 
@@ -53,7 +53,6 @@ import pandas as pd
 
 from GolemQ.core.constants import AKA, MARKET_TYPE
 
-from ..kline83 import get_kline_price_min, get_kline_price_v3
 from .render import (CHUNK_SIZE, CLOSE_TIMES, GQ_generate_chart_stock,
                      calculate_i)
 from .model import load_model
@@ -89,7 +88,7 @@ def _chart_scaned_flag(kline_data):
     return 2
 
 
-def _fetch(code, market_type, freq, start_date, end_date, if_fq, verbose=False):
+def _fetch(code, freq, start_date, end_date, if_fq, verbose=False):
     """按频率取数 → `(DataFrame | None, codename)`。**旧树那两段 if/elif 的唯一替代点。**
 
     ⚠️ **必须「先不带实时取、再按判据决定合不合并」** —— 顺序不能反：旧树的三条判据里
@@ -104,17 +103,24 @@ def _fetch(code, market_type, freq, start_date, end_date, if_fq, verbose=False):
     # 合并逻辑（两道门 + 组装）只能有一处，否则又是一次「平行实现」。
     from ..kline83 import _merge_realtime
 
+    # ⚠️ **取 K 线一律走市场实例**（2026-10-18 用户定：「必须走 get_kline_price_v3/_min」、
+    # 「不要直接操作 MongoDB」）。此前从 `..kline83` 直接 import —— 那是**实现**，
+    # 绕过 `get_active_market()` 就绕过了「取数唯一入口」（`CLAUDE.md`）。
+    # `market_type` 不再显式传：市场侧的包装函数没有这个形参，由 kline83 按 code 自行分类
+    # （与 `client.market_type_of(code)` 同一条规则，结果一致）。
+    from GolemQ.core.market_registry import get_active_market
+    market = get_active_market()
+
     _end = pd.to_datetime(end_date)
     if freq == 'day':
-        res, codename = get_kline_price_v3(code, start=start_date.strftime('%Y-%m-%d'),
-                                           end=_end.strftime('%Y-%m-%d'),
-                                           market_type=market_type, realtime=False,
-                                           if_fq=if_fq, verbose=False)
+        res, codename = market.get_kline_price_v3(
+            code, start=start_date.strftime('%Y-%m-%d'),
+            end=_end.strftime('%Y-%m-%d'), realtime=False, if_fq=if_fq, verbose=False)
     else:
-        res, codename = get_kline_price_min(code, start=start_date.strftime('%Y-%m-%d %H:%M:%S'),
-                                            end=(_end + timedelta(hours=17)).strftime('%Y-%m-%d %H:%M:%S'),
-                                            frequency=freq, market_type=market_type,
-                                            realtime=False, if_fq=if_fq, verbose=False)
+        res, codename = market.get_kline_price_min(
+            code, start=start_date.strftime('%Y-%m-%d %H:%M:%S'),
+            end=(_end + timedelta(hours=17)).strftime('%Y-%m-%d %H:%M:%S'),
+            frequency=freq, realtime=False, if_fq=if_fq, verbose=False)
     if res is None or len(getattr(res, 'data', ())) == 0:
         return None, codename
     last_date = pd.to_datetime(res.data.tail(1).index.get_level_values(level=0)[-1])
@@ -182,7 +188,7 @@ def GQ_predict_ChartScanAI(code: str = '300085', market_type=MARKET_TYPE.STOCK_C
     else:
         start_date = end_date - timedelta(days=126)
 
-    kline_data, codename = _fetch(code, market_type, freq, start_date, end_date, if_fq)
+    kline_data, codename = _fetch(code, freq, start_date, end_date, if_fq)
     if kline_data is None or len(kline_data) < chunk_size:
         return
     last_date = kline_data.tail(1).index.get_level_values(level=0)[-1]
@@ -384,7 +390,7 @@ def calc_ChartScanAI_reality(ticker: str = '300085', market_type=MARKET_TYPE.STO
         lo, hi = recent[0], recent[-1]
     # 日线 baseline：**新读口的 `realtime=True` 已把「当日实时那根」并进来**，
     # 故旧树那两段 `GQ_fetch_stock_day_realtime` 补数整块删掉。
-    kline_baseline, _ = _fetch(ticker, market_type, 'day', lo, hi, if_fq)
+    kline_baseline, _ = _fetch(ticker, 'day', lo, hi, if_fq)
     if kline_baseline is not None and len(kline_baseline) > 0:
         kline_baseline = kline_baseline.set_index(['ts', 'code'], drop=True).sort_index() \
             if 'ts' in kline_baseline.columns else kline_baseline

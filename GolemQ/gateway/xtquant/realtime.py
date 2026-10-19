@@ -60,7 +60,7 @@ def sub_l1_from_xtquant(
 
     ⚠️ 复活前还须改写入方式：本函数走 ``collections_of_today``，那是
     「按日**普通**集合 + 唯一索引 + upsert」，而现在的实时落库是**时间序列**
-    集合（`golemq_stock_cn_realtime.realtime_YYYY-MM-DD`）—— 实测时间序列
+    集合（8.3 实时库里的 `realtime_YYYY-MM-DD`）—— 实测时间序列
     不支持唯一索引、也不能 upsert，原样启用第一次写就会抛
     ``Cannot perform a non-multi update``。应改走
     :func:`GolemQ.markets.StockCN.realtime._write_ts_rows`。

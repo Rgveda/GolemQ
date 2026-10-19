@@ -177,3 +177,48 @@ def rolling_poly9_v2(s, w: int = 252):
         x_index = range(len(s))
         p = np.polynomial.Chebyshev.fit(x_index, s, 9)
         return p(x_index)
+
+
+def weekly_ohlc(frame: pd.DataFrame, freq: str = 'W-FRI') -> pd.DataFrame:
+    """日线帧 → **周线**帧（索引仍为 ``(ts, code)``）。
+
+    口径与老树 ``QA_data_day_resample`` 一致：
+
+    * OHLC = first / max / min / last，volume = sum；
+    * ⚠️ 周线索引取**该周最后一个实际交易日**（不是 ``W-FRI`` 的周五标签）——
+      未走完的最后一周若停在周四，标签就是周四；否则尾部会丢一周
+      （见 `analysis/poly9.py` 的同一处修复）。
+
+    >>> import pandas as pd
+    >>> idx = pd.MultiIndex.from_arrays(
+    ...     [pd.to_datetime(['2026-01-05','2026-01-06','2026-01-12']), ['600519']*3],
+    ...     names=['ts','code'])
+    >>> df = pd.DataFrame({'open':[1,2,3],'high':[1,2,3],'low':[1,2,3],
+    ...                    'close':[1,2,3],'volume':[1,1,1]}, index=idx)
+    >>> weekly_ohlc(df).index.get_level_values(0).strftime('%Y-%m-%d').tolist()
+    ['2026-01-06', '2026-01-12']
+    """
+    if frame is None or len(frame) == 0:
+        return frame
+    daily = frame.copy()
+    daily.index = pd.DatetimeIndex(pd.to_datetime(daily.index.get_level_values(0)))
+    code = str(frame.index.get_level_values(1)[0])
+    agg = {c: c for c in ()}
+    cols = {}
+    for src, fn in (('open', 'first'), ('high', 'max'), ('low', 'min'),
+                    ('close', 'last'), ('volume', 'sum')):
+        if src in daily.columns:
+            cols[src] = fn
+    if not cols:
+        return daily.iloc[0:0]
+    weekly = daily.resample(freq).agg(cols).dropna()
+
+    # 标签 → 该周最后一个实际交易日
+    dts = pd.DatetimeIndex(pd.to_datetime(daily.index))
+    periods = dts.to_period(freq)
+    last_actual = pd.Series(dts, index=periods).groupby(level=0).max()
+    weekly.index = pd.DatetimeIndex(
+        last_actual.reindex(pd.PeriodIndex(weekly.index, freq=freq)).to_numpy())
+    weekly.index = pd.MultiIndex.from_arrays(
+        [weekly.index, [code] * len(weekly)], names=['ts', 'code'])
+    return weekly

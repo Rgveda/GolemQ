@@ -17,6 +17,11 @@ class LTT:
     QUADRANT_LEVERAGE_POWERLINE_UPRISING_TIMING_LAG = 'QLevPwrlnUprLag'
     TWO_QUADRANT_UPRISING_TIMING_LAG_MAJOR = '2QUprLagMaj'
     MAINSTREAM_LEADIN_BEFORE_MINOR = 'MsLeadinBfMin'
+    #: 15min 的 `MsLeadin*` 重命名（老树 `reviews.py:1833` 的 rename 表）。
+    MAINSTREAM_LEADIN_VAR5_MINOR = 'MsLeadinVarMin'
+    MAINSTREAM_LEADIN_ENTRY_MINOR = 'MsLeadinEntryMin'
+    MAINSTREAM_LEADINx3_BEFORE_MINOR = 'MsLeadinx3BfMin'
+    MAINSTREAM_LEADINx5_BEFORE_MINOR = 'MsLeadinx5BfMin'
     BS_STAR_UP_BEFORE_MAJOR = 'BSStarUpBfMaj'
     BS_STAR_DOWN_BEFORE_MAJOR = 'BSStarDwnBfMaj'
     MAINSTREAM_LEADIN_BEFORE = 'MsLeadinBf'
@@ -32,11 +37,20 @@ class LTT:
     QUADRANT_POWERLINE = '4QPwrln'
     QUADRANT_POWERLINE_MINOR = '4QPwrlnMin'
     QUADRANT_POWERLINE_MAJOR = '4QPwrlnMaj'
+    #: 15min 重命名族（老树 `reviews.py:1815-1835`）。
+    ONE_QUADRANT_UPRISING_TIMING_LAG_MINOR = '1QUprLagMin'
+    TWO_QUADRANT_UPRISING_TIMING_LAG_MINOR = '2QUprLagMin'
+    THREE_QUADRANT_UPRISING_TIMING_LAG_MINOR = '3QUprLagMin'
+    FOUR_QUADRANT_UPRISING_TIMING_LAG_MINOR = '4QUprLagMin'
+    QUADRANT_POWERLINE_LEADIN_BEFORE_MINOR = '4QPwrlnLedInBfMin'
+    QUADRANT_POWERLINE_LEADOUT_BEFORE_MINOR = '4QPwrlnLedOutBfMin'
     QUADRANT_LEVERAGE_ENERGY_MINOR = 'QLevEngMin'
     QUADRANT_LEVERAGE_ENERGY = 'QLevEng'
     QUADRANT_LEVERAGE_ENERGY_MAJOR = 'QLevEngMaj'
     QUADRANT_LEVERAGE_ENERGY_DUMMY = 'QLevEngD'
     QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY = 'QLevEngLagD'
+    #: 星线死叉计数（老树 `models/alias.py:1168`；`models/mainstream.py:515` 产出）。
+    QUADRANT_STARDOWN_COUNT = '4QuadStDwnCnt'
     QUADRANT_POWERLINE_LEADIN = '4QPwrlnLeIn'
     QUADRANT_POWERLINE_LEADIN_BEFORE = '4QPwrlnLedInBf'
     QUADRANT_POWERLINE_LEADOUT = '4QPwrlnLedOut'
@@ -53,11 +67,19 @@ class LTT:
     CHOBITS = 'ChoBits'
     QUADRANT_CODEX = 'QuadCodex'
     # 四量图 ↔ BS/主力资金 链（`calc_mainstream_feats` / `calc_bs_before`）
+    #: 2026-10-19：由 `TRD.OMNIPATH_UPRISING_I_COEF_DUMMY` **改名并归入四量图家族**
+    #: （用户定）。旧值 `'OmniPathUpR1CoefDmy'`（老树 `models/alias.py:457`）。
+    #: 实测**4.4 与 8.3 都没有任何一行存过这一列**（各 0 行）⇒ 没有数据契约在，
+    #: 值随之改成四量图风格 `'QUprICoefD'`；若将来有旧列进来，在这里加映射。
+    QUADRANT_UPRISING_I_COEF_CANDIDATE = 'QUprICoefCan'
+    QUADRANT_UPRISING_I_COEF_DUMMY = 'QUprICoefD'
     QUADRANT_BS_TRUNK = 'QuadBsTuk'
     QUADRANT_BS_TRUNK_TIMING_LAG = 'QuadBsTukLag'
     MAINSTREAM_LEADIN_SHAKEOUT = 'MsLeadinSko'
     MAINSTREAM_LEADINx3_BEFORE = 'MsLeadinx3Bf'
     MAINSTREAM_LEADINx5_BEFORE = 'MsLeadinx5Bf'
+    BS_REF_LINE = 'BSRefLn'
+    BS_BORDER_LINE = 'BSBrdLn'
     BS_BUY = 'BSBu'
     BS_SELL = 'BSSel'
     BS_STAR_UP = 'BSStarUp'
@@ -70,6 +92,11 @@ class LTT:
     BS_SELL_BEFORE = 'BSSelBf'
     BS_STAR_UP_BEFORE = 'BSStarUpBf'
     BS_STAR_DOWN_BEFORE = 'BSStarDwnBf'
+    #: 星线/买卖线的 15min 重命名（老树 `reviews.py:1826-1829`）。
+    BS_BUY_BEFORE_MINOR = 'BSBuBfMin'
+    BS_SELL_BEFORE_MINOR = 'BSSelBfMin'
+    BS_STAR_UP_BEFORE_MINOR = 'BSStarUpBfMin'
+    BS_STAR_DOWN_BEFORE_MINOR = 'BSStarDwnBfMin'
     BS_BUY_BEFORE_MAJOR = 'BSBuBfMaj'
     BS_SELL_BEFORE_MAJOR = 'BSSelBfMaj'
 

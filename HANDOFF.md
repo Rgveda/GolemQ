@@ -28,6 +28,23 @@
 
 ## 二、未完成
 
+### Review 管线搬迁（`DECISIONS.md` **D54**）—— 🚧 进行中
+
+老树 `--review --daily` + `zen_minor` + coldstart 子集 → 一套逐 Bar 因果管线。
+已落地：`pipeline/base.py`（BasePipeline/BaseBenchmark）、`pipeline/steps.py`、
+`pipeline/review/{pipeline,contract,runtime,coldstart}.py`、`cli/commands/review.py`、
+`analysis/zen.py`（**czsc 0.7.10**，KlineAnalyze 0.53 已剔除）、
+`tools/{dump,compare}_review_golden.py`、9 MB 4.4 金标准 fixtures。
+实测：日族 Poly9/RegTree/M9T 逐值一致、zen ±1；**真实写库已验证**（stock day/60/15、
+ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Prophet **已并入 60min 表**
+（无独立 `*_coldstart_reviews`）；Review 精简到 5 个 step；
+3 个死 benchmark 壳与 `BaseBenchmark` 已删 —— `pipeline/` 只剩 `BasePipeline` + `review/`；
+840 条测试全绿。
+
+**下一步**：全量对拍分类（`compare_review_golden.py`）、coldstart `m9tBsl`
+（需 compact 特征链）、`--eval fast/etf/index/all` 回填；`--review-runtime` 端到端冒烟。
+⚠️ `--eval` 被 ChartScan 占用，review 用 `--review-eval`（也接受 `--eval`）。
+
 ### 指标搬迁（`DECISIONS.md` D49 / **D50**）—— ✅ **四块全部收口**（③ 的编排按你的决定挂账）
 
 | 步 | 内容 | 状态 |
@@ -145,6 +162,8 @@
 | **PANDAS3** | pandas 3.0 / numpy 2 兼容（µs 精度 / `Series[int]` / `float(1×1 matrix)` / 日族 datetime 类型） | ✅ D52 / P35 |
 | **PROPHET** | `FBPROPHET_{LB,UB}{,_MAJOR}` 四列搬入 `analysis/fbprophet.py`：**只搬算术**（拟合→区间对齐），落库存 **`yhat/close` 比值**；4.4 存量不搬。⚠️ 比值**不是**数学不变（先验是绝对量纲，重算差 0.82%）—— 收益是"历史不用重写"。⚠️ **区间是抽样出来的**（同数据两次预测差 0.22）⇒ 已固定 `UNCERTAINTY_SEED`，否则重跑不幂等 | ✅ D53，**10 条**用例（含**与老树逐位对拍**）；prophet 1.1.7→**1.5.0**（1.1.7 在 pandas 3 上 fit 就崩） |
 | **EPOCH-DIVISOR** | datetime → 秒的系数 = `constants.epoch_divisor(dtype)`（**按每条序列的 dtype 查**，不是全局标量） | ✅ D52 / P35，9 条守卫用例 |
+| **QUPRICOEF** | 上升系数 `QUprICoefD` 实际消费链 = **`CAND × log10(有效 MACD lag)`**（老树现跑 1904/1904 逐位对拍）。夹取链 + 第二 OR 分支已按**最小表达式**搬完（`4QuadZenDCnt` 0/2075、`QLevMACDLagD` 21/2075、`QLevPwrlnUprLag` 26/2075）；剩余差全是**老树输入侧 3 个怪癖**（分钟 qfq 提前一天 / 2026-09-30 老树分钟脏点 / 由此少一次星线），**不应复制**。⚠️ 老树这条路用 **QUANTAXIS 口径 MACD**（`calc_macd_qa`），不是 talib | worklog 2026-10-19，12 条用例 |
+| **RT-SHORTWIN** | `--save tdx` turnover 阶段全市场刷屏（短窗口被误判成"新股"）：提示改为受 `verbose` 控制；`<30` 不再跳过实时合并（`realtime=True` 恢复生效） | worklog 2026-10-19，2 条用例 |
 
 ---
 

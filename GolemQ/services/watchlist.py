@@ -22,11 +22,35 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+"""关注列表（`--eneloop-add/remove/list`）的**数据层**。
+
+为什么在 `services/`
+===================
+它读写两个集合（`StockCN_watchdog_eneloop` 及其 `_archive`），而本项目那条硬规定是
+「**DB 操作只能进 `services/`**」。2026-10-18 用户按规矩收口：原
+`cli/watchdog_manager.py`（373 行）整份下沉到这里，CLI 那侧
+（`cli/commands/watchlist.py`）只留**参数校验 + 委托**。
+
+⚠️ 库句柄**由调用方传参**（用户：「要用参数传递，不能硬编码 GOLEMQ_STOCK_CN」）
+============================================================================
+本模块**不连库、不拼库名** —— 三个 DB 函数都收 ``db`` 形参，由 CLI 侧经
+``get_active_market().GOLEMQ_STOCK_CN`` 取来传入（「库名不外泄」：市场库句柄只能
+在 `markets/StockCN/` 里被定义，别处一律**经市场对象取值**）。
+
+落点从 `golemq` 改到 **`golemq_stock_cn`**（2026-10-18）：关注列表是**行情标的的
+名单**，与 `stock_list` / 分组表同属行情侧；`golemq` 只留框架运维（心跳/签到）。
+存量已从 `golemq` 搬过来。
+"""
 import datetime
 import re
 from typing import List
-from GolemQ.core.settings import GOLEMQ as GOLEMQ
 from GolemQ.core.constants import DATASOURCE
+
+#: 关注列表的两个集合名（**落行情库** `golemq_stock_cn`，2026-10-18 起）。
+#: ⚠️ 库句柄**不在这里取** —— 由调用方按参数传入（用户：「要用参数传递，
+#: 不能硬编码 GOLEMQ_STOCK_CN」）。集合名不是库名，可以写死。
+WATCHLIST_COLLECTION = 'StockCN_watchdog_eneloop'
+ARCHIVE_COLLECTION = 'StockCN_watchdog_eneloop_archive'
 
 
 def parse_symbols(symbols_str: str) -> List[str]:
@@ -67,7 +91,7 @@ def parse_symbols(symbols_str: str) -> List[str]:
     return valid_symbols
 
 
-def add_symbols_to_watchlist(symbols: List[str], verbose: bool = False) -> int:
+def add_symbols_to_watchlist(symbols: List[str], db, verbose: bool = False) -> int:
     """
     添加股票代码到关注列表
     
@@ -82,7 +106,7 @@ def add_symbols_to_watchlist(symbols: List[str], verbose: bool = False) -> int:
         print("没有有效的股票代码需要添加")
         return 0
     
-    collection = GOLEMQ.StockCN_watchdog_eneloop
+    collection = db[WATCHLIST_COLLECTION]
     success_count = 0
     current_time = datetime.datetime.now()
     current_timestamp_int32 = int(current_time.timestamp())
@@ -128,7 +152,7 @@ def add_symbols_to_watchlist(symbols: List[str], verbose: bool = False) -> int:
     return success_count
 
 
-def remove_symbols_from_watchlist(symbols: List[str], verbose: bool = False) -> int:
+def remove_symbols_from_watchlist(symbols: List[str], db, verbose: bool = False) -> int:
     """
     从关注列表删除股票代码并移动到归档库
     
@@ -143,8 +167,8 @@ def remove_symbols_from_watchlist(symbols: List[str], verbose: bool = False) -> 
         print("没有有效的股票代码需要删除")
         return 0
     
-    collection = GOLEMQ.StockCN_watchdog_eneloop
-    archive_collection = GOLEMQ.StockCN_watchdog_eneloop_archive
+    collection = db[WATCHLIST_COLLECTION]
+    archive_collection = db[ARCHIVE_COLLECTION]
     success_count = 0
     current_time = datetime.datetime.now()
     current_timestamp_int32 = int(current_time.timestamp())
@@ -197,7 +221,7 @@ def remove_symbols_from_watchlist(symbols: List[str], verbose: bool = False) -> 
     return success_count
 
 
-def list_watchlist_symbols(verbose: bool = False) -> List[str]:
+def list_watchlist_symbols(db, verbose: bool = False) -> List[str]:
     """
     列出当前关注列表中的所有股票代码
     只查询最近一年的数据，对重复的股票代码只保留更新时间最新的记录
@@ -208,8 +232,8 @@ def list_watchlist_symbols(verbose: bool = False) -> List[str]:
     Returns:
         股票代码列表
     """
-    collection = GOLEMQ.StockCN_watchdog_eneloop
-    archive_collection = GOLEMQ.StockCN_watchdog_eneloop_archive
+    collection = db[WATCHLIST_COLLECTION]
+    archive_collection = db[ARCHIVE_COLLECTION]
     
     try:
         # 计算一年前的时间戳

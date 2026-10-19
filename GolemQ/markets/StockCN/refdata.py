@@ -3,14 +3,14 @@
 
 为什么单独成模块
 ================
-`scribe.py` 里已有几个同形态的 reader（`find()` → `drop('_id')` →
-`set_index('code')`），但它们读的是 `DATABASE`（QUANTAXIS 驱动的 **4.4** `golemq`）。
-参考数据的所有权正在从 4.4 的 `quantaxis` 迁到 8.3 的 `golemq_stock_cn`，
-本模块是新家。
+参考数据的**读取**全部收敛在这里：一律走 MongoDB 8.3 的 `golemq_stock_cn`，
+与 K 线读口（`kline83`）分开 —— 那边读行情，这边读**名单 / 板块 / 财务**。
 
-**为什么是独立模块而不是塞进 `scribe.py`**：`scribe.py` import 了 `symbol.py`
-（`:54`），而 `symbol.py` 若反过来 import `scribe.py` 会成环。本模块只依赖
-`core.settings` 与 `pandas`，是个叶子，谁都能 import 它。
+⚠️ 旧树那套 reader 曾住在 `scribe.py`、读 **4.4** 的 `golemq`；**那个模块已随 D12 删除**，
+名字留在一些注释里只是历史出处，别照着找回它。
+
+**本模块是叶子**：只依赖 `core` 与 `pandas`，不 import 任何市场内部模块，
+所以谁都能 import 它（不会成环）。
 
 读取器一律返回 DataFrame、一律 `set_index('code', drop=False)`
 ==============================================================
@@ -109,8 +109,9 @@ def GQ_fetch_stock_info(codes=None, database=None) -> pd.DataFrame:
 def GQ_fetch_etf_list(codes=None, database=None) -> pd.DataFrame:
     """ETF 列表。`sec` 恒为 `'etf_cn'`。
 
-    ⚠️ 注意与 `symbol.GQ_fetch_etf_list` 的区别 —— 那个读的是**股票**列表
-    （历史遗留缺陷，见 `MIGRATION_STATUS.md`）。本函数读的才是 `etf_list`。
+    这是**唯一**的 ETF 名单读口（`golemq_stock_cn.etf_list`）。
+    ⚠️ 旧树时代另有一个同名的 `symbol.GQ_fetch_etf_list`，它读的其实是**股票**列表
+    （历史遗留缺陷）；**该函数已删**，别再造一个同名的。
     """
     q = {'code': {'$in': list(codes)}} if codes is not None else None
     return _read('etf_list', q, database=database)

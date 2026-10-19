@@ -435,8 +435,15 @@ class FIELD(metaclass=_StubMeta):
     CHARTSCAN_BUY_BEFORE_DUMMY = 'ChrScBuyBfD'
     CHARTSCAN_BUY_BEFORE_MINOR_DUMMY = 'ChrScBuyBfMinD'
     MACD_CROSS_SX_BEFORE_MAJOR = 'macdSxBfMaj'
+    #: 60min 的 MACD 死叉计数（真值取自老树 `utils/parameter.py`）。
+    MACD_CROSS_SX_BEFORE = 'MACD_SX_BF'
+    #: 日线 DEA（老树同名字段，`DEA_MAJ`）。
+    DEA_MAJOR = 'DEA_MAJ'
     CHARTSCAN_BUY_BEFORE_MAJOR_DUMMY = 'ChrScBuyBfMajD'
     ZEN_DASH_TIMING_LAG_DUMMY = 'zDLagD'
+    #: 笔/线段的 ZEN 状态原始列（老树 `utils/parameter.py` 真值）。
+    ZEN_DASH_TIMING_LAG = 'ZEN_D_LAG'
+    ZEN_PEAK_TIMING_LAG = 'ZEN_P_LAG'
     RENKO_BOOST_S_TIMING_LAG = 'renkosBstLag'
     MACD_MAJOR = 'macdMaj'
     STOCK_SCORE_M15 = 'scoreM15'
@@ -463,6 +470,11 @@ class FIELD(metaclass=_StubMeta):
     FBPROPHET_UB_MAJOR = 'prophetUbMaj'
     FBPROPHET_LB = 'prophetLb'
     FBPROPHET_UB = 'prophetUb'
+    #: Prophet 区间净空（D53：新树落**比值**，旧树是绝对价；模型层迁移时换算）。
+    FBPROPHET_CLEARANCE = 'PROPHET_CLR'
+    FBPROPHET_CLEARANCE_MAJOR = 'PROPHET_CLR_MAJ'
+    FBPROPHET_CLEARANCE_NORM = 'PROPHET_CLR_NORM'
+    FBPROPHET_CLEARANCE_NORM_MAJOR = 'PROPHET_CLR_NORM_MAJ'
     GARIDENT_PRICE = 'garP'
     GARIDENT_PRICE_COUNT = 'garPCount'
     GARIDENT_PRICE_CLEARANCE = 'garPClr'
@@ -482,6 +494,7 @@ class FIELD(metaclass=_StubMeta):
     ENDPOINT_STAGE_BEFORE = 'epStgBf'
     STOCK_SCORE_M15_NORM = 'ssm15Norm'
     MAGIC_NINE_TURNS = 'm9t'
+    MAGIC_NINE_TURNS_TIMING_LAG = 'm9tLag'
     MAGIC_NINE_TURNS_MAJOR = 'm9tMaj'
     MAGIC_NINE_TURNS_BASELINE = 'm9tBsl'
     MAGIC_NINE_TURNS_BASELINE_TIMING_LAG = 'm9tBslLag'
@@ -643,6 +656,8 @@ class FEATURES(metaclass=_StubMeta):
 
     # Magic Nine Turns features
     MAGIC_NINE_TURNS_MAJOR_REAL = 'm9tMajR'
+    MAGIC_NINE_TURNS_WEEKLY_REAL = 'm9tWekR'
+    MAGIC_NINE_TURNS_TIMING_LAG_WEEKLY_REAL = 'm9tLagWekR'
     MAGIC_NINE_TURNS_TIMING_LAG_MAJOR_REAL = 'm9tLagMajR'
 
     # Regression tree features

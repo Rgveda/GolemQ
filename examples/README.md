@@ -175,3 +175,36 @@ streamlit run examples/app_chartscan.py
 
 ⚠️ 检出是**稀疏**的：只有识别到买卖点的那几根才有值，不是每根 bar 都有。
 `Coordinates*` 存的是 **UTC 毫秒**，而文档的键（`date_stamp` / `time_stamp`）是**秒**。
+
+## `app_pivot_renko_coef.py` —— 缠论中枢 × RENKO × **上升系数**（叠加图）
+
+```bash
+streamlit run examples/app_pivot_renko_coef.py
+```
+
+在 `app_pivot_renko.py` 基础上多画**第三条曲线** `LTT.QUADRANT_UPRISING_I_COEF_DUMMY`
+（值 `QUprICoefD`）：**叠在主图的副轴**上（matplotlib 的 `ax3 = ax1.twinx()`
+≡ Plotly 的 `yaxis='y2'`），`darkred` 虚线、`lw=1`、`alpha=0.67`
+—— 与 `OneWaveQuant/.../calc_4quad_poolcoef-bs-stage-of-zen.ipynb` 的 `ax3.plot(...)` 同一口径。
+
+### 上升系数怎么算（**自包含**那条路，2026-10-19 搬）
+
+老树对这一列有两条生产者；本页用 `models/fourquad.py:717` 那条，它**不依赖**
+`ZEN_DASH_COUNT` / `POWERLINE_UPRISING_LAG`（那两个会拖出整支 ZEN 小波族）：
+
+```
+本频 K线  ──calc_four_quadrant_boost──▶ 4QPwrln            ┐
+15min     ──同上──────────────────────▶ 4QPwrln           ├─ QLevEngLagD ── QUprICoefD
+日线      ──同上──────────────────────▶ 4QPwrln(+MACD柱)  ┘
+```
+
+落地模块 **`analysis/quadrant_coef.py`**（对数积水率三件套 + 编排），
+与老树 `analysis/pool_coef.py` **逐值对拍**（随机 30 组，rtol 1e-12）。
+
+⚠️ 第三图**只画真实算出来的值**；算不出来就在页面上写清是哪一步，**不造数**。
+
+### 命名变更（2026-10-19）
+
+`TRD.OMNIPATH_UPRISING_I_COEF_DUMMY` → **`LTT.QUADRANT_UPRISING_I_COEF_DUMMY`**，
+值 `'OmniPathUpR1CoefDmy'` → `'QUprICoefD'`。实测 4.4 / 8.3 **都没有任何行**存过这一列，
+故无数据契约需要保留。

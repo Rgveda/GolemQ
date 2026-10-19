@@ -100,7 +100,3 @@ DESCENDING = pymongo.DESCENDING
 GQ_util_mongo_sort_ASCENDING = pymongo.ASCENDING
 GQ_util_mongo_sort_DESCENDING = pymongo.DESCENDING
 
-if __name__ == '__main__':
-    # test async_mongo
-    client = GQ_util_mongodb_client().GolemQ.stock_day
-    print(client)
