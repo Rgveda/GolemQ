@@ -53,11 +53,17 @@ class ReviewOptions:
     verbose: bool = False
 
 
+#: 单码超时。实测 60min 全量回填（800 天目标下界 + 逐日 Prophet）约 **36–40 分钟**；
+#: `BasePipeline` 默认 1800s 会在完成前把它判成 `timeout`。这里留 2 小时护栏。
+REVIEW_CODE_TIMEOUT = 2 * 60 * 60
+
+
 class ReviewPipeline(BasePipeline):
     """逐码 review 管线。"""
 
     def __init__(self, steps: Optional[Sequence[FeatureStep]] = None,
                  options: ReviewOptions = None, **kwargs):
+        kwargs.setdefault('timeout', REVIEW_CODE_TIMEOUT)
         super().__init__(name=PIPELINE_NAME, **kwargs)
         self.steps = list(steps) if steps is not None else build_default_steps()
         self.options = options or ReviewOptions()
