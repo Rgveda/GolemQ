@@ -96,6 +96,15 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 **每天全量重扫 618 交易日 × 3 频率**。已修 + 补 `test_chartscan_predict.py`（14 条）；
 **回退修复会 6 失败 + 2 错误**，用例确实咬得住。
 
+### Mainstream 移植（`models/mainstream.py`）—— ⏳ 待启动
+
+老树 2,103 行 + workload 848 行，输出 **83 列**；其中 **64 列**新树无生产者、
+也不在 review 契约里。还缺核心 builder `calc_compact_features`（1,200+ 行）与
+mswing/ChartScan/4quad/czsc/mainstream-credits 等模型函数；牛股诊股数据也未搬。
+架构与阶段拆分见 worklog 2026-10-20「再续六」：
+`pipeline/mainstream/` + `MainstreamPipeline(BasePipeline)` + `--strategy mainstream`，
+先搬 compact builder 并对拍，不能一次搬完。
+
 ### 卡在**上游特征链**上（不是卡在谁身上，是前置没到）
 
 | 任务 | 内容 | 卡在哪 |
