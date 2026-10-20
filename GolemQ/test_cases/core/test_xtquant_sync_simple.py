@@ -78,7 +78,7 @@ def test_messenger_integration():
     """测试消息通知集成"""
     print("\n测试消息通知集成...")
     try:
-        from GolemQ.supervisor.messenger import send_alert
+        from GolemQ.supervisor.alerts import send_alert
         # 测试发送一个信息级别的消息
         success = send_alert(
             title="测试消息",

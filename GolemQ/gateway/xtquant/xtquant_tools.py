@@ -37,7 +37,7 @@ from GolemQ.markets.StockCN.date_utils import (
     get_15min_aligned_timestamp,
 )
 from GolemQ.supervisor.heartbeat import HeartbeatModule
-from GolemQ.supervisor.messenger import send_alert
+from GolemQ.supervisor.alerts import send_alert
 import time
 
 # 连续获取持仓数据失败的次数

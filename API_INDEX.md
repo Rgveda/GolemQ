@@ -8,7 +8,7 @@
 
 ## GolemQ.agents
 
-### `messenger`
+### `channels`
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -1468,6 +1468,14 @@ Runtime API：在内存里算 review 特征，零 DB 写。
 
 ## GolemQ.supervisor
 
+### `alerts`
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `AlertDispatcher` | 告警派发器（当前渠道：Server酱）。 |
+| f | `AlertDispatcher.send_alert(title, message, level)` | 发送告警消息。 |
+| f | `send_alert(title, message, level)` | 使用全局告警派发器发送告警 |
+
 ### `function_checkin`
 
 | | 名称 | 摘要 |
@@ -1516,20 +1524,6 @@ Runtime API：在内存里算 review 特征，零 DB 写。
 | f | `HeartbeatModule.start(initial_message)` | 开始一个模块的执行记录 |
 | f | `HeartbeatModule.complete(completion_message, exit_code)` | 标记模块执行完成 |
 | f | `HeartbeatModule.checkin(message)` | 模块签到（心跳） |
-
-### `messenger`
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| C | `MessageLevel` | 消息级别 |
-| C | `Messenger` | 消息推送器 |
-| f | `Messenger.configure_dingtalk(webhook_url)` | 配置钉钉机器人webhook |
-| f | `Messenger.configure_serverchan(sendkey)` | 配置Server酱sendkey |
-| f | `Messenger.configure_custom_webhook(name, webhook_url)` | 配置自定义webhook |
-| f | `Messenger.send_alert(title, message, level)` | 发送告警消息 |
-| f | `Messenger.send_test_message()` | 发送测试消息到所有配置的渠道 |
-| f | `configure_global_messenger(dingtalk_webhook, serverchan_key)` | 配置全局消息推送器 |
-| f | `send_alert(title, message, level)` | 使用全局消息推送器发送告警 |
 
 ### `scheduler`
 
@@ -2114,6 +2108,9 @@ cli/commands/ 的注册表契约。
 | f | `TestSaveStageStartDoneLines.test_caption_matches_what_actually_runs()` | ⚠️ --save qmt 不取 K 线（只做参考数据）—— 给它打 "klines" 就是假话。 |
 | f | `TestSaveStageStartDoneLines.test_no_done_line_when_it_crashes()` | ⚠️ 中途炸了不许打 done. —— 那一段没 done。 |
 | f | `TestSaveStageStartDoneLines.test_no_escape_codes_when_not_a_tty()` |  |
+| C | `TestMetadataLogLabel` | 落库目标改名后，日志标签也必须跟着改。 |
+| f | `TestMetadataLogLabel.test_turnover_skip_uses_reality_feat_day()` |  |
+| f | `TestMetadataLogLabel.test_moneyflow_failure_uses_reality_feat_day()` |  |
 | C | `TestFillTurnoverCli` | --fill-turnover：CLI 只做参数校验 + 委托（DECISIONS.md D44）。 |
 | f | `TestFillTurnoverCli.test_defaults_are_the_last_seven_days()` | 不给边界 ⇒ 与 --save-turnover-days 同口径：今天往前 7 个自然日。 |
 | f | `TestFillTurnoverCli.test_codes_are_split_on_commas()` |  |
@@ -2205,6 +2202,14 @@ EPOCH_DIVISOR —— datetime → 秒的唯一换算系数（DECISIONS.md D52）
 | f | `TestDingReminder.test_send_message(mock_config, mock_client, mock_token)` |  |
 | f | `TestDingReminder.test_send_message_markdown_content(mock_config, mock_token)` |  |
 | f | `TestDingReminder.test_send_message_no_token(mock_config, mock_token)` |  |
+| C | `TestScSendUrl` | Server酱的两种 sendkey 形态 —— 必须解析成不同的 URL。 |
+| f | `TestScSendUrl.test_regular_key(mock_post)` |  |
+| f | `TestScSendUrl.test_sctp_key_uses_its_own_host(mock_post)` | ⚠️ sctp<num>t... 是 Server酱 Turbo 的新 key；仍打旧域名会 404。 |
+| f | `TestScSendUrl.test_invalid_sctp_key_raises()` |  |
+| C | `TestAlertDispatcher` | 告警派发必须复用 agents 的传输，不许再私写一份。 |
+| f | `TestAlertDispatcher.test_uses_shared_transport(mock_sc, mock_get, mock_check)` |  |
+| f | `TestAlertDispatcher.test_transport_error_returns_false(mock_sc, mock_get, mock_check)` |  |
+| f | `TestAlertDispatcher.test_no_channel_returns_false(mock_check)` |  |
 
 ### `test_no_quantaxis`
 
@@ -2638,6 +2643,9 @@ markets/StockCN/moneyflow_save.py —— 两个源的行构造与单位换算。
 | C | `TestPayloadWhitelists` | 白名单是 upsert_fields 的防线 —— 它必须覆盖本模块真写的每一列。 |
 | f | `TestPayloadWhitelists.test_payloads_cover_what_rows_write()` |  |
 | f | `TestPayloadWhitelists.test_the_two_sources_do_not_share_payload_columns()` | ⚠️ 两个源不得碰同一列 —— 否则后跑的会覆盖前一个的成果。 |
+| C | `TestSaveFrame` | 落库前的帧形状 —— 钉住 b5e95f3 引入的重复列回归。 |
+| f | `TestSaveFrame.test_frame_has_unique_index_and_columns()` |  |
+| f | `TestSaveFrame.test_duplicate_source_rows_collapse()` | 同花顺分页会重叠（实测 3,300 行 / 2,237 码）—— 落库前按 (date, code) 去重。 |
 
 ### `test_realtime_merge`
 REALTIME 合成读路径（get_kline_price_* 的 realtime=True）的回归钉子。
@@ -2878,6 +2886,10 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | C | `TestPersistence` | persistence_features：按目标表已有哪些 review 行决定还算哪些 bar。 |
 | f | `TestPersistence.test_skips_persisted_and_cv_only_rows()` |  |
 | f | `TestPersistence.test_min_columns_is_parameterized()` |  |
+| f | `TestPersistence.test_force_recomputes_persisted_rows()` |  |
+| f | `TestPersistence.test_from_date_is_exclusive_lower_bound()` |  |
+| f | `TestPersistence.test_recheck_days_reopens_recent_window()` |  |
+| f | `TestPersistence.test_empty_source_returns_empty()` |  |
 | C | `TestDbInjection` | 落库/水位必须接收调用方传入的 DB 实例，不能自己取库名句柄。 |
 | f | `TestDbInjection.test_save_uses_passed_db()` |  |
 | f | `TestDbInjection.test_watermark_uses_passed_db()` |  |

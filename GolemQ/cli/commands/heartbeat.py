@@ -10,7 +10,7 @@ import sys
 import time
 from datetime import timedelta
 
-from GolemQ.agents.messenger import send_serverchan_message
+from GolemQ.agents.channels import send_serverchan_message
 from GolemQ.supervisor.function_checkin import checkin_function
 from GolemQ.supervisor.heartbeat import HeartbeatMonitor
 

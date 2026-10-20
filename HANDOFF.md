@@ -169,6 +169,8 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 | **E-ETF-DATA** | ETF 拆分核对：`index_*` 五频率 **ETF 分类代码 = 0**，拆分已完成；`index_*_removed` 的 9 只 ETF 在 `etf_*` 全有数据（无丢失）；两组路由变更查库**均无数据** | ✅ **D56**（残留不搬） |
 | **SAVE-TDX / SAVE-CLI** | 全市场 `--save tdx` 实跑正常（用户 2026-10-20 确认） | D11 / D14 |
 | **CODE-TABLE** | 码表闸命中：`stock_list` 等签到 **2026-10-19 11:27–11:32** 全成功，`stock_codes.conf` 于 **11:32:48** 被重写 | ✅ D45 |
+| **MONEYFLOW-FIX** | 落库前帧列去重（`keep` 重复 `code/date` ⇒ Length mismatch）；同花顺源端分页重叠按 `(date,code)` 去重；`[metadata_day]` → `[reality_feat_day]` | ✅ worklog 2026-10-20，4 条用例 |
+| **MSG-LAYER** | `agents.messenger` → `agents.channels`；`supervisor.messenger` → `supervisor.alerts`（`Messenger` → `AlertDispatcher`）；告警复用 `sc_send`，删零调用 API | ✅ **D57**，6 条用例 |
 
 ---
 

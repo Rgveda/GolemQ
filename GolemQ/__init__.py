@@ -55,10 +55,10 @@ from . import core
 # ⚠️ **2026-10-13 删掉 `from . import agents`**（原第 55 行）—— 它违背了本文件
 # 下面（`:58-65` 与 `_LAZY_SUBPACKAGES`）已经声明的**惰性子包**决定：`agents`
 # 在 `_LAZY_SUBPACKAGES` 里，`GolemQ.agents` 经 `__getattr__` 照旧取得。
-# 急切导入它的**实际代价**是：`agents/messenger.py:34-40` 无条件 import
+# 急切导入它的**实际代价**是：`agents/channels.py` 无条件 import
 # `alibabacloud_dingtalk` ⇒ **任何** `import GolemQ` 都要求那个包在场。
 # 这在 GolemAI env（跑 CV，没装钉钉 SDK）下直接 ImportError —— 而且
-# `markets/StockCN/__init__` 又牵进 `.realtime` → `supervisor.messenger` → 同一个
+# `markets/StockCN/__init__` 又牵进 `.realtime` → `supervisor.alerts` → 同一个
 # SDK，于是**连叶子模块都 import 不了**。删它解开一半（另一半靠装包，见 HANDOFF）。
 """GolemQ - A Python package for quantum-inspired algorithms."""
 

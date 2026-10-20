@@ -23,7 +23,7 @@ except ImportError:
 
 import unittest
 from unittest.mock import patch, MagicMock
-from GolemQ.agents.messenger import (
+from GolemQ.agents.channels import (
     check_dingtalk_config,
     setup_dingtalk_config,
     get_dingtalk_config,
@@ -57,8 +57,8 @@ class TestDingtalkConfig(unittest.TestCase):
         setup_dingtalk_config()
         self.assertEqual(mock_set.call_count, 4)
 
-    @patch('GolemQ.agents.messenger.check_dingtalk_config')
-    @patch('GolemQ.agents.messenger.setup_dingtalk_config')
+    @patch('GolemQ.agents.channels.check_dingtalk_config')
+    @patch('GolemQ.agents.channels.setup_dingtalk_config')
     @patch.object(GQSETTING, 'get_config')
     def test_get_config(self, mock_get, mock_setup, mock_check):
         mock_check.return_value = False
@@ -70,8 +70,8 @@ class TestDingtalkConfig(unittest.TestCase):
 
 
 class TestDingtalkAccessToken(unittest.TestCase):
-    @patch('GolemQ.agents.messenger.dingtalkoauth2_1_0Client')
-    @patch('GolemQ.agents.messenger.get_dingtalk_config')
+    @patch('GolemQ.agents.channels.dingtalkoauth2_1_0Client')
+    @patch('GolemQ.agents.channels.get_dingtalk_config')
     def test_get_access_token(self, mock_config, mock_client):
         mock_config.return_value = {
             'appkey': 'test_key',
@@ -84,8 +84,8 @@ class TestDingtalkAccessToken(unittest.TestCase):
         token = DingtalkAccessToken.main()
         self.assertEqual(token, 'test_token')
 
-    @patch('GolemQ.agents.messenger.dingtalkoauth2_1_0Client')
-    @patch('GolemQ.agents.messenger.get_dingtalk_config')
+    @patch('GolemQ.agents.channels.dingtalkoauth2_1_0Client')
+    @patch('GolemQ.agents.channels.get_dingtalk_config')
     def test_get_access_token_failure(self, mock_config, mock_client):
         mock_config.return_value = {
             'appkey': 'test_key',
@@ -104,9 +104,9 @@ class TestDingtalkAccessToken(unittest.TestCase):
 
 
 class TestDingReminder(unittest.TestCase):
-    @patch('GolemQ.agents.messenger.DingtalkAccessToken.main')
-    @patch('GolemQ.agents.messenger.dingtalkrobot_1_0Client')
-    @patch('GolemQ.agents.messenger.get_dingtalk_config')
+    @patch('GolemQ.agents.channels.DingtalkAccessToken.main')
+    @patch('GolemQ.agents.channels.dingtalkrobot_1_0Client')
+    @patch('GolemQ.agents.channels.get_dingtalk_config')
     def test_send_message(self, mock_config, mock_client, mock_token):
         mock_config.return_value = {
             'robot_code': 'test_robot',
@@ -118,8 +118,8 @@ class TestDingReminder(unittest.TestCase):
         DingReminder.send_message(content="Test message")     # 同上，别用位置参数
         mock_client.return_value.robot_send_ding_with_options.assert_called_once()
 
-    @patch('GolemQ.agents.messenger.DingtalkAccessToken.main')
-    @patch('GolemQ.agents.messenger.get_dingtalk_config')
+    @patch('GolemQ.agents.channels.DingtalkAccessToken.main')
+    @patch('GolemQ.agents.channels.get_dingtalk_config')
     def test_send_message_markdown_content(self, mock_config, mock_token):
         mock_config.return_value = {
             'robot_code': 'test_robot',
@@ -127,7 +127,7 @@ class TestDingReminder(unittest.TestCase):
         }
         mock_token.return_value = 'test_token'
         
-        with patch('GolemQ.agents.messenger.dingtalkrobot_1_0Client') as mock_client:
+        with patch('GolemQ.agents.channels.dingtalkrobot_1_0Client') as mock_client:
             # ⚠️ 必须**关键字**传 content：`send_message(robot_code, user_id_list,
             # content, ...)` 的第一个位置参数是 robot_code —— 写成位置参数时
             # content 仍是默认值，断言必然失败（原来就是这么红的）。
@@ -135,8 +135,8 @@ class TestDingReminder(unittest.TestCase):
             args = mock_client.return_value.robot_send_ding_with_options.call_args[0][0]
             self.assertIn("### Heading", args.content)
 
-    @patch('GolemQ.agents.messenger.DingtalkAccessToken.main')
-    @patch('GolemQ.agents.messenger.get_dingtalk_config')
+    @patch('GolemQ.agents.channels.DingtalkAccessToken.main')
+    @patch('GolemQ.agents.channels.get_dingtalk_config')
     def test_send_message_no_token(self, mock_config, mock_token):
         mock_config.return_value = {
             'robot_code': 'test_robot',
@@ -152,7 +152,7 @@ class TestDingReminder(unittest.TestCase):
 class TestScSendUrl(unittest.TestCase):
     """Server酱的两种 sendkey 形态 —— 必须解析成**不同**的 URL。"""
 
-    @patch('GolemQ.agents.messenger.requests.post')
+    @patch('GolemQ.agents.channels.requests.post')
     def test_regular_key(self, mock_post):
         mock_post.return_value.raise_for_status.return_value = None
         mock_post.return_value.json.return_value = {'code': 0}
@@ -160,7 +160,7 @@ class TestScSendUrl(unittest.TestCase):
         self.assertEqual(mock_post.call_args.args[0],
                          'https://sctapi.ftqq.com/SCT123abc.send')
 
-    @patch('GolemQ.agents.messenger.requests.post')
+    @patch('GolemQ.agents.channels.requests.post')
     def test_sctp_key_uses_its_own_host(self, mock_post):
         """⚠️ `sctp<num>t...` 是 Server酱 Turbo 的新 key；仍打旧域名会 404。"""
         mock_post.return_value.raise_for_status.return_value = None
@@ -177,16 +177,17 @@ class TestScSendUrl(unittest.TestCase):
 class TestAlertDispatcher(unittest.TestCase):
     """告警派发必须复用 `agents` 的传输，**不许再私写一份**。
 
-    历史：`supervisor/messenger.py` 曾自己实现 `_send_serverchan`（form 编码、
-    不支持 `sctp` key），与 `agents.sc_send`（JSON + sctp）已经分叉。
+    历史：旧的 `supervisor/messenger.py`（现 `supervisor/alerts.py`）曾自己实现
+    `_send_serverchan`（form 编码、不支持 `sctp` key），与 `agents.sc_send`
+    （JSON + sctp）已经分叉。
     """
 
-    @patch('GolemQ.supervisor.messenger.check_serverchan_config', return_value=True)
+    @patch('GolemQ.supervisor.alerts.check_serverchan_config', return_value=True)
     @patch.object(GQSETTING, 'get_config', return_value='SCTtestkey')
-    @patch('GolemQ.supervisor.messenger.sc_send', return_value={'code': 0})
+    @patch('GolemQ.supervisor.alerts.sc_send', return_value={'code': 0})
     def test_uses_shared_transport(self, mock_sc, mock_get, mock_check):
-        from GolemQ.supervisor.messenger import Messenger
-        ok = Messenger().send_alert('title', 'body', 'warning')
+        from GolemQ.supervisor.alerts import AlertDispatcher
+        ok = AlertDispatcher().send_alert('title', 'body', 'warning')
 
         self.assertTrue(ok)
         mock_sc.assert_called_once()
@@ -195,17 +196,17 @@ class TestAlertDispatcher(unittest.TestCase):
         self.assertIn('WARNING', args[1])
         self.assertIn('**消息级别**: WARNING', args[2])
 
-    @patch('GolemQ.supervisor.messenger.check_serverchan_config', return_value=True)
+    @patch('GolemQ.supervisor.alerts.check_serverchan_config', return_value=True)
     @patch.object(GQSETTING, 'get_config', return_value='SCTtestkey')
-    @patch('GolemQ.supervisor.messenger.sc_send', return_value={'error': 'boom'})
+    @patch('GolemQ.supervisor.alerts.sc_send', return_value={'error': 'boom'})
     def test_transport_error_returns_false(self, mock_sc, mock_get, mock_check):
-        from GolemQ.supervisor.messenger import Messenger
-        self.assertFalse(Messenger().send_alert('t', 'm'))
+        from GolemQ.supervisor.alerts import AlertDispatcher
+        self.assertFalse(AlertDispatcher().send_alert('t', 'm'))
 
-    @patch('GolemQ.supervisor.messenger.check_serverchan_config', return_value=False)
+    @patch('GolemQ.supervisor.alerts.check_serverchan_config', return_value=False)
     def test_no_channel_returns_false(self, mock_check):
-        from GolemQ.supervisor.messenger import Messenger
-        self.assertFalse(Messenger().send_alert('t', 'm'))
+        from GolemQ.supervisor.alerts import AlertDispatcher
+        self.assertFalse(AlertDispatcher().send_alert('t', 'm'))
 
 
 if __name__ == '__main__':

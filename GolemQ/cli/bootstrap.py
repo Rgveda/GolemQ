@@ -556,7 +556,7 @@ def check_xtquant():
 def check_serverchan():
     """``(状态, 说明)``：Server酱（推送告警渠道）配了没。
 
-    **判据复用** :func:`agents.messenger.check_serverchan_config`（它读
+    **判据复用** :func:`agents.channels.check_serverchan_config`（它读
     `[SERVERCHAN] sendkey` 并排除空值/默认值）—— 不在 CLI 里重读一遍配置：
     那是第二处真相，改了 key 名两边就会不同步。
 
@@ -564,7 +564,7 @@ def check_serverchan():
     与 `tushare` / `tdxidata` 那几个可选源同一口径。
     """
     try:
-        from GolemQ.agents.messenger import check_serverchan_config
+        from GolemQ.agents.channels import check_serverchan_config
         if check_serverchan_config():
             return OK, '已配置（[SERVERCHAN] sendkey）'
         return PENDING, '未配置 [SERVERCHAN] sendkey —— 配了才会推送告警'

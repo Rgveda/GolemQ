@@ -1,21 +1,21 @@
 # coding:utf-8
 #
 # GolemQ 告警派发器
-# 只负责「告警级别 + 渠道扇出」；协议细节（鉴权 / URL / 编码）在 agents.messenger。
+# 只负责「告警级别 + 渠道扇出」；协议细节（鉴权 / URL / 编码）在 agents.channels。
 #
 
 from GolemQ.core.settings import GQSETTING
-from GolemQ.agents.messenger import (
+from GolemQ.agents.channels import (
     check_serverchan_config,
     sc_send,
 )
 
 
-class Messenger:
+class AlertDispatcher:
     """告警派发器（当前渠道：Server酱）。
 
     ⚠️ **不要在这里再写一份 Server酱/钉钉发送** —— 传输一律走
-    :mod:`GolemQ.agents.messenger`。此前这里私写过 `_send_serverchan`
+    :mod:`GolemQ.agents.channels`。此前这里私写过 `_send_serverchan`
     （form 编码、不支持 `sctp` key），与 agents 的 JSON 实现**已经分叉**。
     """
 
@@ -33,7 +33,7 @@ class Messenger:
         :return: 是否至少有一个渠道发送成功。
         """
         if not self.serverchan_key:
-            print(u'系统未配置 Server酱 Messenger ! 请配置默认 Messenger 以确保消息送达！')
+            print(u'系统未配置 Server酱告警渠道 ! 请配置 SERVERCHAN 以确保消息送达！')
             return False
 
         text = f"{title} - {level.upper()}"
@@ -48,10 +48,10 @@ class Messenger:
             return False
 
 
-# 全局消息推送器实例
-global_messenger = Messenger()
+# 全局告警派发器实例
+_global_dispatcher = AlertDispatcher()
 
 
 def send_alert(title: str, message: str, level: str = "info") -> bool:
-    """使用全局消息推送器发送告警"""
-    return global_messenger.send_alert(title, message, level)
+    """使用全局告警派发器发送告警"""
+    return _global_dispatcher.send_alert(title, message, level)

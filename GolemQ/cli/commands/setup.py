@@ -9,7 +9,7 @@
 """
 from __future__ import annotations
 
-from GolemQ.agents.messenger import (
+from GolemQ.agents.channels import (
     setup_dingtalk_config_interactive,
     setup_serverchan_config_interactive,
 )

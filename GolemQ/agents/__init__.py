@@ -4,10 +4,10 @@ GolemQ Agents Package
 This package contains agents that handle external communications and messaging.
 
 Current submodules:
-- messenger: Handles DingTalk and Server酱 message delivery and notifications
+- channels: Handles DingTalk and Server酱 message delivery and notifications
 """
 
-from .messenger import (
+from .channels import (
     check_dingtalk_config,
     setup_dingtalk_config,
     get_dingtalk_config as GQ_agents_get_dingtalk_config,

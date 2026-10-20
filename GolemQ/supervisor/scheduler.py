@@ -11,7 +11,7 @@ from datetime import datetime, time as dt_time
 import pytz
 
 from GolemQ.supervisor.heartbeat import HeartbeatMonitor
-from GolemQ.supervisor.messenger import send_alert
+from GolemQ.supervisor.alerts import send_alert
 
 
 def _export_positions():

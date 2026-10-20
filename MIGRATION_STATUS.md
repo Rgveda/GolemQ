@@ -236,12 +236,12 @@ ETF 分类代码**均为 0** —— 拆分已完成；`index_*_removed` 里 9 �
   `def`）—— 也就是说它**两边都是死代码**，要不要留别名其实无所谓。
   老树 `symbol.py:269` 用旧名，被 `cli/review.py`、`imitation/jqdata.py` 等引用，
   但老树内部自洽、新树不 import 老树。
-- `supervisor.messenger.send_alert`（Server酱 webhook 派发）无测试 ⛔ **未修**（复核确认）。
-  函数存在（`supervisor/messenger.py:70` 的 `Messenger.send_alert`、`:225` 的模块级包装；
-  Server酱派发在 `:142-158` 的 `_send_serverchan`）。
-  ⚠️ **别被文件名骗了**：`test_cases/test_messenger.py` 测的是
-  **`GolemQ.agents.messenger`（钉钉）**，与这里无关；唯一触及它的是
-  `test_xtquant_sync_simple.py:81-88`，一个非 `unittest.TestCase` 的普通函数，**无断言**。
+- ~~`supervisor.messenger.send_alert`（Server酱 webhook 派发）无测试~~ ✅ **2026-10-20 已修**：
+  模块改名为 `supervisor/alerts.py`，`Messenger.send_alert` → **`AlertDispatcher.send_alert`**；
+  传输收口到 `agents.channels.sc_send`（不再私写 `_send_serverchan` ⇒ 支持 `sctp` key）；
+  `test_cases/core/test_messenger.py` 新增 `TestAlertDispatcher` 3 条 + `TestScSendUrl` 3 条。
+  （旧文档里的 `GolemQ.agents.messenger` / `supervisor.messenger` 现分别对应
+  `agents/channels.py` / `supervisor/alerts.py`，见 **D57**。）
 
 ---
 

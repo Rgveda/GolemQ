@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 from GolemQ.core.settings import GOLEMQ
-from .messenger import Messenger
+from .alerts import AlertDispatcher
 
 
 class HeartbeatMonitor:
@@ -29,7 +29,7 @@ class HeartbeatMonitor:
         self.db = GOLEMQ
         self.module_collection = self.db.module_heartbeats
         self.archive_collection = self.db.module_heartbeats_archive
-        self.messenger = Messenger()
+        self.dispatcher = AlertDispatcher()
         self.check_interval = check_interval
         self.default_timeout = timeout_threshold
         self._running = False
@@ -259,7 +259,7 @@ class HeartbeatMonitor:
                       f"最后签到时间: {record['last_checkin_datetime']}\n" \
                       f"超时阈值: {record.get('timeout_seconds', self.default_timeout)}秒"
             
-            self.messenger.send_alert(
+            self.dispatcher.send_alert(
                 title="模块执行超时",
                 message=message,
                 level="error"

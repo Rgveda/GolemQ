@@ -422,20 +422,20 @@ class TestServerchanAndQmtChecks(unittest.TestCase):
     """`serverchan` 与 `讯投QMT` 两个节点。"""
 
     def test_serverchan_configured_is_ok(self):
-        with unittest.mock.patch('GolemQ.agents.messenger.check_serverchan_config',
+        with unittest.mock.patch('GolemQ.agents.channels.check_serverchan_config',
                                  return_value=True):
             self.assertEqual(bootstrap.check_serverchan()[0], OK)
 
     def test_serverchan_unconfigured_is_pending(self):
         """未配 ⇒ **灰**：推送是可选渠道，不配不影响任何命令。"""
-        with unittest.mock.patch('GolemQ.agents.messenger.check_serverchan_config',
+        with unittest.mock.patch('GolemQ.agents.channels.check_serverchan_config',
                                  return_value=False):
             state, detail = bootstrap.check_serverchan()
         self.assertEqual(state, PENDING)
         self.assertIn('sendkey', detail)
 
     def test_serverchan_probe_failure_does_not_raise(self):
-        with unittest.mock.patch('GolemQ.agents.messenger.check_serverchan_config',
+        with unittest.mock.patch('GolemQ.agents.channels.check_serverchan_config',
                                  side_effect=RuntimeError('读配置炸了')):
             state, detail = bootstrap.check_serverchan()
         self.assertEqual(state, PENDING)
