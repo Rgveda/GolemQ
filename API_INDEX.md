@@ -1365,7 +1365,7 @@ Runtime API：在内存里算 review 特征，零 DB 写。
 | f | `build_daily_steps()` |  |
 
 ### `minor`
-15min minor 信号 —— calc_zen_wavelet_reality_minor 里真正被消费的 17 列。
+15min minor 信号 —— 老树 calc_zen_wavelet_reality_minor 的完整 19 列。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -2899,6 +2899,7 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `TestPersistence.test_skips_persisted_and_cv_only_rows()` |  |
 | f | `TestPersistence.test_min_columns_is_parameterized()` |  |
 | f | `TestPersistence.test_force_recomputes_persisted_rows()` |  |
+| f | `TestPersistence.test_force_respects_from_date()` | force 只忽略已持久化，不绕过 from_date。 |
 | f | `TestPersistence.test_from_date_is_exclusive_lower_bound()` |  |
 | f | `TestPersistence.test_recheck_days_reopens_recent_window()` |  |
 | f | `TestPersistence.test_empty_source_returns_empty()` |  |
@@ -2918,7 +2919,9 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `TestReviewCliDefaults.test_default_pct_is_announced()` |  |
 | f | `TestReviewCliDefaults.test_explicit_pct_is_not_announced()` |  |
 | f | `TestReviewCliDefaults.test_eval_is_one_global_option()` | --eval 是全局唯一选项：--review 与 --scan 读同一个 eval_scope。 |
-| f | `TestReviewCliDefaults.test_explicit_codes_without_scope_is_allowed()` | 给了 --review-codes 就不必再给 scope（明确知道跑谁）。 |
+| f | `TestReviewCliDefaults.test_force_and_from_are_global()` | --force / --from 是通用修饰符，不跟 review 绑定。 |
+| f | `TestReviewCliDefaults.test_force_and_from_reach_run_review()` |  |
+| f | `TestReviewCliDefaults.test_eval_accepts_codes_as_second_argument()` | --eval 的第二参数可以是逗号分隔代码；没有独立的 --review-codes。 |
 | f | `TestReviewCliDefaults.test_keyboard_interrupt_returns_130()` | Ctrl+C 必须干净退出（130），不能被当成运行期失败 1。 |
 | C | `TestPipelineInterrupt` | 并行段必须用 with Parallel(...)，否则 Ctrl+C 后 worker 可能不退出。 |
 | f | `TestPipelineInterrupt.test_parallel_is_terminated_on_keyboard_interrupt()` |  |

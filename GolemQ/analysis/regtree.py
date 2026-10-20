@@ -372,7 +372,6 @@ def calc_regtree_fractal_func(data, *args, **kwargs):
         #features[FLD.REGTREE_PRICE] = np.r_[np.empty(len(features) - bar_limit), regtree_flu[:, 0]]
         features[FLD.REGTREE_PRICE] = np.r_[features[FLD.MA30][: - bar_limit], regtree_flu[:, 0]]
         features[FLD.REGTREE_TREND] = np.r_[np.empty(len(features) - bar_limit), regtree_flu[:, 1]]
-        features[FLD.REGTREE_TREND_RS] = np.r_[np.empty(len(features) - bar_limit), regtree_flu[:, 2]]
         features[FLD.REGTREE_TIMING_LAG] = np.r_[np.empty(len(features) - bar_limit), calc_event_timing_lag(features[FLD.REGTREE_TREND].tail(bar_limit))]
         features[FLD.REGTREE_TREND_RETURNS] = np.r_[np.empty(len(features) - bar_limit), calc_onhold_returns_np(ohlc_data.close.values,
                                                                                                                 features[FLD.REGTREE_TREND].tail(bar_limit).values)]
@@ -380,7 +379,6 @@ def calc_regtree_fractal_func(data, *args, **kwargs):
     else:
         features[FLD.REGTREE_PRICE] = regtree_flu[:, 0]
         features[FLD.REGTREE_TREND] = regtree_flu[:, 1]
-        features[FLD.REGTREE_TREND_RS] = regtree_flu[:, 2]
         features[FLD.REGTREE_TIMING_LAG] = calc_event_timing_lag(features[FLD.REGTREE_TREND])
         features[FLD.REGTREE_TREND_RETURNS] = calc_onhold_returns_np(ohlc_data.close.values,
                                                                      features[FLD.REGTREE_TREND].values)
@@ -759,12 +757,10 @@ def calc_regtree_fractal_vXI(data, *args, **kwargs):
     if (len(features) - bar_limit) > 0:
         features[FLD.REGTREE_PRICE] = np.r_[features[FLD.MA30][: - bar_limit], regtree_flu[:, 0]]
         features[FLD.REGTREE_TREND] = np.r_[np.empty(len(features) - bar_limit), regtree_flu[:, 1]]
-        features[FLD.REGTREE_TREND_RS] = np.r_[np.empty(len(features) - bar_limit), regtree_flu[:, 2]]
         features[FLD.REGTREE_TIMING_LAG] = np.r_[np.empty(len(features) - bar_limit), calc_event_timing_lag(features[FLD.REGTREE_TREND].tail(bar_limit))]
     else:
         features[FLD.REGTREE_PRICE] = regtree_flu[:, 0]
         features[FLD.REGTREE_TREND] = regtree_flu[:, 1]
-        features[FLD.REGTREE_TREND_RS] = regtree_flu[:, 2]
         features[FLD.REGTREE_TIMING_LAG] = calc_event_timing_lag(features[FLD.REGTREE_TREND])
 
     features[FLD.REGTREE_SLOPE] = talib.LINEARREG_SLOPE(features[FLD.REGTREE_PRICE], timeperiod=14)
@@ -818,7 +814,6 @@ def calc_regtree_fractal_vXIs(data, *args, **kwargs):
                                             regtree_flu[:, 0]].astype(np.float32)
         features[FLD.REGTREE_TREND] = np.r_[np.empty(len(features) - bar_limit), 
                                             regtree_flu[:, 1]].astype(np.int16)
-        #features[FLD.REGTREE_TREND_RS] = np.r_[np.empty(len(features) - bar_limit), regtree_flu[:, 2]]
         features[FLD.REGTREE_TIMING_LAG] = np.r_[np.empty(len(features) - bar_limit), 
                                                  calc_event_timing_lag(features[FLD.REGTREE_TREND].tail(bar_limit))].astype(np.int16)
     else:
@@ -826,7 +821,6 @@ def calc_regtree_fractal_vXIs(data, *args, **kwargs):
                 FLD.REGTREE_PRICE] = regtree_flu[:, 0].astype(np.float32)
         features.loc[ohlc_data.index,
                 FLD.REGTREE_TREND] = regtree_flu[:, 1].astype(np.int16)
-        #features[FLD.REGTREE_TREND_RS] = regtree_flu[:, 2]
         features[FLD.REGTREE_TIMING_LAG] = calc_event_timing_lag(features[FLD.REGTREE_TREND]).astype(np.int16)
 
     features[FLD.REGTREE_SLOPE] = talib.LINEARREG_SLOPE(features[FLD.REGTREE_PRICE], timeperiod=14).astype(np.float32)

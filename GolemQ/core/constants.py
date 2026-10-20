@@ -624,7 +624,6 @@ class FIELD(metaclass=_StubMeta):
     REGTREE_TIMING_LAG = 'regtreeLag'
     REGTREE_TREND = 'regtreeTrd'
     REGTREE_TREND_RETURNS = 'regtreeTrdRet'
-    REGTREE_TREND_RS = 'regtreeTrdRs'
 
 class FEATURES(metaclass=_StubMeta):
     """

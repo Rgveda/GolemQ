@@ -36,15 +36,11 @@ def add_review_daily_arguments(parser) -> None:
                              '冷启动列已并入 60min。')
     parser.add_argument('--review-limit', dest='review_limit', type=int, default=0,
                         help='只跑前 N 只（调试/分批）。')
-    # ⚠️ `--force` 已被 `--update-tdx-hosts` 占用；本命令用 `--review-force`。
-    parser.add_argument('--review-force', dest='review_force',
-                        action='store_true', default=False,
-                        help='忽略水位，重算全部可见日期。')
+    # NOTE: `--force` / `--from` 是**全局修饰符**（`cli/__main__.py`），
+    # 这里不再注册 `--review-force` / `--review-from`。
     parser.add_argument('--dry-run', action='store_true', default=False,
                         help='只算不写（不写行、不写水位）。')
     parser.add_argument('--offset', default='', help='截止日期 YYYY-MM-DD。')
-    parser.add_argument('--review-from', dest='review_from', default='',
-                        help='起始日期 YYYY-MM-DD（覆盖水位下界）。')
     parser.add_argument('--recheck-days', dest='recheck_days', type=int, default=0,
                         help='水位前溯 N 天，修补迟到/回填的源行。')
 
@@ -104,8 +100,8 @@ def run_review_daily(args) -> int:
         results, stats = run_review(
             eval_range=eval_range, codes=codes,
             pct_of_cores=pct_of_cores, families=families,
-            force=args.review_force, dry_run=args.dry_run, verbose=args.verbose,
-            offset=args.offset, from_date=args.review_from,
+            force=args.force, dry_run=args.dry_run, verbose=args.verbose,
+            offset=args.offset, from_date=args.from_date,
             recheck_days=args.recheck_days, limit=args.review_limit)
     except KeyboardInterrupt:
         # 128 + SIGINT 的惯例退出码；worker 的终止由 `BasePipeline` 的

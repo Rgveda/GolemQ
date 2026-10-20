@@ -96,6 +96,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-e", "--eval", dest="eval_scope", default="",
                         help="命令的 scope：fast/block/etf/index/all/etc/etc_1/etc_2；"
                              "review 也接受逗号分隔的代码。")
+    # `--force` / `--from` 同样是**通用修饰符**，不属于某一条命令：
+    # 各命令按自己的语义解释（review = 忽略水位 / 起始日期；tdx-hosts = 强制重探）。
+    parser.add_argument("--force", action="store_true", default=False,
+                        help="忽略缓存/水位等，强制重算或重探（由命令自行解释）。")
+    parser.add_argument("--from", dest="from_date", default="",
+                        help="起始日期 YYYY-MM-DD（由命令自行解释）。")
 
     for cmd in COMMANDS:
         cmd.add_arguments(parser)

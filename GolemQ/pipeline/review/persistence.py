@@ -77,8 +77,15 @@ def missing_targets(source_index, code: str, family: str, market_type, db,
     src = pd.DatetimeIndex(pd.to_datetime(source_index))
     if len(src) == 0:
         return src
+
+    def _in_scope(t):
+        k = t.normalize() if family == 'day' else t
+        return not from_date or k > pd.Timestamp(from_date)
+
+    # ⚠️ `force` 只表示「忽略已持久化」，**不绕过 `from_date`**：
+    # 两者必须可组合（`--force --from 2026-09-01` = 从该日之后全部重算）。
     if force:
-        return src
+        return pd.DatetimeIndex([t for t in src if _in_scope(t)])
 
     start = str(src.min().date())
     end = str(src.max().date())
@@ -88,9 +95,9 @@ def missing_targets(source_index, code: str, family: str, market_type, db,
 
     keep = []
     for t in src:
-        k = t.normalize() if family == 'day' else t
-        if from_date and k <= pd.Timestamp(from_date):
+        if not _in_scope(t):
             continue
+        k = t.normalize() if family == 'day' else t
         if k not in have:
             keep.append(t)
     targets = pd.DatetimeIndex(keep)

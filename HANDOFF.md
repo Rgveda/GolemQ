@@ -42,7 +42,7 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 3 个死 benchmark 壳与 `BaseBenchmark` 已删 —— `pipeline/` 只剩 `BasePipeline` + `review/`；
 落库/水位已改为 **Active Market 取 DB 实例 + 参数注入**；持久化检查见
 `pipeline/review/persistence.py`（按目标表已有 review 行选缺失 bar，不看侧表水位；
-目标下界 day 2560 / min 800 天）。873 条测试全绿。
+目标下界 day 2560 / min 800 天）。876 条测试全绿。
 
 **下一步**：全量对拍分类（`compare_review_golden.py`）、coldstart `m9tBsl`
 （需 compact 特征链）、`--eval fast/etf/index/all` 回填；`--review-runtime` 端到端冒烟。
@@ -175,7 +175,9 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 | **MONEYFLOW-FIX** | 落库前帧列去重（`keep` 重复 `code/date` ⇒ Length mismatch）；同花顺源端分页重叠按 `(date,code)` 去重；`[metadata_day]` → `[reality_feat_day]` | ✅ worklog 2026-10-20，4 条用例 |
 | **MSG-LAYER** | `agents.messenger` → `agents.channels`；`supervisor.messenger` → `supervisor.alerts`（`Messenger` → `AlertDispatcher`）；告警复用 `sc_send`，删零调用 API | ✅ **D57**，6 条用例 |
 | **TS/TURNOVER-FIX** | pandas 3 `resample(offset=)` 对 `1D` 告警（分钟级保留 offset，日频不传）；`fill_turnover` 用不存在的 `ts` 列取日期 ⇒ `DateParseError: None`，改取索引第 0 层 | ✅ P37/P38，4 条新用例 + 夹具改实物形状 |
-| **REVIEW-CLI** | `--review` == `--strategy review`；`--eval` 全局唯一（删 `--review-eval`）；删 `--daily`；scope 必填、pct 默认明示；Ctrl+C → 130 | ✅ **D58** / P39，9 条用例 |
+| **REVIEW-CLI** | `--review` == `--strategy review`；`--eval` 全局唯一（删 `--review-eval` / `--review-codes`）；`--daily` 删除；`--force` / `--from` 全局且可组合；scope 必填、pct 默认明示；Ctrl+C → 130 | ✅ **D58** / P39 |
+| **15MIN-ZEN** | 15min minor 补齐老树 `calc_zen_wavelet_reality_minor` 的 **19 列**（新增 `zDLagMinR/zPLagMinR`，用 `calc_zen_timing_lag`）；60min 的这两列仍由 `zen_snapshots` 产出 | ✅ worklog 2026-10-20 |
+| **REGTREE-RS** | 删除零读取的 `REGTREE_TREND_RS` 常量 + 4 处赋值；`TREND`/`RETURNS` 保留（内部依赖） | ✅ worklog 2026-10-20 |
 
 ---
 

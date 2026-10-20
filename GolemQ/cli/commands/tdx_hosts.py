@@ -21,11 +21,8 @@ def add_update_arguments(parser) -> None:
                              "默认**每周一次**：不到期的直接报缓存状态；"
                              "配合 --force 强制重探")
 
-    # ⚠️ `--force` **在这里注册、但不当独立命令** —— 它是修饰符。
-    # 单独立一条命令会让「只打 --force」命中一个空命令（打了没反应）。
-    parser.add_argument('--force',
-                        help="配合 --update-tdx-hosts：忽略每周周期，立刻重探",
-                        action='store_true', default=False)
+    # NOTE: `--force` 是**全局修饰符**（`cli/__main__.py`），这里不重复注册；
+    # `run_update` 直接读 `args.force`。
 
 
 def run_update(args) -> None:

@@ -69,8 +69,14 @@ COLDSTART_COLUMNS: Tuple[str, ...] = (
 HOUR_COLUMNS: Tuple[str, ...] = (HOUR_ZEN_COLUMNS + MINOR_COLUMNS +
                                  COLDSTART_COLUMNS)
 
+#: 15min minor 的**完整**输出（老树 `calc_zen_wavelet_reality_minor` 的 19 列）：
+#: 2 个 zen + 17 个 minor。
+#: ⚠️ 60min 的 `zDLagMinR/zPLagMinR` 由 `zen_snapshots` 产出；`hour_minor_sample`
+#: 仍只采 17 个 minor 列，**不要**把 zen 两列再采一遍（否则 60min 族列名冲突）。
+MINOR_15MIN_COLUMNS: Tuple[str, ...] = ('zDLagMinR', 'zPLagMinR') + MINOR_COLUMNS
+
 #: 15min 族：minor 信号的原生频率版本（CV 列归 ChartScan，不在契约内）。
-MIN15_COLUMNS: Tuple[str, ...] = MINOR_COLUMNS
+MIN15_COLUMNS: Tuple[str, ...] = MINOR_15MIN_COLUMNS
 
 FAMILY_COLUMNS: Dict[str, Tuple[str, ...]] = {
     'day': DAY_COLUMNS,

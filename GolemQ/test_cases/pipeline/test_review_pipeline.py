@@ -22,7 +22,8 @@ from GolemQ.analysis.zen import calc_zen_timing_lag
 from GolemQ.core.constants import AKA, MARKET_TYPE
 from GolemQ.pipeline.review.pipeline import ReviewPipeline, ReviewOptions
 from GolemQ.pipeline.review.runtime import compute_runtime
-from GolemQ.pipeline.review.contract import DAY_COLUMNS, MINOR_COLUMNS
+from GolemQ.pipeline.review.contract import (DAY_COLUMNS, MINOR_COLUMNS,
+                                             MINOR_15MIN_COLUMNS)
 from GolemQ.pipeline.review.steps.daily import daily_snapshot_step
 from GolemQ.pipeline.review.steps.minor import (hour_minor_sample_step,
                                                 minor_signals_step)
@@ -135,14 +136,16 @@ class TestMinorStep(unittest.TestCase):
         ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
                             frames={'15min': df}, as_of=as_of)
         out = minor_signals_step(ctx, target_times(df, as_of))
-        self.assertEqual(list(out.columns), list(MINOR_COLUMNS))
+        self.assertEqual(list(out.columns), list(MINOR_15MIN_COLUMNS))
+        # 老树 `calc_zen_wavelet_reality_minor` 的 zen 两列必须在，且真的算出了值
+        self.assertTrue(out[['zDLagMinR', 'zPLagMinR']].notna().any().all())
 
         # 前缀稳定性：只到 T 的帧算出的第 T 行 == 全量帧的第 T 行
         T = df.index.get_level_values(0)[-2]
         ctx_t = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
                               frames={'15min': df}, as_of=T)
         out_t = minor_signals_step(ctx_t, target_times(df, T))
-        for c in MINOR_COLUMNS:
+        for c in MINOR_15MIN_COLUMNS:
             a = float(out.loc[(T, '600519'), c])
             b = float(out_t.loc[(T, '600519'), c])
             self.assertTrue((np.isnan(a) and np.isnan(b)) or a == b,
@@ -252,6 +255,19 @@ class TestPersistence(unittest.TestCase):
             got = missing_targets(src, '600519', 'day', MARKET_TYPE.STOCK_CN,
                                   db=object(), force=True)
         self.assertEqual(len(got), 2, 'force 必须忽略已持久化集合')
+
+    def test_force_respects_from_date(self):
+        """`force` 只忽略已持久化，**不绕过** `from_date`。"""
+        from GolemQ.pipeline.review.persistence import missing_targets
+        src = pd.DatetimeIndex(['2026-01-05', '2026-01-06', '2026-01-07'])
+        with unittest.mock.patch(
+                'GolemQ.markets.StockCN.reality_save.fetch_reality_feat',
+                return_value=None):
+            got = missing_targets(src, '600519', 'day', MARKET_TYPE.STOCK_CN,
+                                  db=object(), force=True,
+                                  from_date='2026-01-05')
+        self.assertEqual([str(t.date()) for t in got],
+                         ['2026-01-06', '2026-01-07'])
 
     def test_from_date_is_exclusive_lower_bound(self):
         from GolemQ.pipeline.review.persistence import missing_targets
@@ -442,6 +458,26 @@ class TestReviewCliDefaults(unittest.TestCase):
         self.assertFalse(hasattr(review, 'review_eval'))
         self.assertFalse(hasattr(review, 'scan_eval'))
         self.assertFalse(hasattr(review, 'review_codes'))
+
+    def test_force_and_from_are_global(self):
+        """`--force` / `--from` 是通用修饰符，不跟 review 绑定。"""
+        review = self._args(['--strategy', 'review', '--eval', 'fast',
+                             '--force', '--from', '2026-09-01'])
+        self.assertTrue(review.force)
+        self.assertEqual(review.from_date, '2026-09-01')
+        self.assertFalse(hasattr(review, 'review_force'))
+        self.assertFalse(hasattr(review, 'review_from'))
+        # 同一组修饰符也能与 tdx-hosts 组合
+        hosts = self._args(['--update-tdx-hosts', '--force'])
+        self.assertTrue(hosts.force)
+
+    def test_force_and_from_reach_run_review(self):
+        rc, _, _, run = self._run(
+            ['--strategy', 'review', '--eval', 'fast',
+             '--force', '--from', '2026-09-01'])
+        self.assertEqual(rc, 0)
+        self.assertTrue(run.call_args.kwargs['force'])
+        self.assertEqual(run.call_args.kwargs['from_date'], '2026-09-01')
 
     def test_eval_accepts_codes_as_second_argument(self):
         """`--eval` 的第二参数可以是逗号分隔代码；没有独立的 `--review-codes`。"""
