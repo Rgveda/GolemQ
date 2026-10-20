@@ -281,6 +281,23 @@ class TestColdstart(unittest.TestCase):
         pd.testing.assert_frame_equal(one.iloc[[-1]], full.iloc[[3]],
                                       check_dtype=False)
 
+    def test_intraday_uses_previous_day_close(self):
+        """盘中 60min 行用上一交易日；15:00 才用当日收盘（无未来函数）。"""
+        from GolemQ.pipeline.review.contract import COLDSTART_COLUMNS
+        from GolemQ.pipeline.review.coldstart import coldstart_step
+        d1 = pd.Timestamp('2025-01-02')
+        d2 = pd.Timestamp('2025-01-03')
+        ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
+                            frames={}, as_of=pd.Timestamp('2025-01-03 15:00'))
+        ctx.outputs['_coldstart_rows'] = {
+            d1: {c: 1.0 for c in COLDSTART_COLUMNS},
+            d2: {c: 2.0 for c in COLDSTART_COLUMNS},
+        }
+        out = coldstart_step(
+            ctx, pd.DatetimeIndex(['2025-01-03 10:30', '2025-01-03 15:00']))
+        self.assertEqual(float(out.iloc[0]['STAGE']), 1.0, '盘中必须用上一交易日')
+        self.assertEqual(float(out.iloc[1]['STAGE']), 2.0, '15:00 用当日收盘')
+
 
 class TestRouting(unittest.TestCase):
     def test_reality_feat_name(self):

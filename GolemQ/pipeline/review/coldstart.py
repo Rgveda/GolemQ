@@ -204,19 +204,33 @@ def _coldstart_row(day: pd.DataFrame, feats: pd.DataFrame = None) -> dict:
 def coldstart_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFrame:
     """取样：`day_core` 已对每个目标日期算好 coldstart，这里只映射到 60min 目标。
 
-    ⚠️ Prophet 是全样本拟合，仍按目标日期逐个拟合（在 `day_core` 内）；
-    本 step 不重算。
+    ⚠️ **因果口径**：日线 bar 的时间戳是当日 00:00，close 却是**当日收盘**。
+    因此：
+    * 60min 目标 **< 15:00**（10:30 / 11:30 / 14:00）：只能用**上一交易日**的
+      coldstart 行（那一行的日线已收盘）；
+    * 60min 目标 **>= 15:00**：当日已收盘，用当日行。
+    否则盘中行会拿到当日收盘价（未来函数）。
+
+    Prophet 是全样本拟合，仍按目标日期逐个拟合（在 `day_core` 内）；本 step 不重算。
     """
     if targets is None or len(targets) == 0:
         return pd.DataFrame(columns=COLDSTART_COLUMNS)
     cache = ctx.outputs.get('_coldstart_rows') or {}
+    dates = sorted(cache)
+    nan_row = {c: np.nan for c in COLDSTART_COLUMNS}
 
     rows, idx = [], []
     for t in targets:
-        d = pd.Timestamp(t).normalize()
-        row = cache.get(d, {c: np.nan for c in COLDSTART_COLUMNS})
+        t = pd.Timestamp(t)
+        d = t.normalize()
+        if t.time() >= pd.Timestamp('15:00').time():
+            key = d
+        else:
+            prev = [x for x in dates if x < d]
+            key = prev[-1] if prev else None
+        row = cache.get(key, nan_row)
         rows.append([row.get(c, np.nan) for c in COLDSTART_COLUMNS])
-        idx.append((pd.Timestamp(t), ctx.code))
+        idx.append((t, ctx.code))
     return pd.DataFrame(rows,
                         index=pd.MultiIndex.from_tuples(idx, names=['ts', 'code']),
                         columns=list(COLDSTART_COLUMNS))
