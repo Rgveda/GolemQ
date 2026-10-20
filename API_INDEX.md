@@ -432,7 +432,7 @@ ChartScan（CV 图形识别）的两条 CLI 入口 —— --scan / --server。
 | f | `run_purge(args)` |  |
 
 ### `review`
---review --daily / --review-runtime —— 统一因果 review 管线。
+--strategy review（别名 --review）/ --review-runtime —— 统一因果 review 管线。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -2911,3 +2911,14 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `TestRuntimeNoWrites.test_zero_writes()` |  |
 | C | `TestCLI` |  |
 | f | `TestCLI.test_parse_review()` |  |
+| C | `TestReviewCliDefaults` | --strategy review 的命令语义、scope 必填、pct 默认明示。 |
+| f | `TestReviewCliDefaults.test_daily_option_was_removed()` | --daily 语义不明，已删除；argparse 应直接拒绝。 |
+| f | `TestReviewCliDefaults.test_scope_is_required()` |  |
+| f | `TestReviewCliDefaults.test_review_is_alias_for_strategy_review()` | --review 与 --strategy review 必须分发到同一条命令。 |
+| f | `TestReviewCliDefaults.test_default_pct_is_announced()` |  |
+| f | `TestReviewCliDefaults.test_explicit_pct_is_not_announced()` |  |
+| f | `TestReviewCliDefaults.test_eval_is_one_global_option()` | --eval 是全局唯一选项：--review 与 --scan 读同一个 eval_scope。 |
+| f | `TestReviewCliDefaults.test_explicit_codes_without_scope_is_allowed()` | 给了 --review-codes 就不必再给 scope（明确知道跑谁）。 |
+| f | `TestReviewCliDefaults.test_keyboard_interrupt_returns_130()` | Ctrl+C 必须干净退出（130），不能被当成运行期失败 1。 |
+| C | `TestPipelineInterrupt` | 并行段必须用 with Parallel(...)，否则 Ctrl+C 后 worker 可能不退出。 |
+| f | `TestPipelineInterrupt.test_parallel_is_terminated_on_keyboard_interrupt()` |  |

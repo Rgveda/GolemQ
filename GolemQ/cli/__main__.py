@@ -85,6 +85,18 @@ def build_parser() -> argparse.ArgumentParser:
                         action="store_true",
                         default=False)
 
+    # `--strategy` 与 `--eval` 都是全局的，二者**正交**：
+    #   `--strategy review --eval fast`  ==  `--review --eval fast`
+    # **只此一处注册、各只一个 dest** —— 别再给单条命令造
+    # `--review-eval` / `--strategy-eval` 这类前缀变体：那会让同一语义出现多个
+    # 名字，且无法表达「策略 + eval」的组合。
+    parser.add_argument("--strategy", default="", choices=["review"],
+                        help="命令策略（当前仅 review）；--review 是 --strategy review"
+                             " 的别名。与 --eval 组合使用。")
+    parser.add_argument("-e", "--eval", dest="eval_scope", default="",
+                        help="命令的 scope：fast/block/etf/index/all/etc/etc_1/etc_2；"
+                             "review 也接受逗号分隔的代码。")
+
     for cmd in COMMANDS:
         cmd.add_arguments(parser)
 

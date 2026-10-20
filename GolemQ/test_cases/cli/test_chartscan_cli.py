@@ -39,7 +39,7 @@ class TestCommandShape(unittest.TestCase):
         args, cmd = _parse(['--scan', 'ChartScan', '--eval', 'fast', '--port', '6666'])
         self.assertEqual(cmd.name, 'chartscan-scan')
         self.assertEqual(args.scan, 'ChartScan')
-        self.assertEqual(args.scan_eval, 'fast')
+        self.assertEqual(args.eval_scope, 'fast')
         self.assertEqual(args.port, '6666')
 
     def test_server_parses(self):
@@ -141,7 +141,7 @@ class TestReExec(unittest.TestCase):
 
 class TestRunDelegates(unittest.TestCase):
     def _args(self, **kw):
-        ns = mock.Mock(scan_eval='fast', port='6666', verbose=False)
+        ns = mock.Mock(eval_scope='fast', port='6666', verbose=False)
         for k, v in kw.items():
             setattr(ns, k, v)
         return ns

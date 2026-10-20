@@ -1341,3 +1341,30 @@ offset_kw = {'offset': '30min'} if tick_like else {}
 
 **守卫**：`test_cases/analysis/test_timeseries.py` —— `1D` 无告警、
 `60min` 仍保留 offset、日线聚合值不变。
+
+### P39. joblib `Parallel` 不用 `with` ⇒ Ctrl+C 后 worker 可能不退出
+
+**位置**：`pipeline/base.py::BasePipeline.run_codes`（2026-10-20 修）。
+
+**症状**（用户实测，Windows / PowerShell）：`--daily` 跑起来后按 Ctrl+C
+**没有反应**，进程不回到 shell。
+
+**机制**：`joblib.Parallel` 作为**上下文管理器**使用时，`__exit__` 会终止
+底层 executor；直接 `Parallel(n_jobs=...)(...)` 在异常路径上**不保证**这一步。
+loky 的 worker 不响应父进程的 SIGINT，父进程若在等它们，就表现为「停不下来」。
+
+**该怎么办**：
+
+```python
+with Parallel(n_jobs=pool_size) as parallel:
+    results = parallel(delayed(self._process_single_code)(code, **kwargs)
+                       for code in codelist)
+```
+
+并把 `KeyboardInterrupt` 与 `Exception` **分开**处理：`KeyboardInterrupt` 继承
+`BaseException`，不会被 `except Exception` 的回退分支吞掉；显式 `raise` 前打一行
+提示，CLI 侧返回 **130**（128 + SIGINT）。
+
+**验证**：`TestPipelineInterrupt`（断言 `__exit__` 被调用）；
+另用子进程 + `CTRL_BREAK_EVENT` 实测当前实现 20 秒内退出
+（退出码 `STATUS_CONTROL_C_EXIT` / 0xC000013A）。

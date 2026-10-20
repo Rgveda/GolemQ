@@ -52,6 +52,7 @@ from datetime import datetime as dt, timedelta
 from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
+import sys
 import traceback
 import func_timeout
 from tqdm import tqdm
@@ -228,9 +229,19 @@ class BasePipeline(ABC):
             try:
                 with tqdm_joblib(tqdm(desc=f'{self.name} Processing',
                                       total=len(codelist)), '{}'):
-                    results = Parallel(n_jobs=pool_size)(
-                        delayed(self._process_single_code)(code, **kwargs)
-                        for code in codelist)
+                    # ⚠️ **必须用 `with`**：`Parallel.__exit__` 会终止 worker。
+                    # 不用上下文管理器时，Windows 上 Ctrl+C 后父进程可能在等
+                    # 永远不结束的 loky worker —— 表现为「按键了但停不下来」。
+                    with Parallel(n_jobs=pool_size) as parallel:
+                        results = parallel(
+                            delayed(self._process_single_code)(code, **kwargs)
+                            for code in codelist)
+            except KeyboardInterrupt:
+                # `KeyboardInterrupt` 不是 `Exception`，上面的回退分支**不会**
+                # 吞它；这里只补一句提示，然后继续向上抛给 CLI。
+                print(f'\n{self.name}: 收到 Ctrl+C，已终止并行 worker',
+                      file=sys.stderr)
+                raise
             except Exception as exc:    # noqa: BLE001 并行失败回退串行
                 print(f'Parallel processing error: {exc}')
                 results = [self._process_single_code(code, **kwargs)

@@ -31,6 +31,7 @@
 ### Review 管线搬迁（`DECISIONS.md` **D54**）—— 🚧 进行中
 
 老树 `--review --daily` + `zen_minor` + coldstart 子集 → 一套逐 Bar 因果管线。
+（新树入口：`--strategy review` 或别名 `--review`；**`--daily` 已删除**，见 D58。）
 已落地：`pipeline/base.py`（BasePipeline/BaseBenchmark）、`pipeline/steps.py`、
 `pipeline/review/{pipeline,contract,runtime,coldstart}.py`、`cli/commands/review.py`、
 `analysis/zen.py`（**czsc 0.7.10**，KlineAnalyze 0.53 已剔除）、
@@ -41,11 +42,13 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 3 个死 benchmark 壳与 `BaseBenchmark` 已删 —— `pipeline/` 只剩 `BasePipeline` + `review/`；
 落库/水位已改为 **Active Market 取 DB 实例 + 参数注入**；持久化检查见
 `pipeline/review/persistence.py`（按目标表已有 review 行选缺失 bar，不看侧表水位；
-目标下界 day 2560 / min 800 天）。850 条测试全绿。
+目标下界 day 2560 / min 800 天）。873 条测试全绿。
 
 **下一步**：全量对拍分类（`compare_review_golden.py`）、coldstart `m9tBsl`
 （需 compact 特征链）、`--eval fast/etf/index/all` 回填；`--review-runtime` 端到端冒烟。
-⚠️ `--eval` 被 ChartScan 占用，review 用 `--review-eval`（也接受 `--eval`）。
+⚠️ `--eval` 是**全局唯一**的 scope 选项（`eval_scope`），与 `--review` / `--scan` /
+`--strategy` 组合；**不要再造** `--review-eval` 这类前缀变体（D58）。
+⚠️ `--daily` **已删除**（语义不明）；`--review` == `--strategy review`。
 
 ### 指标搬迁（`DECISIONS.md` D49 / **D50**）—— ✅ **四块全部收口**（③ 的编排按你的决定挂账）
 
@@ -172,6 +175,7 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 | **MONEYFLOW-FIX** | 落库前帧列去重（`keep` 重复 `code/date` ⇒ Length mismatch）；同花顺源端分页重叠按 `(date,code)` 去重；`[metadata_day]` → `[reality_feat_day]` | ✅ worklog 2026-10-20，4 条用例 |
 | **MSG-LAYER** | `agents.messenger` → `agents.channels`；`supervisor.messenger` → `supervisor.alerts`（`Messenger` → `AlertDispatcher`）；告警复用 `sc_send`，删零调用 API | ✅ **D57**，6 条用例 |
 | **TS/TURNOVER-FIX** | pandas 3 `resample(offset=)` 对 `1D` 告警（分钟级保留 offset，日频不传）；`fill_turnover` 用不存在的 `ts` 列取日期 ⇒ `DateParseError: None`，改取索引第 0 层 | ✅ P37/P38，4 条新用例 + 夹具改实物形状 |
+| **REVIEW-CLI** | `--review` == `--strategy review`；`--eval` 全局唯一（删 `--review-eval`）；删 `--daily`；scope 必填、pct 默认明示；Ctrl+C → 130 | ✅ **D58** / P39，9 条用例 |
 
 ---
 

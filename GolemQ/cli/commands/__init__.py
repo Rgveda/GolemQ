@@ -58,7 +58,8 @@ register([
     save.SAVE,
     save_report.SAVE_STATUS,
     # —— 复盘（统一因果管线；写 reality_feat_{day,60min,15min}）——
-    # `--review` / `--daily` 是同一个批量入口；`--review-runtime` 是只读内存 API。
+    # `--review` == `--strategy review`；`--daily` 已删除（语义不明）；
+    # `--review-runtime` 是只读内存 API。scope 用全局 `--eval`。
     review.REVIEW_DAILY,
     review.REVIEW_RUNTIME,
     # —— 外部抓取（HTTP，落 stock_reality_feat_day）——

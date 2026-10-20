@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import unittest
 import unittest.mock
 
@@ -360,12 +362,145 @@ class TestCLI(unittest.TestCase):
         from GolemQ.cli.__main__ import build_parser
         from GolemQ.cli.commands import pick
         p = build_parser()
-        a = p.parse_args(['--review', '--daily', '--pct-of-cores', '32',
+        a = p.parse_args(['--review', '--pct-of-cores', '32',
                           '--eval', 'fast'])
         self.assertEqual(pick(a).name, 'review-daily')
         self.assertAlmostEqual(a.pct_of_cores, 32.0)
         b = p.parse_args(['--review-runtime', '--runtime-code', '600519'])
         self.assertEqual(pick(b).name, 'review-runtime')
+
+
+class TestReviewCliDefaults(unittest.TestCase):
+    """`--strategy review` 的命令语义、scope 必填、pct 默认明示。
+
+    用户 2026-10-20 明确：`--review` 等价于 `--strategy review`；`--eval` 是
+    正交的 scope；`--daily` 语义不明，已删除。
+    """
+
+    STATS = {'total_count': 1, 'success_count': 1, 'error_count': 0,
+             'status_counts': {}}
+
+    def _args(self, argv):
+        from GolemQ.cli.__main__ import build_parser
+        return build_parser().parse_args(argv)
+
+    def _run(self, argv):
+        from GolemQ.cli.commands.review import run_review_daily
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch('GolemQ.pipeline.review.run_review',
+                                 return_value=({}, self.STATS)) as run, \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            rc = run_review_daily(self._args(argv))
+        return rc, out.getvalue(), err.getvalue(), run
+
+    def test_daily_option_was_removed(self):
+        """`--daily` 语义不明，已删除；argparse 应直接拒绝。"""
+        from GolemQ.cli.__main__ import build_parser
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), \
+                self.assertRaises(SystemExit) as cm:
+            build_parser().parse_args(['--daily'])
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn('unrecognized arguments', err.getvalue())
+
+    def test_scope_is_required(self):
+        rc, _, err, run = self._run(['--strategy', 'review'])
+        self.assertEqual(rc, 2)
+        self.assertIn('--eval', err)
+        self.assertFalse(run.called, '缺 scope 时不许进入管线')
+
+    def test_review_is_alias_for_strategy_review(self):
+        """`--review` 与 `--strategy review` 必须分发到同一条命令。"""
+        from GolemQ.cli.commands import pick
+        alias = self._args(['--review', '--eval', 'fast'])
+        canonical = self._args(['--strategy', 'review', '--eval', 'fast'])
+        self.assertEqual(pick(alias).name, 'review-daily')
+        self.assertEqual(pick(canonical).name, 'review-daily')
+
+    def test_default_pct_is_announced(self):
+        rc, _, err, run = self._run(
+            ['--strategy', 'review', '--eval', 'fast'])
+        self.assertEqual(rc, 0)
+        self.assertIn('默认 0.32', err)
+        self.assertAlmostEqual(run.call_args.kwargs['pct_of_cores'], 0.32)
+
+    def test_explicit_pct_is_not_announced(self):
+        rc, _, err, run = self._run(
+            ['--strategy', 'review', '--eval', 'fast',
+             '--pct-of-cores', '50'])
+        self.assertEqual(rc, 0)
+        self.assertNotIn('默认 0.32', err)
+        self.assertAlmostEqual(run.call_args.kwargs['pct_of_cores'], 50.0)
+
+    def test_eval_is_one_global_option(self):
+        """`--eval` 是全局唯一选项：`--review` 与 `--scan` 读同一个 `eval_scope`。"""
+        review = self._args(['--review', '--eval', 'fast'])
+        scan = self._args(['--scan', 'ChartScan', '--eval', 'fast'])
+        self.assertEqual(review.eval_scope, 'fast')
+        self.assertEqual(scan.eval_scope, 'fast')
+        self.assertFalse(hasattr(review, 'review_eval'))
+        self.assertFalse(hasattr(review, 'scan_eval'))
+
+    def test_explicit_codes_without_scope_is_allowed(self):
+        """给了 `--review-codes` 就不必再给 scope（明确知道跑谁）。"""
+        rc, _, err, run = self._run(
+            ['--strategy', 'review', '--review-codes', '600519'])
+        self.assertEqual(rc, 0)
+        self.assertNotIn('用法错误', err)
+        self.assertEqual(run.call_args.kwargs['codes'], ['600519'])
+        self.assertEqual(run.call_args.kwargs['eval_range'], 'fast')
+
+    def test_keyboard_interrupt_returns_130(self):
+        """Ctrl+C 必须干净退出（130），不能被当成运行期失败 1。"""
+        from GolemQ.cli.commands.review import run_review_daily
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch('GolemQ.pipeline.review.run_review',
+                                 side_effect=KeyboardInterrupt), \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            rc = run_review_daily(
+                self._args(['--strategy', 'review', '--eval', 'fast']))
+        self.assertEqual(rc, 130)
+        self.assertIn('已中断', err.getvalue())
+
+
+class TestPipelineInterrupt(unittest.TestCase):
+    """并行段必须用 `with Parallel(...)`，否则 Ctrl+C 后 worker 可能不退出。"""
+
+    def test_parallel_is_terminated_on_keyboard_interrupt(self):
+        from GolemQ.pipeline.base import BasePipeline, CodeResult
+
+        class _Pipe(BasePipeline):
+            def run_code(self, code, **kwargs):
+                return CodeResult(code=code)
+
+        exited = []
+
+        class _FakeParallel:
+            def __init__(self, n_jobs):
+                self.n_jobs = n_jobs
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                exited.append(True)
+                return False
+
+            def __call__(self, tasks):
+                raise KeyboardInterrupt
+
+        with unittest.mock.patch('GolemQ.pipeline.base.Parallel', _FakeParallel), \
+                unittest.mock.patch('GolemQ.pipeline.base.JOBLIB_AVAILABLE', True), \
+                unittest.mock.patch.object(BasePipeline, '_setup_cpu_affinity',
+                                           lambda self: None), \
+                contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(KeyboardInterrupt):
+                _Pipe(name='t').run_codes(['600519', '000001'], pool_size=2)
+
+        self.assertEqual(exited, [True],
+                         'KeyboardInterrupt 后必须走 Parallel.__exit__ 终止 worker')
 
 
 if __name__ == '__main__':

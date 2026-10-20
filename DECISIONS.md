@@ -88,5 +88,6 @@
 | `D55` | `reality_feat_*` 的持久化检查与写入口收口 | 2026-10-19 | [decisions/D55.md](docs/decisions/D55.md) |
 | `D56` | ETF 数据拆分收口与 fund 历史残留（不搬） | 2026-10-20 | [decisions/D56.md](docs/decisions/D56.md) |
 | `D57` | 消息推送分层：`agents.channels`（渠道）与 `supervisor.alerts`（告警） | 2026-10-20 | [decisions/D57.md](docs/decisions/D57.md) |
+| `D58` | Review CLI 参数语义：`--strategy review`（别名 `--review`）、全局 `--eval`、删除 `--daily` | 2026-10-20 | [decisions/D58.md](docs/decisions/D58.md) |
 
 <!-- END GENERATED -->

@@ -131,10 +131,8 @@ def add_scan_arguments(parser) -> None:
                         default=None,
                         help="【ChartScan】K 线识别模式（客户端）：按 scope 解析出待扫任务，"
                              "逐条 REQ 发给 --server。会自动切换到 GolemAI env")
-    parser.add_argument('-e', '--eval',
-                        dest='scan_eval',
-                        default='',
-                        help="--scan 的扫描范围：fast / block / etf / etc / etc_1 / etc_2")
+    # NOTE: `-e/--eval` 是 **全局选项**（`cli/__main__.py` 的 `eval_scope`），
+    # 这里不重复注册 —— 它可与 `--scan` / `--review` / 将来的 `--strategy` 组合。
 
 
 def add_server_arguments(parser) -> None:
@@ -160,7 +158,7 @@ def run_chartscan_scan(args) -> int:
     这也是本项目「成功静默」那条纪律的边界：静默的是**状态话术**，
     不是**长任务的进度**。
     """
-    argv = ['--eval', str(args.scan_eval), '--port', str(args.port)]
+    argv = ['--eval', str(args.eval_scope), '--port', str(args.port)]
     if not in_cv_env():
         return _re_exec('GolemQ.markets.StockCN.chartscan.client', argv)
 
