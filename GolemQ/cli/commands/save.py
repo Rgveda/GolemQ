@@ -371,7 +371,7 @@ def run_save(args) -> None:
                             DONE if 'unavailable' not in turnover else PENDING)
             if 'unavailable' in turnover:
                 # 降级要**说出来**（`refresh_turnover` 在非 verbose 下是静默的）
-                say('[metadata_day] 换手率刷新跳过：{}'.format(turnover['unavailable']))
+                say('[reality_feat_day] 换手率刷新跳过：{}'.format(turnover['unavailable']))
 
             # ② 资金流向：**同花顺当日全市场快照**（一次调用 ~5210 行）。
             #    ⚠️ **不是东财** —— 东财那条**逐只**资金流接口已死
@@ -387,7 +387,7 @@ def run_save(args) -> None:
             if banner is not None:
                 banner.mark('moneyflow', DONE if mf_ok else PENDING)
             if not mf_ok:
-                say('[metadata_day] 资金流本次未落库：{}'.format(mf.get('error') or mf))
+                say('[reality_feat_day] 资金流本次未落库：{}'.format(mf.get('error') or mf))
 
         if banner is not None:
             banner.close()

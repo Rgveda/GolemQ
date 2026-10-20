@@ -406,7 +406,7 @@ def save_turnover(since=None, until=None, batch: int = 5000, verbose: bool = Tru
             cursor.close()
         out[coll_name] = stats
         if verbose:
-            say('[metadata_day] {}{} → {}: 读 {} / 写 {} / 丢 {} / upserted {} / modified {}'.format(
+            say('[reality_feat_day] {}{} → {}: 读 {} / 写 {} / 丢 {} / upserted {} / modified {}'.format(
                 coll_name, '.{}'.format(src_field), dst_field,
                 stats['read'], stats['written'], stats['skipped'],
                 stats['upserted'], stats['modified']))
@@ -442,7 +442,7 @@ def refresh_turnover(days: int = 7, verbose: bool = True, echo=None, **kwargs) -
         reason = '{}: {}'.format(type(exc).__name__, exc)
         say = echo or print
         if verbose:
-            say('[metadata_day] 换手率现算失败，跳过 —— {}'.format(reason))
+            say('[reality_feat_day] 换手率现算失败，跳过 —— {}'.format(reason))
         return {'unavailable': reason}
 
 

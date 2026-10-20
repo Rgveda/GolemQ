@@ -288,11 +288,21 @@ def save_moneyflow(source: str = 'eastmoney', created_at=None, verbose=True,
     # 统一入口（D55）：只把**本模块 payload 白名单**里的列交给 save_reality_feat，
     # 别的列不会被写、更不会被清。
     frame = pd.DataFrame(docs)
-    keep = [c for c in ('code', 'date', *payload) if c in frame.columns]
+    # ⚠️ **必须去重**：`payload` 本身已含 `code`/`date`，再拼一次会让
+    # `frame.loc[:, keep]` 出现**重复列**，`set_index(['date','code'])`
+    # 就会拿 4 列去建 2 层索引 ⇒
+    # `ValueError: Length mismatch: Expected axis has N elements, new values have 2`。
+    keep = [c for c in dict.fromkeys(('code', 'date', *payload))
+            if c in frame.columns]
     frame = frame.loc[:, keep].set_index(['date', 'code'])
+    # ⚠️ 同花顺快照**源端会重复**（实测 2026-10-20：3,300 行只有 2,237 个代码，
+    # 1,063 行是分页重叠的完全重复行）。目标表唯一键是 `(code, date_stamp)`，
+    # 重复送进去只会多写一遍（最后一条覆盖），并让 `written` 虚高。
+    frame = frame[~frame.index.duplicated(keep='last')]
     stats = save_reality_feat(frame, 'day', MARKET_TYPE.STOCK_CN,
                               verbose=False, db=_db())
-    out.update({k: stats.get(k, 0) for k in ('upserted', 'modified')})
+    out.update({k: stats.get(k, 0)
+                for k in ('written', 'upserted', 'modified')})
     if verbose:
         say('[moneyflow] {} → {}：交易日 {}，读 {} 行 / 写 {} 文档 '
             '/ 新增 {} / 更新 {}'.format(source, REALITY_FEAT_DAY_COLL, day,

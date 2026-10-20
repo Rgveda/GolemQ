@@ -513,6 +513,56 @@ class TestSaveStageStartDoneLines(unittest.TestCase):
         self.assertNotIn('\033', out)
 
 
+class TestMetadataLogLabel(unittest.TestCase):
+    """落库目标改名后，日志标签也必须跟着改。
+
+    2026-10-16 `stock_metadata_day` → `stock_reality_feat_day`（D50），但
+    `[metadata_day]` 标签漏改；2026-10-20 用户实跑时看出来了。这里钉住两个
+    降级提示都必须用新标签。
+    """
+
+    def _run(self, *, turnover, moneyflow):
+        from GolemQ.cli.commands import save as save_cmd
+        from GolemQ.markets.StockCN import kline_save as ks
+        from GolemQ.markets.StockCN import refdata_save as rs
+
+        args = build_parser().parse_args(['--save', 'pytdx'])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), \
+                unittest.mock.patch(
+                    'GolemQ.markets.StockCN.metadata_save.refresh_turnover',
+                    return_value=turnover), \
+                unittest.mock.patch(
+                    'GolemQ.markets.StockCN.moneyflow_save.save_moneyflow',
+                    return_value=moneyflow), \
+                unittest.mock.patch.object(rs, 'save_refdata', return_value={}), \
+                unittest.mock.patch.object(ks, 'save_kline_tdx',
+                                           return_value={'kline': {}, 'universe': {}}), \
+                unittest.mock.patch.object(ks, 'save_xdxr_tdx',
+                                           return_value={'codes': 0, 'updated': 0,
+                                                         'events_changed': [],
+                                                         'errors': []}), \
+                unittest.mock.patch.object(ks, 'allow_xdxr_shortcircuit',
+                                           return_value=False), \
+                unittest.mock.patch.object(ks, 'kline_sweep_age_hours',
+                                           return_value=1.5), \
+                unittest.mock.patch.object(ks, 'mark_kline_sweep'):
+            save_cmd.run_save(args)
+        return buf.getvalue()
+
+    def test_turnover_skip_uses_reality_feat_day(self):
+        out = self._run(turnover={'unavailable': 'no 4.4'},
+                        moneyflow={'written': 1})
+        self.assertIn('[reality_feat_day] 换手率刷新跳过', out)
+        self.assertNotIn('[metadata_day]', out)
+
+    def test_moneyflow_failure_uses_reality_feat_day(self):
+        out = self._run(turnover={},
+                        moneyflow={'written': 0, 'error': 'boom'})
+        self.assertIn('[reality_feat_day] 资金流本次未落库', out)
+        self.assertNotIn('[metadata_day]', out)
+
+
 class TestFillTurnoverCli(unittest.TestCase):
     """`--fill-turnover`：CLI 只做参数校验 + 委托（`DECISIONS.md` D44）。
 

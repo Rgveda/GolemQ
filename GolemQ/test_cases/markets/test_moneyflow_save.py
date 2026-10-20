@@ -23,6 +23,7 @@ except ImportError:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -155,6 +156,47 @@ class TestPayloadWhitelists(unittest.TestCase):
         shared = (set(M.EM_PAYLOAD) & set(M.THS_PAYLOAD)) - {
             'code', 'date', 'date_stamp', 'datetime', 'ts', 'created_at'}
         self.assertEqual(shared, set(), '两个源共写了这些列：{}'.format(shared))
+
+
+class TestSaveFrame(unittest.TestCase):
+    """落库前的帧形状 —— 钉住 b5e95f3 引入的重复列回归。
+
+    `keep` 曾把 `payload` 里已有的 `code`/`date` 再拼一次 ⇒
+    `frame.loc[:, keep]` 出现重复列 ⇒ `set_index(['date','code'])`
+    报 `Length mismatch: Expected axis has N elements, new values have 2`。
+    """
+
+    def test_frame_has_unique_index_and_columns(self):
+        with patch.object(M, 'fetch_ths_fundflow', return_value=_ths_frame()), \
+                patch.object(M, 'last_trade_day', return_value='2026-10-09'), \
+                patch.object(M, '_db', return_value=object()), \
+                patch('GolemQ.markets.StockCN.reality_save.save_reality_feat',
+                      return_value={'written': 3, 'upserted': 3,
+                                    'modified': 0}) as save:
+            out = M.save_moneyflow(source='ths', verbose=False)
+
+        frame = save.call_args.args[0]
+        self.assertEqual(frame.index.names, ['date', 'code'])
+        self.assertFalse(frame.index.has_duplicates)
+        self.assertFalse(frame.columns.has_duplicates)
+        self.assertEqual(len(frame), 3)
+        self.assertEqual(out['written'], 3)
+
+    def test_duplicate_source_rows_collapse(self):
+        """同花顺分页会重叠（实测 3,300 行 / 2,237 码）—— 落库前按 `(date, code)` 去重。"""
+        df = pd.concat([_ths_frame(), _ths_frame().iloc[[0]]], ignore_index=True)
+        with patch.object(M, 'fetch_ths_fundflow', return_value=df), \
+                patch.object(M, 'last_trade_day', return_value='2026-10-09'), \
+                patch.object(M, '_db', return_value=object()), \
+                patch('GolemQ.markets.StockCN.reality_save.save_reality_feat',
+                      return_value={'written': 3, 'upserted': 3,
+                                    'modified': 0}) as save:
+            out = M.save_moneyflow(source='ths', verbose=False)
+
+        frame = save.call_args.args[0]
+        self.assertEqual(len(frame), 3)
+        self.assertFalse(frame.index.has_duplicates)
+        self.assertEqual(out['written'], 3)
 
 
 if __name__ == '__main__':
