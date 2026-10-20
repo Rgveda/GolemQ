@@ -598,8 +598,13 @@ def fill_turnover(codes, start=None, end=None, verbose: bool = True, echo=None,
             continue
 
         rows = []
-        for row in frame.reset_index().to_dict('records'):
-            day = str(row.get('ts'))[:10]
+        # ⚠️ **日期取索引第 0 层，不取 `row['ts']`**：日线读取器返回的帧
+        # **索引层没有名字**，也没有 `ts` 列（`reset_index()` 后时间轴叫 `index`）；
+        # `row.get('ts')` 恒为 `None` ⇒ `'None'` 被送进 `pd.to_datetime` ⇒
+        # `DateParseError: Unknown datetime string format, unable to parse: None`。
+        time_axis = pd.to_datetime(frame.index.get_level_values(0))
+        for ts, row in zip(time_axis, frame.to_dict('records')):
+            day = str(ts.date())
             if day in covered:
                 continue
             rate = turnover_from_volume(row.get(AKA.VOLUME), guben)

@@ -171,6 +171,7 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 | **CODE-TABLE** | 码表闸命中：`stock_list` 等签到 **2026-10-19 11:27–11:32** 全成功，`stock_codes.conf` 于 **11:32:48** 被重写 | ✅ D45 |
 | **MONEYFLOW-FIX** | 落库前帧列去重（`keep` 重复 `code/date` ⇒ Length mismatch）；同花顺源端分页重叠按 `(date,code)` 去重；`[metadata_day]` → `[reality_feat_day]` | ✅ worklog 2026-10-20，4 条用例 |
 | **MSG-LAYER** | `agents.messenger` → `agents.channels`；`supervisor.messenger` → `supervisor.alerts`（`Messenger` → `AlertDispatcher`）；告警复用 `sc_send`，删零调用 API | ✅ **D57**，6 条用例 |
+| **TS/TURNOVER-FIX** | pandas 3 `resample(offset=)` 对 `1D` 告警（零偏移，删除）；`fill_turnover` 用不存在的 `ts` 列取日期 ⇒ `DateParseError: None`，改取索引第 0 层 | ✅ worklog 2026-10-20，2 条新用例 + 夹具改实物形状 |
 
 ---
 

@@ -287,8 +287,11 @@ class TestFillTurnover(unittest.TestCase):
     def _frame(self, days=None):
         import pandas as pd
         days = days or self.DAYS
+        # ⚠️ **照实物的形状**：日线读取器返回的帧，时间轴**没有名字**，
+        # 日期在 `date` 列里、**没有 `ts` 列**。旧夹具写成 `names=['ts','code']`
+        # 让 `row.get('ts')` 碰巧能用，于是掩盖了真实读路径的 `DateParseError`。
         idx = pd.MultiIndex.from_arrays(
-            [pd.to_datetime(days), [self.CODE] * len(days)], names=['ts', 'code'])
+            [pd.to_datetime(days), [self.CODE] * len(days)])
         return pd.DataFrame({'date': days, 'volume': [28218, 26366, 38330]}, index=idx)
 
     def _have(self, days=None, col=TURNOVER_BS):

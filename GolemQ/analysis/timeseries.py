@@ -103,9 +103,11 @@ def GQ_data_min_to_day(min_data, type_='1D'):
     `rename_axis('date')`）。
     """
     conversion = _min_conversion(min_data)
+    # ⚠️ **不要加 `offset=`**：pandas 3 对**非 Tick-like** 频率（`1D`）会忽略它并告警
+    # （"The 'offset' keyword does not take effect ..."）。这里本来就是 0 偏移，
+    # 去掉后行为逐值不变。
     return min_data.reset_index(1).resample(
         type_,
-        offset="0min",
         closed='right'
     ).agg(conversion).dropna()
 
