@@ -12,6 +12,12 @@ import unittest
 import numpy as np
 import pandas as pd
 
+from GolemQ.test_cases.old_tree import load_old
+
+#: 老树**非 jit** 实现（`GolemQ_old/analysis/ChipDistribution.py`）——
+#: 只作对拍/基准，不进生产。
+_OLD_CHIP = load_old('analysis/ChipDistribution.py')
+
 try:
     from GolemQ.analysis import ChipDistribution_jit as _MOD
     from GolemQ.analysis.ChipDistribution_jit import ChipDistribution
@@ -153,6 +159,60 @@ class TestMissingTurnoverRaises(unittest.TestCase):
         days = pd.to_datetime(data.index.get_level_values(0))[:-1]
         with self.assertRaises(ValueError):
             self._run(self._meta(days))
+
+
+@unittest.skipIf(_OLD_CHIP is None, '老树 GolemQ_old/ 不在场，对拍跳过')
+class TestMatchesOldNonJit(unittest.TestCase):
+    """新 `ChipDistribution_jit` vs 老树**非 jit** `ChipDistribution.py`。
+
+    实测（2026-10-21，60 天 / minD=0.01）：筹码字典逐键逐值一致（max diff 0），
+    `_calcu_winner1/2` 差 ≤2.6e-15，`_calcu_cost` 完全一致；
+    `_calculate_chip_distribution` **37.36 ms → 14.72 ms（2.5×）**。
+    """
+
+    def _inputs(self, n=60, seed=0):
+        rng = np.random.default_rng(seed)
+        dates = pd.date_range('2024-01-01', periods=n, freq='D')
+        close = 100 + np.cumsum(rng.normal(0, 0.6, n))
+        low, high = close - 0.5, close + 0.5
+        avg = (high + low + close) / 2
+        vol = rng.uniform(8e4, 2e5, n)
+        turn = rng.uniform(0.005, 0.03, n)
+        return dates, low, high, avg, vol, turn, close
+
+    def _chips(self):
+        dates, low, high, avg, vol, turn, close = self._inputs()
+        old_chips = _OLD_CHIP._calculate_chip_distribution(
+            dates, low, high, vol, turn, avg)
+        new_chips = _MOD._calculate_chip_distribution(
+            dates, low, high, vol, turn, avg)
+        return dates, close, old_chips, new_chips
+
+    def test_calculate_chip_distribution_matches(self):
+        _, _, old_chips, new_chips = self._chips()
+        self.assertEqual(list(old_chips[0]), list(new_chips[0]))
+        for day in old_chips[0]:
+            a, b = old_chips[0][day], new_chips[0][day]
+            self.assertEqual(set(a), set(b), day)
+            for price in a:
+                self.assertAlmostEqual(a[price], b[price], places=12,
+                                       msg=f'{day} {price}')
+
+    def test_winner_and_cost_match(self):
+        dates, close, old_chips, new_chips = self._chips()
+        p = pd.Series(close, index=dates)
+
+        a = _OLD_CHIP._calcu_winner1(p, old_chips[0])
+        b = _MOD._calcu_winner1(p, new_chips[0])
+        np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-12, equal_nan=True)
+
+        a = _OLD_CHIP._calcu_winner2(100.5, old_chips[0])
+        b = _MOD._calcu_winner2(100.5, new_chips[0])
+        np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-12, equal_nan=True)
+
+        a = _OLD_CHIP._calcu_cost(dates, 90, old_chips[0])
+        b = _MOD._calcu_cost(dates, 90, new_chips[0])
+        np.testing.assert_allclose(a, b, equal_nan=True)
 
 
 def test_performance():
