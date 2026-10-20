@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import re
 import sys
 
 from ._registry import Command
@@ -75,6 +76,22 @@ def _eval_value(args) -> str:
     return str(getattr(args, 'eval_scope', '') or '').strip()
 
 
+def _codes_from_eval(text) -> list:
+    """`--eval` 的代码形态：逗号 / 空白 / 换行分隔，每项取第一个 6 位代码。
+
+    兼容 `300641 正丹股份`、`sh600519`、`600519.SH`、`000001,000002` 等写法；
+    名称里的数字不会被误取（只认 **恰好 6 位** 的数字段）。保持首次出现顺序、去重。
+    """
+    out = []
+    for token in re.split(r'[,;\s]+', str(text)):
+        m = re.search(r'(?<!\d)(\d{6})(?!\d)', token)
+        if m:
+            code = m.group(1)
+            if code not in out:
+                out.append(code)
+    return out
+
+
 def run_review_daily(args) -> int:
     from GolemQ.pipeline.review import run_review
 
@@ -83,12 +100,17 @@ def run_review_daily(args) -> int:
         print('用法错误: --strategy review（或 --review）需要 {}'.format(
             _SCOPE_HELP), file=sys.stderr)
         return 2
-    # `--eval` 的第二参数有两种形态：scope 或逗号分隔代码。
-    codes = None
-    if (',' in eval_range or len(eval_range) > 12 or
-            (eval_range.isdigit() and len(eval_range) == 6) or
-            ('.' in eval_range and len(eval_range) <= 12)):
-        codes = [c.strip() for c in eval_range.split(',') if c.strip()]
+    # `--eval` 的第二参数有两种形态：scope（`SCOPES`）或代码清单。
+    from GolemQ.analysis.cv.scopes import SCOPES
+    if eval_range.lower() in SCOPES:
+        eval_range = eval_range.lower()
+        codes = None
+    else:
+        codes = _codes_from_eval(eval_range)
+        if not codes:
+            print('用法错误: --eval 既不是 scope 也不含 6 位代码：{!r}'.format(
+                eval_range[:80]), file=sys.stderr)
+            return 2
         eval_range = 'fast'
     pct_of_cores = args.pct_of_cores
     if pct_of_cores is None:

@@ -175,6 +175,12 @@ class TestColdstart(unittest.TestCase):
         full = coldstart_step(ctx, targets)
         self.assertEqual(list(full.columns), list(COLDSTART_COLUMNS))
         self.assertEqual(len(full), len(targets))
+        # `garP` 若算出来，必须是**比值带**（~1），不能是绝对价位（D49）
+        _gar = full.iloc[-1].get('garP')
+        if isinstance(_gar, (list, tuple)):
+            _vals = [v for pair in _gar for v in pair]
+            self.assertTrue(all(abs(v) < 20 for v in _vals),
+                            f'garP={_gar} 看起来是绝对价位，不是比值')
 
         T = targets[3]
         ctx_t = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
@@ -487,6 +493,27 @@ class TestReviewCliDefaults(unittest.TestCase):
         self.assertNotIn('用法错误', err)
         self.assertEqual(run.call_args.kwargs['codes'], ['600519', '000001'])
         self.assertEqual(run.call_args.kwargs['eval_range'], 'fast')
+
+    def test_eval_parses_code_name_lines(self):
+        """PowerShell here-string：每行 `代码<TAB>名称`，名称里的数字不能误取。"""
+        text = ('300641\t正丹股份\n'
+                '605179\t一鸣食品\n'
+                '001270\tST铖昌\n'
+                '600519.SH\t贵州茅台\n'
+                'sh000001\t上证指数')
+        rc, _, err, run = self._run(
+            ['--strategy', 'review', '--eval', text])
+        self.assertEqual(rc, 0)
+        self.assertNotIn('用法错误', err)
+        self.assertEqual(run.call_args.kwargs['codes'],
+                         ['300641', '605179', '001270', '600519', '000001'])
+
+    def test_eval_unknown_text_is_usage_error(self):
+        rc, _, err, run = self._run(
+            ['--strategy', 'review', '--eval', 'not-a-scope'])
+        self.assertEqual(rc, 2)
+        self.assertIn('6 位代码', err)
+        self.assertFalse(run.called)
 
     def test_keyboard_interrupt_returns_130(self):
         """Ctrl+C 必须干净退出（130），不能被当成运行期失败 1。"""

@@ -23,12 +23,14 @@ import numpy as np
 import pandas as pd
 
 from GolemQ.analysis.fbprophet import calc_fbprophet_bands
-from GolemQ.analysis.indicators import TA_HMA
+from GolemQ.analysis.indicators import TA_HMA, calc_macd_qa
 from GolemQ.analysis.magic_nine import calc_magic_nine_turns_np_vXs
 from GolemQ.analysis.poly9 import calc_polynomial9_vXIs
 from GolemQ.analysis.quadrant import mapower_np_vXIIs
-from GolemQ.analysis.stages import calc_garident_stages
-from GolemQ.analysis.timing import Timeline_duration, calc_event_timing_lag
+from GolemQ.analysis.stages import (calc_garident_stages,
+                                    garident_bands_to_ratio)
+from GolemQ.analysis.timing import (Timeline_duration, calc_event_timing_lag,
+                                    calc_feature_event_timing_lag)
 from GolemQ.core.constants import AKA, FIELD as FLD
 from GolemQ.pipeline.review.contract import COLDSTART_COLUMNS
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_DAILY,
@@ -53,6 +55,9 @@ def _stage_columns(day: pd.DataFrame) -> pd.DataFrame:
     feats[AKA.STAGE] = st
     feats[FLD.BOOTSTRAP_STAGE_BEFORE] = Timeline_duration(
         np.where(st < -0.00168, 1, 0)).astype(np.int16)
+    # 老树 `fractal/vXII.py:658`：STAGE 的金叉/死叉时序
+    feats[FLD.GARIDENT_STAGE_TIMING_LAG] = calc_feature_event_timing_lag(
+        feats, AKA.STAGE).astype(np.int16)
     return feats
 
 
@@ -62,6 +67,17 @@ def _core_daily(day: pd.DataFrame) -> pd.DataFrame:
     close = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
     typical = (day[AKA.OPEN] + day[AKA.HIGH] + day[AKA.LOW] + close) / 4
     feats[FLD.HMA10] = TA_HMA(typical.to_numpy(), 10)
+
+    # `EP_STG_BF` 的两个前置（老树 `fractal/vXII.py:658-660`）：
+    #   DEA_O_LAG          = DEA 的金叉/死叉时序
+    #   MACD_JX_BF         = DIF 上穿 DEA 后的 bar 数（CROSS + Timeline_duration）
+    dif, dea, _macd = calc_macd_qa(close)
+    feats[FLD.DIF] = dif.to_numpy()
+    feats[FLD.DEA] = dea.to_numpy()
+    feats[FLD.DEA_ZERO_TIMING_LAG] = calc_feature_event_timing_lag(
+        feats, FLD.DEA).astype(np.int16)
+    _jx = ((dif > dea) & (dif.shift(1) <= dea.shift(1))).to_numpy().astype(np.int16)
+    feats['_MACD_JX_BF'] = Timeline_duration(_jx).astype(np.int16)
     m9t = calc_magic_nine_turns_np_vXs(close.to_numpy().astype(np.float32))
     feats[FLD.MAGIC_NINE_TURNS] = m9t
     feats[FLD.MAGIC_NINE_TURNS_MAJOR] = m9t
@@ -77,6 +93,21 @@ def _core_daily(day: pd.DataFrame) -> pd.DataFrame:
     except Exception:               # noqa: BLE001
         for c in (FLD.POLYNOMIAL9_MAJOR, FLD.POLYNOMIAL9_NORM_MAJOR):
             feats[c] = np.nan
+
+    # `EP_STG_BF`（老树 `features/reviews.py:670`）：GAR 净空 < 0.927 且
+    # DEA 时序 < MACD 金叉时序 ⇒ 端点阶段计数。
+    _clear = pd.to_numeric(feats.get(FLD.GARIDENT_PRICE_CLEARANCE,
+                                     pd.Series(np.nan, index=feats.index)),
+                           errors='coerce')
+    _dea_lag = pd.to_numeric(feats.get(FLD.DEA_ZERO_TIMING_LAG,
+                                       pd.Series(np.nan, index=feats.index)),
+                             errors='coerce')
+    _jxBf = pd.to_numeric(feats.get('_MACD_JX_BF',
+                                    pd.Series(np.nan, index=feats.index)),
+                          errors='coerce')
+    _ep = ((_clear < 0.927) & (_dea_lag < _jxBf)).fillna(False).to_numpy()
+    feats[FLD.ENDPOINT_STAGE_BEFORE] = Timeline_duration(
+        _ep.astype(np.int16)).astype(np.int16)
     return feats
 
 
@@ -116,12 +147,30 @@ def _coldstart_row(day: pd.DataFrame) -> dict:
     feats = _prophet_columns(day, feats)
     last = feats.iloc[-1]
     # ⚠️ Poly9 拟合线是绝对价位 ⇒ **除 close 存比值**（D49 通则，避免复权断层）。
-    _close = float(pd.to_numeric(day[AKA.CLOSE], errors='coerce').iloc[-1])
+    close = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
+    _close = float(close.iloc[-1])
     _poly9 = last.get(FLD.POLYNOMIAL9_MAJOR, np.nan)
     _poly9_ratio = (_poly9 / _close) if (_close and not pd.isna(_poly9)) else np.nan
+    # `garP` 同一条纪律：`calc_garident_stages` 内部是**绝对价位带**，
+    # 落库前除以**锚 bar** 的 close 存比值；`garPAnchor` 给出乘回哪一个 close。
+    _anchor = last.get(FLD.GARIDENT_PRICE_ANCHOR, np.nan)
+    _bands = last.get(FLD.GARIDENT_PRICE, np.nan)
+    _gar_ratio = np.nan
+    if (isinstance(_anchor, str) and _anchor and
+            isinstance(_bands, (list, tuple)) and len(_bands)):
+        _days = pd.to_datetime(day.index.get_level_values(0)).strftime('%Y-%m-%d')
+        _anchor_close = pd.Series(close.to_numpy(), index=_days).groupby(level=0).last().get(_anchor)
+        if _anchor_close is not None and not pd.isna(_anchor_close):
+            _gar_ratio = garident_bands_to_ratio(_bands, float(_anchor_close))
     return {
         'STAGE': last.get(AKA.STAGE, np.nan),
         'BST_STG_BF': last.get(FLD.BOOTSTRAP_STAGE_BEFORE, np.nan),
+        'EP_STG_BF': last.get(FLD.ENDPOINT_STAGE_BEFORE, np.nan),
+        'garP': _gar_ratio,
+        'garPCount': last.get(FLD.GARIDENT_PRICE_COUNT, np.nan),
+        'garPClr': last.get(FLD.GARIDENT_PRICE_CLEARANCE, np.nan),
+        'garPAnchor': _anchor,
+        'garSLag': last.get(FLD.GARIDENT_STAGE_TIMING_LAG, np.nan),
         'm9t': last.get(FLD.MAGIC_NINE_TURNS, np.nan),
         'm9tMaj': last.get(FLD.MAGIC_NINE_TURNS_MAJOR, np.nan),
         'poly9_MAJ': _poly9_ratio,

@@ -42,7 +42,7 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 3 个死 benchmark 壳与 `BaseBenchmark` 已删 —— `pipeline/` 只剩 `BasePipeline` + `review/`；
 落库/水位已改为 **Active Market 取 DB 实例 + 参数注入**；持久化检查见
 `pipeline/review/persistence.py`（按目标表已有 review 行选缺失 bar，不看侧表水位；
-目标下界 day 2560 / min 800 天）。876 条测试全绿。
+目标下界 day 2560 / min 800 天）。878 条测试全绿。
 
 **下一步**：全量对拍分类（`compare_review_golden.py`）、coldstart `m9tBsl`
 （需 compact 特征链）、`--eval fast/etf/index/all` 回填；`--review-runtime` 端到端冒烟。
@@ -178,6 +178,10 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 | **REVIEW-CLI** | `--review` == `--strategy review`；`--eval` 全局唯一（删 `--review-eval` / `--review-codes`）；`--daily` 删除；`--force` / `--from` 全局且可组合；scope 必填、pct 默认明示；Ctrl+C → 130 | ✅ **D58** / P39 |
 | **15MIN-ZEN** | 15min minor 补齐老树 `calc_zen_wavelet_reality_minor` 的 **19 列**（新增 `zDLagMinR/zPLagMinR`，用 `calc_zen_timing_lag`）；60min 的这两列仍由 `zen_snapshots` 产出 | ✅ worklog 2026-10-20 |
 | **REGTREE-RS** | 删除零读取的 `REGTREE_TREND_RS` 常量 + 4 处赋值；`TREND`/`RETURNS` 保留（内部依赖） | ✅ worklog 2026-10-20 |
+| **GAR-EP** | coldstart 输出 `EP_STG_BF` + `garP/garPCount/garPClr/garPAnchor/garSLag` 到 60min；`garP` 存比值带；历史未回填 | ✅ worklog 2026-10-20 |
+| **CN-COMMENT-AUDIT** | 千股千评只搬了 `TurnoverRate`；牛股诊股（`stock_diagnosis*`）与旧 `stock_moneyflow` **完全未搬**；新采集仅当日/近 7 日 | ⚠️ 见 worklog 2026-10-20 |
+| **M9T-AUDIT** | raw+lag 四列齐全（`m9tMajR/m9tLagMajR/m9tWekR/m9tLagWekR`）；`m9tBsl/m9tBslLag/m9tBf/m9tSxBf/m9tDmy` 缺失，卡上游特征链 | ⚠️ worklog 2026-10-20 |
+| **POOLCOEF** | `--strategy poolcoef` 暂不能恢复：新 `models/poolcoef.py` 缺 `calc_stock_poolcoef_analysis`；需单独移植 `benchmark/poolcoef.py::workload` | ⏳ 待排期 |
 
 ---
 

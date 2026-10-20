@@ -2922,6 +2922,8 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `TestReviewCliDefaults.test_force_and_from_are_global()` | --force / --from 是通用修饰符，不跟 review 绑定。 |
 | f | `TestReviewCliDefaults.test_force_and_from_reach_run_review()` |  |
 | f | `TestReviewCliDefaults.test_eval_accepts_codes_as_second_argument()` | --eval 的第二参数可以是逗号分隔代码；没有独立的 --review-codes。 |
+| f | `TestReviewCliDefaults.test_eval_parses_code_name_lines()` | PowerShell here-string：每行 代码<TAB>名称，名称里的数字不能误取。 |
+| f | `TestReviewCliDefaults.test_eval_unknown_text_is_usage_error()` |  |
 | f | `TestReviewCliDefaults.test_keyboard_interrupt_returns_130()` | Ctrl+C 必须干净退出（130），不能被当成运行期失败 1。 |
 | C | `TestPipelineInterrupt` | 并行段必须用 with Parallel(...)，否则 Ctrl+C 后 worker 可能不退出。 |
 | f | `TestPipelineInterrupt.test_parallel_is_terminated_on_keyboard_interrupt()` |  |

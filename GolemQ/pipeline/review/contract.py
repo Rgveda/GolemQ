@@ -18,8 +18,9 @@
 `M9T` / `M9T_LAG`            `m9t` / `m9tLag`
 ===========================  ===========================
 
-`GAR_*` / `EP_STG_BF` 暂 **不纳入**（旧表有、但当前新树无消费方；等出现消费者
-再加一组 step/列，不整表复活）。
+`GAR_*` / `EP_STG_BF` **2026-10-20 起纳入**（用户明确要用）：由 coldstart 输出到
+60min 族。⚠️ `garP` 落的是**相对锚 bar close 的比值带**，必须配 `garPAnchor`
+一起读（D49）；不是老树的绝对价位带。
 """
 from __future__ import annotations
 
@@ -58,7 +59,9 @@ HOUR_ZEN_COLUMNS: Tuple[str, ...] = (
 #: coldstart 子集（模型层实际读取、纯 K 线可算；不含东财/同花顺/massive）。
 #: 合并了旧 `reality_features` 的日尺度列（`STAGE/BST/m9t/m9tLag`）。
 COLDSTART_COLUMNS: Tuple[str, ...] = (
-    'STAGE', 'BST_STG_BF', 'm9t', 'm9tLag', 'm9tMaj',
+    'STAGE', 'BST_STG_BF', 'EP_STG_BF',
+    'garP', 'garPCount', 'garPClr', 'garPAnchor', 'garSLag',
+    'm9t', 'm9tLag', 'm9tMaj',
     'poly9_MAJ', 'poly9pwr3_MAJ',
     'PROPHET_LB', 'PROPHET_UB', 'PROPHET_CLR_NORM',
     'PROPHET_LB_MAJ', 'PROPHET_UB_MAJ', 'PROPHET_CLR_NORM_MAJ',
