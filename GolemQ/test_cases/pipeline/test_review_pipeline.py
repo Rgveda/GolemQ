@@ -441,14 +441,15 @@ class TestReviewCliDefaults(unittest.TestCase):
         self.assertEqual(scan.eval_scope, 'fast')
         self.assertFalse(hasattr(review, 'review_eval'))
         self.assertFalse(hasattr(review, 'scan_eval'))
+        self.assertFalse(hasattr(review, 'review_codes'))
 
-    def test_explicit_codes_without_scope_is_allowed(self):
-        """给了 `--review-codes` 就不必再给 scope（明确知道跑谁）。"""
+    def test_eval_accepts_codes_as_second_argument(self):
+        """`--eval` 的第二参数可以是逗号分隔代码；没有独立的 `--review-codes`。"""
         rc, _, err, run = self._run(
-            ['--strategy', 'review', '--review-codes', '600519'])
+            ['--strategy', 'review', '--eval', '600519,000001'])
         self.assertEqual(rc, 0)
         self.assertNotIn('用法错误', err)
-        self.assertEqual(run.call_args.kwargs['codes'], ['600519'])
+        self.assertEqual(run.call_args.kwargs['codes'], ['600519', '000001'])
         self.assertEqual(run.call_args.kwargs['eval_range'], 'fast')
 
     def test_keyboard_interrupt_returns_130(self):

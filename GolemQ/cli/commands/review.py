@@ -11,9 +11,10 @@
 命令形状（用户 2026-10-20 明确）：
 
     --review  ==  --strategy review
-    --eval    是正交的 scope 选择器（全局选项，dest=`eval_scope`）
+    --eval    =  --strategy 的**第二参数**（scope 或逗号分隔代码；全局选项）
 
-**不要**再给单条命令造 ``--review-eval`` 这类前缀变体 —— 同一语义只能有一个名字。
+**不要**再给单条命令造 ``--review-eval`` / ``--review-codes`` 这类前缀变体
+—— 第二参数只有 ``--eval`` 一个入口。
 """
 from __future__ import annotations
 
@@ -30,8 +31,6 @@ def add_review_daily_arguments(parser) -> None:
                         type=float, default=None,
                         help='并行核数占比：0=串行；0~1=比例；1~100=百分数（老树 32=32%%）。'
                              '不给则用默认 0.32，并在 stderr 明示。')
-    parser.add_argument('--review-codes', dest='review_codes', default=None,
-                        help='显式代码清单（逗号分隔）；给了就跳过 scope 解析。')
     parser.add_argument('--families', default='day,60min,15min',
                         help='要写的族，逗号分隔（day,60min,15min）。'
                              '冷启动列已并入 60min。')
@@ -61,10 +60,13 @@ def add_review_runtime_arguments(parser) -> None:
                         help='runtime 允许现算重档（仅建议 watchlist 小范围）。')
 
 
-#: `--strategy review` 未给 scope 时**不猜**：直接退出 2。
+#: `--strategy review` 未给第二参数时**不猜**：直接退出 2。
 #: 这条是用户 2026-10-20 明确要求 —— 静默回落 `fast` 会让人以为「参数没生效」，
 #: 而实际已经跑了一段全市场复盘。
-_SCOPE_HELP = '--eval fast|block|etf|index|all|etc|etc_1|etc_2'
+#:
+#: ⚠️ **第二参数统一走 `--eval`**：scope（fast/block/…）或逗号分隔代码；
+#: **没有独立的 `--review-codes`** —— 用户 2026-10-20 明确它多余。
+_SCOPE_HELP = '--eval fast|block|etf|index|all|etc|etc_1|etc_2|600519,000001'
 
 
 def _review_selector(value) -> bool:
@@ -77,29 +79,21 @@ def _eval_value(args) -> str:
     return str(getattr(args, 'eval_scope', '') or '').strip()
 
 
-def _codes(args):
-    raw = getattr(args, 'review_codes', None)
-    if raw:
-        return [c.strip() for c in str(raw).split(',') if c.strip()]
-    return None
-
-
 def run_review_daily(args) -> int:
     from GolemQ.pipeline.review import run_review
 
     eval_range = _eval_value(args)
-    codes = _codes(args)
-    if not eval_range and not codes:
-        print('用法错误: --strategy review（或 --review）需要显式指定 scope —— {}，'
-              '或用 --review-codes 给代码'.format(_SCOPE_HELP), file=sys.stderr)
+    if not eval_range:
+        print('用法错误: --strategy review（或 --review）需要 {}'.format(
+            _SCOPE_HELP), file=sys.stderr)
         return 2
-    if not codes and (',' in eval_range or len(eval_range) > 12 or
-                      (eval_range.isdigit() and len(eval_range) == 6) or
-                      ('.' in eval_range and len(eval_range) <= 12)):
+    # `--eval` 的第二参数有两种形态：scope 或逗号分隔代码。
+    codes = None
+    if (',' in eval_range or len(eval_range) > 12 or
+            (eval_range.isdigit() and len(eval_range) == 6) or
+            ('.' in eval_range and len(eval_range) <= 12)):
         codes = [c.strip() for c in eval_range.split(',') if c.strip()]
         eval_range = 'fast'
-    if not eval_range:
-        eval_range = 'fast'          # 只有 `--review-codes` 时走到这里
     pct_of_cores = args.pct_of_cores
     if pct_of_cores is None:
         pct_of_cores = 0.32
@@ -130,7 +124,7 @@ def run_review_daily(args) -> int:
 def run_review_runtime(args) -> int:
     from GolemQ.pipeline.review import compute_runtime
 
-    codes = args.runtime_code or _codes(args)
+    codes = args.runtime_code
     if not codes:
         print('用法错误: --review-runtime 需要 --runtime-code（可重复）', file=sys.stderr)
         return 2
