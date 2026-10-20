@@ -24,7 +24,7 @@ import unittest
 
 import numpy as np
 
-from GolemQ.analysis.quadrant import inv_nums, mapower_np_vXIIs
+from GolemQ.analysis.quadrant_jit import inv_nums, mapower_np_vXIIs
 from GolemQ.analysis.quadrant_jit import (
     available as jit_available,
     inv_nums_jit,

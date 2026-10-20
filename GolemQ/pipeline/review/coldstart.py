@@ -24,9 +24,9 @@ import pandas as pd
 
 from GolemQ.analysis.fbprophet import calc_fbprophet_bands
 from GolemQ.analysis.indicators import TA_HMA, calc_macd_qa
-from GolemQ.analysis.magic_nine import calc_magic_nine_turns_np_vXs
+from GolemQ.analysis.magic_nine_jit import calc_magic_nine_turns_np_vXs_jit
 from GolemQ.analysis.poly9 import calc_polynomial9_vXIs
-from GolemQ.analysis.quadrant import mapower_np_vXIIs
+from GolemQ.analysis.quadrant_jit import mapower_np_vXIIs
 from GolemQ.analysis.stages import (calc_garident_stages,
                                     garident_bands_to_ratio)
 from GolemQ.analysis.timing import (Timeline_duration, calc_event_timing_lag,
@@ -87,7 +87,7 @@ def _core_daily(day: pd.DataFrame, feats: pd.DataFrame = None) -> pd.DataFrame:
     _jx = ((dif > dea) & (dif.shift(1) <= dea.shift(1))).to_numpy().astype(np.int16)
     feats['_MACD_JX_BF'] = Timeline_duration(_jx).astype(np.int16)
     if FLD.MAGIC_NINE_TURNS not in feats.columns:
-        feats[FLD.MAGIC_NINE_TURNS] = calc_magic_nine_turns_np_vXs(
+        feats[FLD.MAGIC_NINE_TURNS] = calc_magic_nine_turns_np_vXs_jit(
             close.to_numpy().astype(np.float32))
     feats[FLD.MAGIC_NINE_TURNS_MAJOR] = feats[FLD.MAGIC_NINE_TURNS]
     feats[FLD.MAGIC_NINE_TURNS_TIMING_LAG] = calc_event_timing_lag(

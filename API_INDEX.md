@@ -72,21 +72,14 @@ Prophet 价格区间（旧树 FBPROPHET_* 四列）—— 只搬算术，落库�
 | f | `TA_HMA(close, period)` | 赫尔移动平均（Hull Moving Average）。 `[dt]` |
 | f | `calc_macd_qa(close, short, long, mid)` | QUANTAXIS 口径的 MACD（QA_indicator_MACD，逐字等价）。 |
 
-### `magic_nine`
-神奇九转（Magic Nine Turns，TD-Sequential 风格）—— 纯算法核。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `calc_magic_nine_turns_np_vXs(truthPrice)` | 收盘价序列 → 神奇九转标记（float32，与输入等长）。 |
-
 ### `magic_nine_jit`
-magic_nine 的 numba 加速版（analysis/magic_nine.py 的 jit 对照实现）。
+神奇九转 —— numba.jit 版（唯一实现）。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `available()` | numba 在不在。 |
 | f | `magic_nine_jit_status()` | 排障用：numba 版本 + jit 是否真的开了（DISABLE_JIT 环境变量会关掉它）。 |
-| f | `calc_magic_nine_turns_np_vXs_jit(truthPrice)` | magic_nine.calc_magic_nine_turns_np_vXs 的 jit 版 —— 返回值逐值相同。 |
+| f | `calc_magic_nine_turns_np_vXs_jit(truthPrice)` | 收盘价序列 → 神奇九转标记（float32，与输入等长）。 |
 
 ### `peak`
 鲁棒性极值点识别（PEAK_POINT）—— 基于方差统计与 ZSCORE 排序。
@@ -126,7 +119,19 @@ Poly9 家族的编排层 —— 把 rolling_poly9_v2 / mapower 串成指标列�
 | f | `calc_polynomial9_norm_vXIs(features, annual)` | POLYNOMIAL9_NORM —— MA 均线多头排列能量强度（0..1）。 |
 | f | `calc_polynomial9_weekly_vXIs(ohlc_data, features, annual, freq)` | 周线 POLYNOMIAL9 → POLYNOMIAL9_WEEKLY（poly9Wek）。 |
 
-### `quadrant`
+### `quadrant_coef`
+上升系数 QUADRANT_UPRISING_I_COEF_DUMMY（QUprICoefD）—— 解耦后的编排。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `get_peak_high_price(logVs)` | 历史最高的累积序列（logHs[i] = max(logVs[:i+1])）。纯函数。 `[dt]` |
+| f | `get_pool_rate(logVs)` | 对数积水率（老树 analysis/pool_coef.py:53，逐字）。 `[dt]` |
+| f | `get_pool_rate_vX(logVs, regression)` | 稳健对数积水率：把 gain 换成参照序列（线性回归价）端的增量。 `[dt]` |
+| f | `calc_lineareg_price(close, timeperiod)` | LINEAREG_PRICE = talib.LINEARREG(close, timeperiod)（老树 push_credits.py:454）。 |
+| f | `calc_wavlet_coef_of_fractal(features, column_name, price_name, regression)` | 逐 bar 算 (COEF_CANDIDATE, COEF_DUMMY)。逐字搬老树 |
+| f | `calc_uprising_i_coef(features, column_name, price_name)` | 在 features 上写 两列（老树实际消费的那条链，见模块 docstring）： |
+
+### `quadrant_jit`
 四量图（calc_four_quadrant_boost）与四象限体系的特征计算 —— 逐字搬自老树。
 
 | | 名称 | 摘要 |
@@ -148,32 +153,12 @@ Poly9 家族的编排层 —— 把 rolling_poly9_v2 / mapower 串成指标列�
 | f | `calc_mainstream_feats(ohlc, features)` | 主力资金吸筹 —— 产出 MsLeadinBf / MsLeadinx3Bf / MsLeadinx5Bf。 |
 | f | `calc_bs_before(features)` | 8 个 BS*Bf* —— 买卖/星线信号的「距上一次」计数（Timeline_duration）。 |
 | f | `calc_pivot_timing_lag(features)` | ZenPivotLag —— 距出中枢（ZenPivotZD 变 NaN）以来的 lag。 |
-| f | `inv_nums(series)` | 序列的逆序数（inversion count）—— 前面比后面大的对数。 `[dt]` |
-| f | `mapower_np_vXIIs(price, range_list)` | MA 均线多头排列能量强度（POLYNOMIAL9_NORM 的生产核）—— 输出 0..1。 `[dt]` |
-
-### `quadrant_coef`
-上升系数 QUADRANT_UPRISING_I_COEF_DUMMY（QUprICoefD）—— 解耦后的编排。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `get_peak_high_price(logVs)` | 历史最高的累积序列（logHs[i] = max(logVs[:i+1])）。纯函数。 `[dt]` |
-| f | `get_pool_rate(logVs)` | 对数积水率（老树 analysis/pool_coef.py:53，逐字）。 `[dt]` |
-| f | `get_pool_rate_vX(logVs, regression)` | 稳健对数积水率：把 gain 换成参照序列（线性回归价）端的增量。 `[dt]` |
-| f | `calc_lineareg_price(close, timeperiod)` | LINEAREG_PRICE = talib.LINEARREG(close, timeperiod)（老树 push_credits.py:454）。 |
-| f | `calc_wavlet_coef_of_fractal(features, column_name, price_name, regression)` | 逐 bar 算 (COEF_CANDIDATE, COEF_DUMMY)。逐字搬老树 |
-| f | `calc_uprising_i_coef(features, column_name, price_name)` | 在 features 上写 两列（老树实际消费的那条链，见模块 docstring）： |
-
-### `quadrant_jit`
-quadrant 里 mapower 那一族的 numba 加速版（D36 形态的 jit 对照实现）。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
 | f | `available()` | numba 在不在。 |
 | f | `quadrant_jit_status()` | 排障用：numba 版本 + jit 是否真的开了（DISABLE_JIT 环境变量会关掉它）。 |
-| f | `inv_nums_jit(series)` | quadrant.inv_nums 的 jit 版。numba 不在场时回落到纯 Python 版（宁可慢，不要抛）。 |
-| f | `mapower_np_vXIIs_jit(price, range_list)` | quadrant.mapower_np_vXIIs 的 jit 版 —— 返回值逐值相同。 |
+| f | `inv_nums(series)` | 逆序对数 —— numba.jit 接口（显式 int16(float32[:])）。 |
+| f | `mapower_np_vXIIs(price, range_list)` | MA 切片的 mapower 归一化 —— numba.jit 接口（显式 float32[:](float32[:], int16[:])）。 |
 
-### `regtree`
+### `regtree_jit`
 回归树（CART）与 regtree 拟合线 —— 从旧树 analysis/regtree.py 搬运。
 
 | | 名称 | 摘要 |
@@ -193,12 +178,6 @@ quadrant 里 mapower 那一族的 numba 加速版（D36 形态的 jit 对照实�
 | f | `calc_regtree_renko_fractal_func(data)` | 计算 regtree_renko 延长形态 |
 | f | `calc_regtree_fractal_vXI(data)` | 快速计算regtree拟合线，因为超过500bar计算速度会变得很慢（超过5秒），所以 bar_limit 默认限制为 300 |
 | f | `calc_regtree_fractal_vXIs(data)` | 快速计算regtree拟合线，因为超过500bar计算速度会变得很慢（超过5秒），所以 bar_limit 默认限制为 300 |
-
-### `regtree_jit`
-regtree 的 numba 加速版（analysis/regtree.py 的 jit 对照实现）。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
 | f | `available()` | numba 在不在。 |
 | f | `regtree_jit_status()` | 排障用：numba 版本 + jit 是否真的开了（DISABLE_JIT 环境变量会关掉它）。 |
 | f | `choose_best_split_branch_jit(seq_data, rate, dur)` | regtree.choose_best_split_branch 的 jit 版；返回形状保持一致 |
@@ -206,7 +185,7 @@ regtree 的 numba 加速版（analysis/regtree.py 的 jit 对照实现）。
 | f | `tree_forecast_jit(tree, seq_data, directions)` | :func:regtree.create_whole_forecast_tree 的 jit 遍历版。 |
 | f | `calc_regtree_fractal_jit(data)` | :func:regtree.calc_regtree_fractal_func 的 jit 建树版。 |
 
-### `renko`
+### `renko_jit`
 砖块图（RENKO）—— 砖块序列生成与趋势判定。
 
 | | 名称 | 摘要 |
@@ -222,18 +201,9 @@ regtree 的 numba 加速版（analysis/regtree.py 的 jit 对照实现）。
 | f | `renko.get_renko_lower_shadow()` | 返回每个 Renko bar 的下影线 |
 | f | `renko.get_renko_gaps()` | 返回每个 Renko bar 的原始时间轴坐标起点 |
 | f | `renko.get_source_aligned()` | 返回时间轴对齐原始 OHLC 的 Renko Bars |
-| f | `evaluate_renko(brick, history, column_name)` | 用给定砖高跑一遍砖块序列，返回 evaluate() 里的某一项（调用方传 'score'）。 |
-| f | `renko_chart(price_series, N, condensed)` | 定砖高 Renko 压缩：把价格序列压成砖块序列。 `[dt]` |
-| f | `renko_in_cluster_group(data, indices, maxlength)` | 按 maxlength 分窗，用 ATR 定界 + 布伦特法搜每窗的最优砖高。 |
-| f | `renko_trend_cross_func(data, indices)` | 使用 Renko brick 砖块图进行趋势判断 —— 写 FLD.RENKO_* 一族列。 |
-
-### `renko_jit`
-renko 的 numba 加速版（analysis/renko.py 的 jit 对照实现）。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
 | f | `available()` | numba 在不在。 |
 | f | `renko_jit_status()` | 排障用：numba 版本 + jit 是否真的开了（DISABLE_JIT 环境变量会关掉它）。 |
+| f | `renko_chart(price_series, N, condensed)` | 定砖高 Renko 压缩：把价格序列压成砖块序列。 `[dt]` |
 | f | `bricks_directions(prices, brick_size)` | :func:_kernels 的公开封装 —— 算容量、跑核、溢出就抛。 `[dt]` |
 | f | `evaluate_renko_jit(brick, history, column_name)` | :func:renko.evaluate_renko 的 jit 版 —— 返回值逐值相同。 `[dt]` |
 | f | `renko_in_cluster_group_jit(data, indices, maxlength)` | :func:renko.renko_in_cluster_group 的 jit 版 —— 只有目标函数不同。 |
@@ -1319,7 +1289,7 @@ coldstart 最小集：M9T major / Poly9 / Prophet（模型层消费）。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
-| f | `coldstart_step(ctx, targets)` | 每个目标日期只用截至该日的数据算一行 —— 因果，且前缀稳定。 |
+| f | `coldstart_step(ctx, targets)` | 取样：day_core 已对每个目标日期算好 coldstart，这里只映射到 60min 目标。 |
 | f | `build_coldstart_steps()` |  |
 
 ### `contract`
@@ -1362,7 +1332,8 @@ Runtime API：在内存里算 review 特征，零 DB 写。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
-| f | `daily_snapshot_step(ctx, targets)` | 每个日线快照返回一行 13 列。 |
+| f | `day_core_step(ctx, targets)` | day 唯一一趟：day 特征 + coldstart（M9T/Poly9 共享，Prophet 逐日）。 |
+| f | `daily_snapshot_step(ctx, targets)` | 取样：day_core 已经算好，这里不再重算。 |
 | f | `build_daily_steps()` |  |
 
 ### `hour_extra`
@@ -1378,16 +1349,17 @@ Runtime API：在内存里算 review 特征，零 DB 写。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
-| f | `minor_signals_step(ctx, targets)` | 在 15min 帧上算 17 个 minor 信号（一次算全帧，按 as_of 截断）。 |
-| f | `hour_minor_sample_step(ctx, targets)` | 把 15min minor 结果按精确时间戳采样到 60min 目标。 |
+| f | `minor_features(ohlc, code, market_type)` | 在给定 15min 窗口上算 minor 19 列（17 minor + 2 zen）。纯窗口函数。 |
+| f | `minor_signals_step(ctx, targets)` | 兼容入口：在整条 15min 帧上算一次（测试/旧调用）。 |
+| f | `minute15_aligned_step(ctx, targets)` | 把 zen_snapshots 已对齐到 60min 的 19 列取样到 15min 族。 |
 | f | `build_minor_steps()` |  |
 
 ### `zen`
-60min / 15min 的 zen 快照（zDLagR/zPLagR 与 zDLagMinR/zPLagMinR）。
+60min 快照：zen60 + 15min minor/zen（按 60min 目标对齐）。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
-| f | `zen_snapshots_step(ctx, targets)` | 对每个 60min 目标同时算 60min 与 15min 两条 zen（zDLag* / zDLagMin*）。 |
+| f | `zen_snapshots_step(ctx, targets)` | 每个 60min 目标：zen60 + 15min 窗口里算出的 minor 17 + zen15 2。 |
 | f | `build_zen_steps()` |  |
 
 ## GolemQ.portfolio
@@ -1626,7 +1598,7 @@ analysis/indicators.py（TA_HMA）的结构性钉子。
 | f | `TestAvailability.test_missing_talib_raises_import_error()` | 缺 talib 时给人话，不是裸 NameError。 |
 
 ### `test_magic_nine`
-analysis/magic_nine.py 的逐值对拍 + 它的 jit 版一致性。
+analysis/magic_nine_jit.py 的逐值对拍 + 结构性钉子。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -1636,10 +1608,6 @@ analysis/magic_nine.py 的逐值对拍 + 它的 jit 版一致性。
 | f | `TestMatchesOld.test_strong_downtrend_hits_nine()` |  |
 | f | `TestMatchesOld.test_flat_series()` | 全平 ⇒ 走 i == _list_t 分支。 |
 | f | `TestMatchesOld.test_sample_paths()` |  |
-| C | `TestJitMatchesPure` | jit 版必须与纯 Python 版逐值一致（DECISIONS.md D36）。 |
-| f | `TestJitMatchesPure.test_status_shape()` |  |
-| f | `TestJitMatchesPure.test_jit_equals_pure()` |  |
-| f | `TestJitMatchesPure.test_jit_accepts_non_float32_input()` | 入参不是 float32 时两版都要先转 —— 否则会在最低位上分叉。 |
 | C | `TestShape` | 结构性钉子（不依赖老树）。 |
 | f | `TestShape.test_length_matches_input()` |  |
 | f | `TestShape.test_dtype_is_float32()` |  |
@@ -2905,6 +2873,7 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `TestCausalPivotCount.test_counts_only_after_confirmation()` |  |
 | C | `TestColdstart` |  |
 | f | `TestColdstart.test_columns_and_prefix_stability()` |  |
+| f | `TestColdstart.test_intraday_uses_previous_day_close()` | 盘中 60min 行用上一交易日；15:00 才用当日收盘（无未来函数）。 |
 | C | `TestRouting` |  |
 | f | `TestRouting.test_reality_feat_name()` |  |
 | C | `TestWriteNulls` |  |

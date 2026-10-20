@@ -39,7 +39,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from GolemQ.analysis import quadrant as NEW
+from GolemQ.analysis import quadrant_jit as NEW
 from GolemQ.analysis.timing import Timeline_duration, calc_event_timing_lag
 from GolemQ.core import constants as _C
 from GolemQ.models.alias import LTT, TRD, ZEN
@@ -306,7 +306,7 @@ class TestDecoupled(unittest.TestCase):
 
     def test_import_does_not_pull_quantaxis(self):
         import subprocess
-        code = ('import sys, GolemQ.analysis.quadrant;'
+        code = ('import sys, GolemQ.analysis.quadrant_jit;'
                 'print("QUANTAXIS" in sys.modules)')
         out = subprocess.run([sys.executable, '-c', code],
                              capture_output=True, text=True, encoding='utf-8')

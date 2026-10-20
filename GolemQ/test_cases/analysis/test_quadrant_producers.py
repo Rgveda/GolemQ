@@ -19,7 +19,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from GolemQ.analysis import quadrant as Q
+from GolemQ.analysis import quadrant_jit as Q
 from GolemQ.analysis.indicators import calc_macd_qa
 from GolemQ.analysis.pivot import calc_zen_dash_timing_lag
 from GolemQ.core.constants import AKA, FIELD as FLD

@@ -49,7 +49,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from GolemQ.analysis import regtree as R
+from GolemQ.analysis import regtree_jit as R
 from GolemQ.analysis import regtree_jit as J
 from GolemQ.core.constants import FIELD as FLD
 

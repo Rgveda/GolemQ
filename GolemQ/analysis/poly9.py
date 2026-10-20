@@ -29,7 +29,7 @@ import pandas as pd
 
 from GolemQ.core.constants import AKA, FIELD as FLD
 from .indicators import TA_HMA
-from .quadrant import mapower_np_vXIIs
+from .quadrant_jit import mapower_np_vXIIs
 from .timeseries import rolling_poly9_v2
 from .timing import calc_event_timing_lag
 

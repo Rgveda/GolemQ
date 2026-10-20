@@ -40,7 +40,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from GolemQ.analysis import renko as R
+from GolemQ.analysis import renko_jit as R
 from GolemQ.analysis import renko_jit as J
 from GolemQ.core.constants import FIELD as FLD
 
@@ -216,7 +216,10 @@ class TestSpeedup(unittest.TestCase):
                 fn()
                 best = min(best, time.perf_counter() - t)
             return best
-        t_py = bench(lambda: R.renko_trend_cross_func(df.copy()))
+        from GolemQ.test_cases.analysis.test_renko import OLD as old
+        if old is None:
+            self.skipTest('老树不在场，没有纯 Python 基准可比')
+        t_py = bench(lambda: old.renko_trend_cross_func(df.copy()))
         t_jit = bench(lambda: J.renko_trend_cross_func_jit(df.copy()))
         self.assertGreater(t_py / max(t_jit, 1e-9), 2.0,
                            '只快 {:.2f}×（py {:.1f}ms / jit {:.1f}ms）'.format(

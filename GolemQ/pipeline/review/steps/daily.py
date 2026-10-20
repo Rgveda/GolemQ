@@ -8,10 +8,10 @@ import numpy as np
 import pandas as pd
 
 from GolemQ.analysis.indicators import TA_HMA
-from GolemQ.analysis.magic_nine import calc_magic_nine_turns_np_vXs
+from GolemQ.analysis.magic_nine_jit import calc_magic_nine_turns_np_vXs_jit
 from GolemQ.analysis.poly9 import calc_polynomial9_vXIs
-from GolemQ.analysis.quadrant import mapower_np_vXIIs
-from GolemQ.analysis.regtree import calc_regtree_fractal_vXIs
+from GolemQ.analysis.quadrant_jit import mapower_np_vXIIs
+from GolemQ.analysis.regtree_jit import calc_regtree_fractal_vXIs
 from GolemQ.analysis.timing import calc_event_timing_lag
 from GolemQ.analysis.timeseries import weekly_ohlc
 from GolemQ.analysis.zen import calc_zen_timing_lag
@@ -42,7 +42,7 @@ def _frame_features(ohlc: pd.DataFrame, annual: int = 252,
     typical = (ohlc[AKA.OPEN] + ohlc[AKA.HIGH] + ohlc[AKA.LOW] + close) / 4
     feats[FLD.HMA10] = TA_HMA(typical.to_numpy(), 10)
 
-    m9t = calc_magic_nine_turns_np_vXs(close.to_numpy().astype(np.float32))
+    m9t = calc_magic_nine_turns_np_vXs_jit(close.to_numpy().astype(np.float32))
     feats[FLD.MAGIC_NINE_TURNS] = m9t
     feats[FLD.MAGIC_NINE_TURNS_TIMING_LAG] = calc_event_timing_lag(m9t)
 

@@ -21,7 +21,7 @@ import pandas as pd
 import talib
 
 from GolemQ.analysis.indicators import calc_macd_qa
-from GolemQ.analysis.quadrant import (calc_bs_signals, calc_four_quadrant_boost,
+from GolemQ.analysis.quadrant_jit import (calc_bs_signals, calc_four_quadrant_boost,
                                       calc_mainstream_feats)
 from GolemQ.analysis.timing import calc_event_timing_lag
 from GolemQ.analysis.zen import calc_zen_timing_lag

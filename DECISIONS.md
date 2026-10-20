@@ -89,5 +89,6 @@
 | `D56` | ETF 数据拆分收口与 fund 历史残留（不搬） | 2026-10-20 | [decisions/D56.md](docs/decisions/D56.md) |
 | `D57` | 消息推送分层：`agents.channels`（渠道）与 `supervisor.alerts`（告警） | 2026-10-20 | [decisions/D57.md](docs/decisions/D57.md) |
 | `D58` | Review CLI 参数语义：`--strategy review`（别名 `--review`）、全局 `--eval`、删除 `--daily` | 2026-10-20 | [decisions/D58.md](docs/decisions/D58.md) |
+| `D59` | `analysis/*_jit.py` 合并为唯一实现，删除非 jit 原版 | 2026-10-21 | [decisions/D59.md](docs/decisions/D59.md) |
 
 <!-- END GENERATED -->

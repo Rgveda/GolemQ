@@ -57,8 +57,8 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 | 1 | 常量补齐 11 个 + 修活雷 | ✅ D49 第一节 |
 | 2a | `analysis/stages.py`（Garident STAGE）| ✅ D49 第二节 |
 | 2b | `analysis/timeseries.rolling_poly9_v2` | ✅ D49 第六节 |
-| 2e | `analysis/magic_nine.py` + `magic_nine_jit.py`（**只搬核**）| ✅ D49 第五节 |
-| **2c** | `mapower_np_vXIIs` / `inv_nums` → `quadrant.py` + `quadrant_jit.py` | ✅ **D49 第九节**（12 条对拍+jit 一致）|
+| 2e | `analysis/magic_nine_jit.py`（**只搬核**；原 `magic_nine.py` 已并入删除）| ✅ D49 第五节 |
+| **2c** | `mapower_np_vXIIs` / `inv_nums` → `quadrant_jit.py`（原 `quadrant.py` 已并入删除） | ✅ **D49 第九节**（12 条对拍+jit 一致）|
 | **2d** | `TA_HMA` → `analysis/indicators.py`（自实现，QUANTAXIS 已剔除）。⚠️ **`CROSS`/MACD 没搬** —— 无消费方（M9T 挂账），照「只搬用到的」| ✅ **D49 第九节**（7 条）|
 | **2f** | `analysis/poly9.py`：`calc_polynomial9_vXIs` + `calc_polynomial9_norm_vXIs`。⚠️ **端到端对拍同时是 `TA_HMA` 的真验证**（它没法单独与 QUANTAXIS 对拍）| ✅ **D49 第十节**（9 条对拍）|
 | **2g** | ~~`POLY9_REGTREE_DIVERGENCE`~~ → **整列已删**（连同相邻同型的 `ATR_LB_REGTREE_DIVERGENCE`）。唯一消费方是老树 `calc_Empirical_AMIRA_fractal`，**该函数已废弃、不搬** | ✅ **D49 第八节** |
@@ -109,7 +109,7 @@ mswing/ChartScan/4quad/czsc/mainstream-credits 等模型函数；牛股诊股数
 
 | 任务 | 内容 | 卡在哪 |
 |:--|:--|:--|
-| **M9T 收尾** | `calc_magic_nine_turns_dummy` / `_baseline` / `_baselines`（`analysis/magic_nine.py` 只搬了**核** `np_vXs`，见 `D49`）| 它们的输入列（`MACD_ZERO_TIMING_LAG` / `DEA_NORM_MAJOR` / `DIF_NORM_MAJOR` / `MTM_NORM_MAJOR` / `MAPOWER30_MAJOR` / `MAGIC_NINE_TURNS_MAJOR` / `_WEEKLY`）**新树一个都没有生产者**；另需 `calc_zen_chopstickss`（走 CZSC）与 `calc_renko_atr_vX` —— **两个函数整个不存在**。⚠️ 现在硬搬会算出**静默的错值**（`NaN` 参与比较）。前置就绪后**只是两行编排** |
+| **M9T 收尾** | `calc_magic_nine_turns_dummy` / `_baseline` / `_baselines`（`analysis/magic_nine_jit.py` 只搬了**核** `np_vXs`，见 `D49`）| 它们的输入列（`MACD_ZERO_TIMING_LAG` / `DEA_NORM_MAJOR` / `DIF_NORM_MAJOR` / `MTM_NORM_MAJOR` / `MAPOWER30_MAJOR` / `MAGIC_NINE_TURNS_MAJOR` / `_WEEKLY`）**新树一个都没有生产者**；另需 `calc_zen_chopstickss`（走 CZSC）与 `calc_renko_atr_vX` —— **两个函数整个不存在**。⚠️ 现在硬搬会算出**静默的错值**（`NaN` 参与比较）。前置就绪后**只是两行编排** |
 
 ### 卡在你身上
 
@@ -193,6 +193,8 @@ mswing/ChartScan/4quad/czsc/mainstream-credits 等模型函数；牛股诊股数
 | **POOLCOEF** | `--strategy poolcoef` 暂不能恢复：新 `models/poolcoef.py` 缺 `calc_stock_poolcoef_analysis`；需单独移植 `benchmark/poolcoef.py::workload` | ⏳ 待排期 |
 | **SE-PIVOT** | 60min 新增 `SE`（15:00 日频样本熵，≤2160 根）+ `ZenPivotCnt`（因果中枢计数）；60min 契约 36 列 | ✅ worklog 2026-10-20，882 条用例 |
 | **REVIEW-ONEPASS** | day 832 / 周线 2160；60min 一趟合并 zen60+minor17+zen15+SE+pivot；day 一趟合并 daily_snapshot+coldstart（M9T/Poly9 共享，周线按周缓存）；15min 表 1:4 取样 | ✅ worklog 2026-10-20 |
+
+| **JIT-MERGE** | `analysis/{magic_nine,quadrant,renko,regtree}.py` 并入对应 `*_jit.py`，原文件删除；核心核显式 numba 签名 | ✅ **D59**，881 条测试 |
 
 ---
 

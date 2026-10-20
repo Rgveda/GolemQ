@@ -60,7 +60,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from GolemQ.analysis import renko as NEW
+from GolemQ.analysis import renko_jit as NEW
 
 _OLD_TREE = os.path.abspath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', 'GolemQ_old'))

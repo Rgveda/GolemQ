@@ -100,7 +100,7 @@ DOCTEST_MODULES = (
     # 编码：**价格列把方向编码在符号里**（下跌砖是负数），末行 `-11.0` 是刻意的。
     # ⚠️ 本模块**模块级**导入 numba/scipy/talib（三者都在 MIN_PACKAGES），
     # 所以收集它比别的条目慢一点点 —— 但不需要 DB 与网络，仍是 hermetic 的。
-    'GolemQ.analysis.renko',
+    'GolemQ.analysis.renko_jit',
     # 资金流/千股千评的行构造与单位换算：`to_code`（int 陷阱）、
     # `parse_cn_amount`（`'3.72亿'`）、`parse_pct`（`'20.02%'`）、
     # `metadata_day_doc_multi`（多列文档）都是纯函数。
@@ -116,7 +116,7 @@ DOCTEST_MODULES = (
     # （`sma`/`ema`/`llv`）挂了 doctest —— `calc_four_quadrant_boost` 那几个
     # 是**原地改 features** 的，不适合 doctest；它们的正确性证据是
     # `test_quadrant.py` 里与老树 `analysis/base.py` 的**逐值对拍**。
-    'GolemQ.analysis.quadrant',
+    'GolemQ.analysis.quadrant_jit',
     # 上升系数的**自包含**生产路径（对数积水率三件套 + 编排）。
     # 纯函数（prophet/DB 都不碰；`talib` 只在 linearreg 那一支惰性 import）。
     'GolemQ.analysis.quadrant_coef',
