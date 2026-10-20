@@ -72,18 +72,24 @@ def GQ_data_min_resample(min_data, type_='5min'):
     conversion = _min_conversion(min_data)
     min_data = min_data.loc[:, list(conversion.keys())]
     idx = min_data.index
+    # ⚠️ **pandas 3：`offset` 只对 Tick-like 频率（h/m/s/ms/us/ns）生效**；
+    # `1D` 这类非 Tick 频率会忽略它并告警。分钟级必须保留 offset（分段口径），
+    # 日频则显式不传 —— 否则 `1D` 会连告两次。
+    tick_like = isinstance(to_offset(type_), pd.offsets.Tick)
+    offset_am = {'offset': '30min'} if tick_like else {}
+    offset_pm = {'offset': '0min'} if tick_like else {}
     part_1 = min_data.iloc[idx.indexer_between_time('9:30', '11:30')]
     part_1_res = part_1.resample(
         type_,
-        offset="30min",
         closed='right',
+        **offset_am,
     ).apply(conversion)
     part_1_res.index = part_1_res.index + to_offset(type_)
     part_2 = min_data.iloc[idx.indexer_between_time('13:00', '15:00')]
     part_2_res = part_2.resample(
         type_,
-        offset="0min",
         closed='right',
+        **offset_pm,
     ).agg(conversion)
     part_2_res.index = part_2_res.index + to_offset(type_)
     part_1_res['type'] = part_2_res['type'] = type_ if (type_ != '1D') else 'day'

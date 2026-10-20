@@ -1284,3 +1284,60 @@ RuntimeError: main thread is not in main loop
 ⚠️ 别用 `setdefault` —— 用户环境里残留的 `MPLBACKEND=TkAgg` 会把它顶掉。
 
 **守卫**：`test_chartscan_predict.TestHeadlessRendering`（2 条）。
+
+### P37. 日线帧的索引层**没有名字**，也没有 `ts` 列 —— `row.get('ts')` 恒 `None`
+
+**位置**：`markets/StockCN/metadata_save.py::fill_turnover`（2026-10-20 修）。
+
+**症状**：`refresh_turnover` 只报一行
+
+```
+[reality_feat_day] 换手率刷新跳过：DateParseError: Unknown datetime string format, unable to parse: None
+```
+
+—— 整段换手率补算被跳过，`--save` 其余照常，**不中断**。
+
+**机制**：`market.get_kline_price_v3(..., realtime=True)` 返回的日线帧
+索引第 0 层是时间，但**层名是 `None`**；日期在 `date` **列**（字符串），
+**没有 `ts` 列**。`frame.reset_index().to_dict('records')` 后时间轴叫 `index`，
+`row.get('ts')` 恒为 `None` ⇒ `'None'` 被送进 `pd.to_datetime`。
+
+**该怎么办**：日期取**索引第 0 层**的 Timestamp，不要猜列名：
+
+```python
+time_axis = pd.to_datetime(frame.index.get_level_values(0))
+for ts, row in zip(time_axis, frame.to_dict('records')):
+    day = str(ts.date())
+```
+
+**为什么会漏测**：`TestFillTurnover` 的夹具曾把索引命名成 `['ts','code']`，
+`reset_index()` 于是**碰巧**产出 `ts` 列 —— 夹具照的是「想象」，不是实物。
+现已改成无名索引。**加夹具前先打印一次真实返回帧的 `index.names` / `columns`。**
+
+**守卫**：`TestFillTurnover`（无名索引夹具）+ 真实 600519 帧验证（6 个交易日）。
+
+### P38. pandas 3 的 `resample(offset=)` 只对 **Tick-like** 频率生效
+
+**位置**：`analysis/timeseries.py`（`GQ_data_min_resample` / `GQ_data_min_to_day`），2026-10-20 修。
+
+**症状**：
+
+```
+RuntimeWarning: The 'offset' keyword does not take effect when resampling with a
+'freq' that is not Tick-like (h, m, s, ms, us, ns)
+```
+
+不报错、结果也对（`offset` 被忽略），只是每次 `--save` 刷一行；`1D` 的分段
+resample 会**连告两次**（上午 + 下午）。
+
+**机制**：pandas 3 只在 `h/m/s/ms/us/ns` 下应用 `offset`；`1D`/`1W`/`ME` 等忽略。
+`GQ_data_min_to_day` 传的是 `offset="0min"`（恒等）⇒ 直接删；
+`GQ_data_min_resample` 的分钟级 offset 是**分段口径，不能删** ⇒ 先判断：
+
+```python
+tick_like = isinstance(to_offset(type_), pd.offsets.Tick)
+offset_kw = {'offset': '30min'} if tick_like else {}
+```
+
+**守卫**：`test_cases/analysis/test_timeseries.py` —— `1D` 无告警、
+`60min` 仍保留 offset、日线聚合值不变。

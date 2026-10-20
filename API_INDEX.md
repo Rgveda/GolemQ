@@ -1913,6 +1913,18 @@ analysis/stages.py（Garident STAGE）与老树的逐值对拍。
 | f | `TestRatioForm.test_stage_survives_rebasing_via_anchor()` | 复权后 STAGE 不变 —— 前提是乘锚 close 还原。 |
 | f | `TestRatioForm.test_multiplying_by_current_close_is_the_trap()` | ⚠️ 反面钉子：乘当前 close 还原 ⇒ STAGE 塌成常数。 |
 
+### `test_timeseries`
+analysis/timeseries.py 的重采样器 —— 钉住 pandas 3 的口径变化。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestMinToDay` |  |
+| f | `TestMinToDay.test_no_offset_warning()` |  |
+| f | `TestMinToDay.test_daily_aggregation_is_unchanged()` |  |
+| C | `TestMinResample` |  |
+| f | `TestMinResample.test_1d_has_no_offset_warning()` | 1D 是非 Tick-like 频率；offset 只在分钟级生效，日频不该传。 |
+| f | `TestMinResample.test_60min_keeps_the_bin_offset()` | 分钟级仍要传 offset（上午 30min / 下午 0min 的不对称口径不能丢）。 |
+
 ### `test_timing`
 analysis/timing.py —— 从旧树搬回的时序累积器与金叉/死叉间隔。
 

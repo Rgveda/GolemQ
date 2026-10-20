@@ -38,6 +38,20 @@ def _min_frame(n=8, freq='15min', code='600519'):
     }, index=idx)
 
 
+def _resample_frame(n=8, freq='15min', code='600519'):
+    """`GQ_data_min_resample` 的实物形状：DatetimeIndex + `code` **列**。"""
+    idx = pd.date_range('2026-10-19 09:30', periods=n, freq=freq).rename('datetime')
+    return pd.DataFrame({
+        'code': [code] * n,
+        'open': range(n),
+        'high': [x + 1 for x in range(n)],
+        'low': [x - 1 for x in range(n)],
+        'close': range(n),
+        'volume': [100] * n,
+        'amount': [1000] * n,
+    }, index=idx)
+
+
 class TestMinToDay(unittest.TestCase):
     def test_no_offset_warning(self):
         df = _min_frame()
@@ -60,6 +74,29 @@ class TestMinToDay(unittest.TestCase):
         self.assertEqual(out['volume'].iloc[0], 800)
         self.assertEqual(out['amount'].iloc[0], 8000)
         self.assertEqual(out['code'].iloc[0], '600519')
+
+
+class TestMinResample(unittest.TestCase):
+    def test_1d_has_no_offset_warning(self):
+        """`1D` 是非 Tick-like 频率；`offset` 只在分钟级生效，日频不该传。"""
+        df = _resample_frame()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            out = TS.GQ_data_min_resample(df, type_='1D')
+
+        offset_warnings = [w for w in caught if 'offset' in str(w.message)]
+        self.assertEqual(offset_warnings, [])
+        self.assertGreater(len(out), 0)
+        self.assertEqual(list(out.index.names), ['datetime', 'code'])
+
+    def test_60min_keeps_the_bin_offset(self):
+        """分钟级仍要传 offset（上午 30min / 下午 0min 的不对称口径不能丢）。"""
+        df = _resample_frame()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            out = TS.GQ_data_min_resample(df, type_='60min')
+        self.assertEqual([w for w in caught if 'offset' in str(w.message)], [])
+        self.assertGreater(len(out), 0)
 
 
 if __name__ == '__main__':
