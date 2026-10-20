@@ -111,6 +111,7 @@ magic_nine 的 numba 加速版（analysis/magic_nine.py 的 jit 对照实现）�
 | f | `classify_pivots_per(pivots)` | 逐中枢判断走势类型——走到每个中枢结束时重新判一次（因果）。 |
 | f | `classify_pivots(pivots)` | 判断中枢序列构成的走势类型：盘整 / 上涨趋势 / 下跌趋势。 `[dt]` |
 | f | `pivots_to_df(pivots, kind)` | 把中枢列表转成 DataFrame，便于检查与导出。 `[dt]` |
+| f | `causal_pivot_count(pivots, dts, strict)` | 截至每根 bar 已确认的中枢个数（老树 quad_gear.causal_pivot_count 逐字搬运）。 `[dt]` |
 | f | `causal_pivot_series(pivots, dts, strict)` | 把中枢字段展开为与 dts 对齐的因果（无未来函数）特征列。 `[dt]` |
 | f | `plot_pivots(ax, pivots, x_mapper, x_last, box_color, box_alpha, edge_color, line_width, label, fontsize, strict)` | 在 K 线图上绘制中枢箱体（因果口径，无未来函数）。 |
 | f | `plot_pivots_plotly(fig, pivots, x_last, row, col, box_color, edge_color, line_width, label, show_ggdd, strict)` | 在 Plotly K 线图上绘制中枢箱体（矩形 + GG/DD 因果台阶 + ZG/ZD 标注）。 |
@@ -1363,6 +1364,14 @@ Runtime API：在内存里算 review 特征，零 DB 写。
 |:--|:--|:--|
 | f | `daily_snapshot_step(ctx, targets)` | 每个日线快照返回一行 13 列。 |
 | f | `build_daily_steps()` |  |
+
+### `hour_extra`
+60min 额外两列：样本熵 SE + 因果中枢计数 ZenPivotCnt。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `hour_extra_step(ctx, targets)` |  |
+| f | `build_hour_extra_steps()` |  |
 
 ### `minor`
 15min minor 信号 —— 老树 calc_zen_wavelet_reality_minor 的完整 19 列。
@@ -2889,6 +2898,11 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `TestMinorStep.test_columns_and_prefix_stability()` |  |
 | C | `TestZen` |  |
 | f | `TestZen.test_prefix_stability()` |  |
+| C | `TestHourExtra` |  |
+| f | `TestHourExtra.test_columns_and_causality()` |  |
+| f | `TestHourExtra.test_prefix_stability()` |  |
+| C | `TestCausalPivotCount` |  |
+| f | `TestCausalPivotCount.test_counts_only_after_confirmation()` |  |
 | C | `TestColdstart` |  |
 | f | `TestColdstart.test_columns_and_prefix_stability()` |  |
 | C | `TestRouting` |  |

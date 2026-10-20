@@ -18,13 +18,15 @@ import unittest.mock
 import numpy as np
 import pandas as pd
 
+from GolemQ.analysis.pivot import causal_pivot_count
 from GolemQ.analysis.zen import calc_zen_timing_lag
 from GolemQ.core.constants import AKA, MARKET_TYPE
 from GolemQ.pipeline.review.pipeline import ReviewPipeline, ReviewOptions
 from GolemQ.pipeline.review.runtime import compute_runtime
-from GolemQ.pipeline.review.contract import (DAY_COLUMNS, MINOR_COLUMNS,
-                                             MINOR_15MIN_COLUMNS)
+from GolemQ.pipeline.review.contract import (DAY_COLUMNS, HOUR_EXTRA_COLUMNS,
+                                             MINOR_COLUMNS, MINOR_15MIN_COLUMNS)
 from GolemQ.pipeline.review.steps.daily import daily_snapshot_step
+from GolemQ.pipeline.review.steps.hour_extra import hour_extra_step
 from GolemQ.pipeline.review.steps.minor import (hour_minor_sample_step,
                                                 minor_signals_step)
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, StepRunner,
@@ -161,6 +163,81 @@ class TestZen(unittest.TestCase):
         for c in (FLD_ZEN_DASH := 'ZEN_D_LAG', 'ZEN_P_LAG'):
             self.assertEqual(float(full.loc[(T, '600519'), c]),
                              float(cut.loc[(T, '600519'), c]))
+
+
+def _hour_frame(days=100, seed=41):
+    """A 股 60min 交易日形状：每天 10:30 / 11:30 / 14:00 / 15:00。"""
+    rng = np.random.default_rng(seed)
+    rows, idx = [], []
+    d = pd.Timestamp('2025-01-02')
+    while len(idx) < days * 4:
+        if d.weekday() < 5:
+            for hm in ('10:30', '11:30', '14:00', '15:00'):
+                idx.append(pd.Timestamp(f'{d.date()} {hm}'))
+                rows.append(rng.normal(0, 1))
+        d += pd.Timedelta(days=1)
+    close = 100 + np.cumsum(rows)
+    idx = pd.MultiIndex.from_arrays([idx, ['600519'] * len(idx)],
+                                    names=['ts', 'code'])
+    return pd.DataFrame({'open': close, 'high': close + 0.5,
+                         'low': close - 0.5, 'close': close,
+                         'volume': np.full(len(idx), 1e4),
+                         'amount': np.full(len(idx), 1e6)}, index=idx)
+
+
+class TestHourExtra(unittest.TestCase):
+    def test_columns_and_causality(self):
+        df = _hour_frame()
+        as_of = df.index.get_level_values(0)[-1]
+        ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
+                            frames={'60min': df}, as_of=as_of)
+        targets = target_times(df, as_of)
+        out = hour_extra_step(ctx, targets)
+        self.assertEqual(list(out.columns), list(HOUR_EXTRA_COLUMNS))
+        self.assertEqual(len(out), len(targets))
+
+        cnt = out['ZenPivotCnt'].to_numpy()
+        self.assertTrue((cnt >= 0).all())
+        self.assertTrue((np.diff(cnt) >= 0).all(), '中枢计数必须单调不减')
+
+        # 15:00 的 SE 有值；盘中 bar 沿用上一个 15:00 的值
+        times = pd.DatetimeIndex(targets).time
+        se = out['SE'].to_numpy()
+        self.assertTrue(np.isfinite(se[times == pd.Timestamp('15:00').time()]).any())
+        prev = np.nan
+        for t, v in zip(times, se):
+            if t == pd.Timestamp('15:00').time():
+                prev = v
+            else:
+                if np.isfinite(prev):
+                    self.assertEqual(v, prev)
+
+    def test_prefix_stability(self):
+        df = _hour_frame()
+        T = df.index.get_level_values(0)[-1]
+        full = hour_extra_step(
+            ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
+                          frames={'60min': df}, as_of=T),
+            target_times(df, T))
+        cut_df = slice_asof(df, T)
+        cut = hour_extra_step(
+            ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
+                          frames={'60min': cut_df}, as_of=T),
+            target_times(cut_df, T))
+        pd.testing.assert_frame_equal(full.tail(1), cut.tail(1),
+                                      check_dtype=False)
+
+
+class TestCausalPivotCount(unittest.TestCase):
+    def test_counts_only_after_confirmation(self):
+        dts = pd.date_range('2026-01-01', periods=5, freq='h')
+        pivots = [{
+            'start_dt': dts[1],
+            'points': [{'dt': dts[1], 'known_dt': dts[2], 'xd': 10.0,
+                        'fx_mark': 'g'}] * 4,
+        }]
+        self.assertEqual(
+            causal_pivot_count(pivots, dts).tolist(), [0, 0, 1, 1, 1])
 
 
 class TestColdstart(unittest.TestCase):

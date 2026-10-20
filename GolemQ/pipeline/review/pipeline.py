@@ -231,12 +231,14 @@ class ReviewPipeline(BasePipeline):
 # --------------------------------------------------------------------------- #
 def build_default_steps() -> List[FeatureStep]:
     from GolemQ.pipeline.review.steps.daily import build_daily_steps
+    from GolemQ.pipeline.review.steps.hour_extra import build_hour_extra_steps
     from GolemQ.pipeline.review.steps.minor import build_minor_steps
     from GolemQ.pipeline.review.steps.zen import build_zen_steps
     from GolemQ.pipeline.review.coldstart import build_coldstart_steps
 
     return (build_daily_steps() + build_minor_steps() +
-            build_zen_steps() + build_coldstart_steps())
+            build_zen_steps() + build_coldstart_steps() +
+            build_hour_extra_steps())
 
 
 # --------------------------------------------------------------------------- #

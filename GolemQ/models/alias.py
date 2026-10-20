@@ -126,3 +126,4 @@ class ZEN:
     PIVOT_DD = 'ZenPivotDD'              # 中枢最低点（延伸下界）
     PIVOT_DIRECTION = 'ZenPivotDir'      # 中枢方向 up/down
     PIVOT_TIMING_LAG = 'ZenPivotLag'     # 距离开中枢（PIVOT_ZD NaN）以来的 lag
+    PIVOT_COUNT = 'ZenPivotCnt'          # 截至当前 bar 已确认的中枢个数（因果）

@@ -66,11 +66,16 @@ COLDSTART_COLUMNS: Tuple[str, ...] = (
     'PROPHET_LB', 'PROPHET_UB', 'PROPHET_CLR_NORM',
     'PROPHET_LB_MAJ', 'PROPHET_UB_MAJ', 'PROPHET_CLR_NORM_MAJ',
 )
+#: 60min 额外两列（用户 2026-10-20 指定）：
+#: `SE` = 60min 收盘价的样本熵（15:00 日频、最后 ≤2160 根、round 3，盘内因果 ffill）；
+#: `ZenPivotCnt` = 截至当前 bar 已确认的缠论中枢个数（`causal_pivot_count`）。
+HOUR_EXTRA_COLUMNS: Tuple[str, ...] = ('SE', 'ZenPivotCnt')
+
 #: ⚠️ `m9tBsl` / `m9tBslLag` 暂不纳入：它们需要 compact 特征
 #: （MACD_ZERO_TIMING_LAG / DEA/DIF/POLY9/MAPOWER30 的 major norm）那一整条链，
 #: 尚未搬。用户 2026-10-19 最终口径列的是「M9T」，先落 raw/major。
 HOUR_COLUMNS: Tuple[str, ...] = (HOUR_ZEN_COLUMNS + MINOR_COLUMNS +
-                                 COLDSTART_COLUMNS)
+                                 COLDSTART_COLUMNS + HOUR_EXTRA_COLUMNS)
 
 #: 15min minor 的**完整**输出（老树 `calc_zen_wavelet_reality_minor` 的 19 列）：
 #: 2 个 zen + 17 个 minor。

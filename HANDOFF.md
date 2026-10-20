@@ -191,6 +191,7 @@ mswing/ChartScan/4quad/czsc/mainstream-credits 等模型函数；牛股诊股数
 | **CN-COMMENT-AUDIT** | 千股千评只搬了 `TurnoverRate`；牛股诊股（`stock_diagnosis*`）与旧 `stock_moneyflow` **完全未搬**；新采集仅当日/近 7 日 | ⚠️ 见 worklog 2026-10-20 |
 | **M9T-AUDIT** | raw+lag 四列齐全（`m9tMajR/m9tLagMajR/m9tWekR/m9tLagWekR`）；`m9tBsl/m9tBslLag/m9tBf/m9tSxBf/m9tDmy` 缺失，卡上游特征链 | ⚠️ worklog 2026-10-20 |
 | **POOLCOEF** | `--strategy poolcoef` 暂不能恢复：新 `models/poolcoef.py` 缺 `calc_stock_poolcoef_analysis`；需单独移植 `benchmark/poolcoef.py::workload` | ⏳ 待排期 |
+| **SE-PIVOT** | 60min 新增 `SE`（15:00 日频样本熵，≤2160 根）+ `ZenPivotCnt`（因果中枢计数）；60min 契约 36 列 | ✅ worklog 2026-10-20，882 条用例 |
 
 ---
 

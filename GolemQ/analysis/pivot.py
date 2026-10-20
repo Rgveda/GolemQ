@@ -378,6 +378,47 @@ def pivots_to_df(pivots: List[Dict], kind=None) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def causal_pivot_count(pivots: List[Dict], dts, strict: bool = True) -> np.ndarray:
+    """截至每根 bar **已确认**的中枢个数（老树 `quad_gear.causal_pivot_count` 逐字搬运）。
+
+    一个中枢要到它前 4 个分型点的 ``known_dt``（笔被 czsc 确认的时刻）最大值、
+    且不早于 ``start_dt`` 时，才算「成立」。返回与 ``dts`` 等长的 int32 数组，
+    第 i 个元素 = 成立时刻 ``<= dts[i]`` 的中枢数（含当前 bar）。
+
+    >>> import pandas as pd
+    >>> dts = pd.date_range('2026-01-01', periods=5, freq='h')
+    >>> pv = [{'start_dt': dts[1], 'points': [
+    ...     {'dt': dts[1], 'known_dt': dts[2]}] * 4}]
+    >>> causal_pivot_count(pv, dts).tolist()
+    [0, 0, 1, 1, 1]
+    """
+    dti = dts if isinstance(dts, pd.DatetimeIndex) \
+        else pd.DatetimeIndex(np.asarray(dts).reshape(-1))
+    if dti.tz is not None:
+        dti = dti.tz_convert(None)
+    dt_ns = dti.astype('datetime64[ns]').astype(np.int64)
+    n = len(dt_ns)
+    if n == 0:
+        return np.zeros(0, dtype=np.int32)
+
+    def _kt(x):
+        v = x.get('known_dt') if strict else None
+        return v if v is not None else x['dt']
+
+    conf = []
+    for p in pivots:
+        pts = p.get('points') or []
+        if not pts:
+            continue
+        start_ns = pd.Timestamp(p['start_dt']).value
+        head = pts[:4] if len(pts) >= 4 else pts
+        conf_ns = max(pd.Timestamp(_kt(x)).value for x in head)
+        conf_ns = max(conf_ns, start_ns)
+        conf.append(conf_ns)
+    arr = np.asarray(sorted(conf), dtype=np.int64)
+    return np.searchsorted(arr, dt_ns, side='right').astype(np.int32)
+
+
 def causal_pivot_series(pivots: List[Dict], dts, strict: bool = True) -> tuple:
     """把中枢字段展开为与 ``dts`` 对齐的**因果（无未来函数）**特征列。
 
