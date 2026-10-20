@@ -27,8 +27,8 @@ from GolemQ.analysis.timing import calc_event_timing_lag
 from GolemQ.analysis.zen import calc_zen_timing_lag
 from GolemQ.core.constants import AKA, FEATURES, FIELD as FLD
 from GolemQ.models.alias import LTT, TRD
-from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_RUNTIME,
-                                   slice_asof)
+from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_DAILY,
+                                   TIER_RUNTIME, slice_asof)
 from GolemQ.pipeline.review.contract import MINOR_15MIN_COLUMNS, MINOR_COLUMNS
 
 #: 老树 15min 的 rename 表（源列 → MINOR 列）。
@@ -54,9 +54,9 @@ _RENAME = {
 }
 
 
-def minor_signals_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFrame:
-    """在 15min 帧上算 17 个 minor 信号（一次算全帧，按 `as_of` 截断）。"""
-    ohlc = slice_asof(ctx.frame('15min'), ctx.as_of)
+def minor_features(ohlc: pd.DataFrame, code: str,
+                   market_type=None) -> pd.DataFrame:
+    """在给定 15min 窗口上算 minor 19 列（17 minor + 2 zen）。**纯窗口函数**。"""
     if ohlc is None or len(ohlc) < 30:
         return pd.DataFrame(columns=MINOR_15MIN_COLUMNS)
 
@@ -77,14 +77,14 @@ def minor_signals_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.Data
     feats[FLD.MACD] = hist.to_numpy()
 
     # 3) 四量图 → 4) BS 星线 → 5) 主力吸筹
-    feats = calc_four_quadrant_boost(ctx.code, features=feats,
+    feats = calc_four_quadrant_boost(code, features=feats,
                                      ohlc_data=ohlc, annual=4032)
     feats = calc_bs_signals(ohlc, feats)
     feats = calc_mainstream_feats(ohlc, feats)
 
     # 5) zen（老树 `calc_zen_chopstickss` 的核，新树 czsc 0.7.10）
     feats = calc_zen_timing_lag(ohlc, features=feats,
-                                market_type=ctx.market_type)
+                                market_type=market_type)
 
     feats = feats.rename(columns=_RENAME)
     out = pd.DataFrame(index=ohlc.index)
@@ -93,41 +93,29 @@ def minor_signals_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.Data
     return out
 
 
-def hour_minor_sample_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFrame:
-    """把 15min minor 结果按**精确时间戳**采样到 60min 目标。"""
-    src = ctx.outputs.get('minor_signals')
+def minor_signals_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFrame:
+    """兼容入口：在整条 15min 帧上算一次（测试/旧调用）。"""
+    return minor_features(slice_asof(ctx.frame('15min'), ctx.as_of), ctx.code,
+                          market_type=ctx.market_type)
+
+
+def minute15_aligned_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFrame:
+    """把 `zen_snapshots` 已对齐到 60min 的 19 列**取样**到 15min 族。
+
+    不重算：15min 的 minor/zen 已在 `zen_snapshots` 的 60min 目标循环里算好，
+    这里只按同一批时间戳落到 15min 表（每小时第 4 根）。
+    """
+    src = ctx.outputs.get('_minute15_rows')
     if src is None or len(src) == 0:
-        return pd.DataFrame(columns=MINOR_COLUMNS)
-    # 按时间戳索引（单码），保留最后一根
-    s = src.copy()
-    s.index = pd.DatetimeIndex(pd.to_datetime(s.index.get_level_values(0)))
-    s = s[~s.index.duplicated(keep='last')]
-    rows = []
-    idx = []
-    for T in targets:
-        if T in s.index:
-            # ⚠️ 只采 **17 个 minor 列**：`minor_signals` 现在多产 2 个 zen 列，
-            # 但 60min 的 `zDLagMinR/zPLagMinR` 由 `zen_snapshots` 负责。
-            rows.append(s.loc[T, list(MINOR_COLUMNS)].to_numpy())
-            idx.append((pd.Timestamp(T), ctx.code))
-        else:
-            rows.append(np.full(len(MINOR_COLUMNS), np.nan))
-            idx.append((pd.Timestamp(T), ctx.code))
-    if not idx:
-        return pd.DataFrame(columns=MINOR_COLUMNS)
-    return pd.DataFrame(rows,
-                        index=pd.MultiIndex.from_tuples(idx, names=['ts', 'code']),
-                        columns=list(MINOR_COLUMNS))
+        return pd.DataFrame(columns=MINOR_15MIN_COLUMNS)
+    return src.loc[:, list(MINOR_15MIN_COLUMNS)]
 
 
 def build_minor_steps() -> List[FeatureStep]:
+    # 15min 不再单独逐目标算；它从 `zen_snapshots`（60min 对齐）取样。
     return [
-        FeatureStep(name='minor_signals', tier=TIER_RUNTIME,
+        FeatureStep(name='minute15_aligned', tier=TIER_DAILY,
                     input_freq='15min', output_family='15min',
-                    columns=MINOR_15MIN_COLUMNS, func=minor_signals_step,
-                    history='anchor'),
-        FeatureStep(name='hour_minor_sample', tier=TIER_RUNTIME,
-                    input_freq='15min', output_family='60min',
-                    columns=MINOR_COLUMNS, func=hour_minor_sample_step,
-                    deps=('minor_signals',), history='anchor'),
+                    columns=MINOR_15MIN_COLUMNS, func=minute15_aligned_step,
+                    deps=('zen_snapshots',), history='anchor'),
     ]

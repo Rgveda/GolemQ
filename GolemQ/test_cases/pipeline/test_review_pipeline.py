@@ -27,8 +27,7 @@ from GolemQ.pipeline.review.contract import (DAY_COLUMNS, HOUR_EXTRA_COLUMNS,
                                              MINOR_COLUMNS, MINOR_15MIN_COLUMNS)
 from GolemQ.pipeline.review.steps.daily import daily_snapshot_step
 from GolemQ.pipeline.review.steps.hour_extra import hour_extra_step
-from GolemQ.pipeline.review.steps.minor import (hour_minor_sample_step,
-                                                minor_signals_step)
+from GolemQ.pipeline.review.steps.minor import minor_signals_step
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, StepRunner,
                                    TIER_RUNTIME, slice_asof, target_times)
 
@@ -451,7 +450,9 @@ class TestRuntimeNoWrites(unittest.TestCase):
                 unittest.mock.patch('GolemQ.markets.StockCN.reality_save.fetch_reality_feat',
                                     return_value=None):
             out = compute_runtime('600519', as_of=as_of, families=('60min',))
-        self.assertIn('60min', out)
+        # 60min 的 minor/zen 现在属于合并后的 daily 档；runtime 默认只跑
+        # TIER_RUNTIME，因此没有现算输出（需要时用 --runtime-heavy / 读落库行）。
+        self.assertEqual(out, {})
         self.assertFalse(save.called)
         self.assertFalse(ups.called)
 

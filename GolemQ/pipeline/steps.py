@@ -111,8 +111,8 @@ class StepRunner:
                   (want_families is None or s.output_family in want_families or
                    s.output_family is None)]
 
-        # ⚠️ 依赖闭包：请求 60min 时，`hour_minor_sample` 依赖 15min 的
-        # `minor_signals` —— 后者必须一并算，哪怕 15min 族不落库。
+        # ⚠️ 依赖闭包：请求 15min 时，`minute15_aligned` 依赖 60min 对齐的
+        # `zen_snapshots` —— 后者必须一并算（15min 表只取样，不重算）。
         by_name = {s.name: s for s in steps}
         chosen_names = {s.name for s in chosen}
         stack = list(chosen_names)

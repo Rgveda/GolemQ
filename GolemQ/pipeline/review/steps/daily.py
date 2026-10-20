@@ -96,7 +96,7 @@ def daily_snapshot_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.Dat
     rows = []
     day_all = ctx.frame('day')
     for T in targets:
-        day = slice_asof(day_all, T, 1008)
+        day = slice_asof(day_all, T, 832)
         if len(day) < 30:
             continue
         feats = _frame_features(day, annual=252)

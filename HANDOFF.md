@@ -192,6 +192,7 @@ mswing/ChartScan/4quad/czsc/mainstream-credits 等模型函数；牛股诊股数
 | **M9T-AUDIT** | raw+lag 四列齐全（`m9tMajR/m9tLagMajR/m9tWekR/m9tLagWekR`）；`m9tBsl/m9tBslLag/m9tBf/m9tSxBf/m9tDmy` 缺失，卡上游特征链 | ⚠️ worklog 2026-10-20 |
 | **POOLCOEF** | `--strategy poolcoef` 暂不能恢复：新 `models/poolcoef.py` 缺 `calc_stock_poolcoef_analysis`；需单独移植 `benchmark/poolcoef.py::workload` | ⏳ 待排期 |
 | **SE-PIVOT** | 60min 新增 `SE`（15:00 日频样本熵，≤2160 根）+ `ZenPivotCnt`（因果中枢计数）；60min 契约 36 列 | ✅ worklog 2026-10-20，882 条用例 |
+| **REVIEW-ONEPASS** | day 832 / 周线 2160；60min 目标一趟合并 zen60+minor17+zen15+SE+pivot；15min 表按 1:4 取样不重算 | ✅ worklog 2026-10-20；**day 的 daily_snapshot/coldstart 仍未合并** |
 
 ---
 

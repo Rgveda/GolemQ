@@ -88,7 +88,8 @@ class ReviewPipeline(BasePipeline):
             # 60min 里的 `hour_legacy`（STAGE/BST/M9T）要从日线采样。
             req |= {'60min', '15min', 'day'}
         if fam & {'15min'}:
-            req.add('15min')
+            # 15min 族由 `zen_snapshots`（60min 对齐）取样，故也要 60min。
+            req |= {'60min', '15min'}
         return req
 
     def _fetch_frames(self, code: str, as_of: pd.Timestamp,
@@ -231,14 +232,12 @@ class ReviewPipeline(BasePipeline):
 # --------------------------------------------------------------------------- #
 def build_default_steps() -> List[FeatureStep]:
     from GolemQ.pipeline.review.steps.daily import build_daily_steps
-    from GolemQ.pipeline.review.steps.hour_extra import build_hour_extra_steps
     from GolemQ.pipeline.review.steps.minor import build_minor_steps
     from GolemQ.pipeline.review.steps.zen import build_zen_steps
     from GolemQ.pipeline.review.coldstart import build_coldstart_steps
 
     return (build_daily_steps() + build_minor_steps() +
-            build_zen_steps() + build_coldstart_steps() +
-            build_hour_extra_steps())
+            build_zen_steps() + build_coldstart_steps())
 
 
 # --------------------------------------------------------------------------- #

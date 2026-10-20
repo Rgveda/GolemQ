@@ -197,7 +197,7 @@ def coldstart_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFram
     dates = sorted({pd.Timestamp(t).normalize() for t in targets})
     cache = {}
     for d in dates:
-        cache[d] = _coldstart_row(slice_asof(day_all, d))
+        cache[d] = _coldstart_row(slice_asof(day_all, d, 832))
 
     rows, idx = [], []
     for t in targets:
