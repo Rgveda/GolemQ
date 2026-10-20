@@ -30,8 +30,13 @@ def _last(series, default=np.nan):
         return default
 
 
-def _frame_features(ohlc: pd.DataFrame, annual: int = 252) -> pd.DataFrame:
-    """在**因果切片**上算日/周线 zen、Poly9、M9T、RegTree。"""
+def _frame_features(ohlc: pd.DataFrame, annual: int = 252,
+                    with_regtree: bool = True) -> pd.DataFrame:
+    """在**因果切片**上算日/周线 zen、Poly9、M9T、RegTree。
+
+    ``with_regtree=False`` 用于**周线**：`_day_row` 只用周线的 zen/Poly9/M9T，
+    周线 RegTree 是纯浪费（而且是最重的部分之一）。
+    """
     feats = pd.DataFrame(index=ohlc.index)
     close = pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce')
     typical = (ohlc[AKA.OPEN] + ohlc[AKA.HIGH] + ohlc[AKA.LOW] + close) / 4
@@ -58,7 +63,7 @@ def _frame_features(ohlc: pd.DataFrame, annual: int = 252) -> pd.DataFrame:
 
     feats = calc_zen_timing_lag(ohlc, feats)
 
-    if len(ohlc) > 450:
+    if with_regtree and len(ohlc) > 450:
         try:
             feats = calc_regtree_fractal_vXIs(
                 ohlc, features=feats, bar_limit=450, rate=25, dur=10)
@@ -168,7 +173,8 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
                 try:
                     wk = weekly_ohlc(wk_raw)
                     if len(wk) > 0:
-                        wk_feats = _frame_features(wk, annual=52)
+                        wk_feats = _frame_features(wk, annual=52,
+                                                   with_regtree=False)
                 except Exception:    # noqa: BLE001
                     wk_feats = pd.DataFrame()
             wk_cache[wkey] = (wk_raw, wk_feats)

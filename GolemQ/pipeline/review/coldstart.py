@@ -130,8 +130,10 @@ def _prophet_columns(day: pd.DataFrame, feats: pd.DataFrame) -> pd.DataFrame:
     """Prophet 比值 + 净空（D53 比值口径）。"""
     close = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
     typical = (day[AKA.OPEN] + day[AKA.HIGH] + day[AKA.LOW] + close) / 4
-    feats[FLD.HMA5] = TA_HMA(typical.to_numpy(), 5)
-    feats[FLD.HMA10] = TA_HMA(typical.to_numpy(), 10)
+    if FLD.HMA5 not in feats.columns:
+        feats[FLD.HMA5] = TA_HMA(typical.to_numpy(), 5)
+    if FLD.HMA10 not in feats.columns:
+        feats[FLD.HMA10] = TA_HMA(typical.to_numpy(), 10)
     try:
         feats = calc_fbprophet_bands(day, feats, major_ohlc=None)
     except Exception:               # noqa: BLE001 prophet 未装/拟合失败
