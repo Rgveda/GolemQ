@@ -40,6 +40,11 @@ def tqdm_joblib(tqdm_object, label_template, step=1):
             super().__init__(*args, **kwargs)
 
         def __call__(self, *args, **kwargs):
+            # 防御：调用方若只传了 `desc/total`、没传 iterable，tqdm 关闭后
+            # `iterable` 会变 None；此时仍要把 joblib 的完成回调走完，否则
+            # `Parallel` 会挂住（2026-10-21 实测：34 码批次 0% 卡住 + 刷屏）。
+            if tqdm_object.iterable is None:
+                return super().__call__(*args, **kwargs)
             try:
                 tqdm_object.set_description(label_template.format(tqdm_object.iterable[tqdm_object.n]))
             except Exception:

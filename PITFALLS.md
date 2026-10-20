@@ -1368,3 +1368,38 @@ with Parallel(n_jobs=pool_size) as parallel:
 **验证**：`TestPipelineInterrupt`（断言 `__exit__` 被调用）；
 另用子进程 + `CTRL_BREAK_EVENT` 实测当前实现 20 秒内退出
 （退出码 `STATUS_CONTROL_C_EXIT` / 0xC000013A）。
+
+### P40. joblib 的 tqdm 容器**必须传 iterable** —— 否则 `Parallel` 会「零 worker 挂死」
+
+**位置**：`pipeline/base.py::BasePipeline.run_codes`、`core/presentation.py::tqdm_joblib`
+（2026-10-21 修）。
+
+**症状**：34 码 review 批次跑了数小时仍 `0/34`；stderr 反复刷
+
+```
+TypeError: object of type 'NoneType' has no len()
+  File "GolemQ/core/presentation.py", line 48, in __call__
+    if ((tqdm_object.n + step) < len(tqdm_object.iterable)):
+```
+
+进程表里只有父进程 + loky `resource_tracker`，**一个 worker 都没有**。
+
+**机制**：`tqdm(desc=..., total=N)` **没有 iterable**（`tqdm_object.iterable is None`）。
+`tqdm_joblib` 的 `BatchCompletionCallBack` 每次完成都读 `len(iterable)` ⇒ 抛错 ⇒
+joblib 的完成回调被打断 ⇒ `Parallel.__call__` 永远等不到完成记账 ⇒ **挂死**。
+不是慢，是根本没派发。
+
+**该怎么办**（老树同款）：把 codelist 作为 tqdm 的 iterable：
+
+```python
+with tqdm_joblib(tqdm(codelist, unit='stock',
+                      desc=f'{name} Processing'), '{}'):
+    ...
+```
+
+并在回调里加防御：`if tqdm_object.iterable is None: return super().__call__(...)`。
+另外并行开始时打一行（老树口径、不只在 `-v` 下）：
+`即将使用 {百分比} —> {N} 个CPU核心进行 {name} 的并行处理。`
+
+**验证**：`pool_size=4`、8 个任务 → **4 个不同 worker PID**（修复前 0 个）；
+`TestPipelineInterrupt.test_parallel_uses_multiple_worker_pids` 钉住。

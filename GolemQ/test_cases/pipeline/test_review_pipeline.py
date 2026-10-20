@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
+import time
 import unittest
 import unittest.mock
 
@@ -21,6 +23,7 @@ import pandas as pd
 from GolemQ.analysis.pivot import causal_pivot_count
 from GolemQ.analysis.zen import calc_zen_timing_lag
 from GolemQ.core.constants import AKA, MARKET_TYPE
+from GolemQ.pipeline.base import BasePipeline, CodeResult
 from GolemQ.pipeline.review.pipeline import ReviewPipeline, ReviewOptions
 from GolemQ.pipeline.review.runtime import compute_runtime
 from GolemQ.pipeline.review.contract import (DAY_COLUMNS, HOUR_EXTRA_COLUMNS,
@@ -640,6 +643,14 @@ class TestReviewCliDefaults(unittest.TestCase):
         self.assertIn('已中断', err.getvalue())
 
 
+class _PidPipe(BasePipeline):
+    """测试用管线：返回 worker 的 PID（模块级，便于 loky pickle）。"""
+
+    def run_code(self, code, **kwargs):
+        time.sleep(0.1)
+        return CodeResult(code=code, result=os.getpid())
+
+
 class TestPipelineInterrupt(unittest.TestCase):
     """并行段必须用 `with Parallel(...)`，否则 Ctrl+C 后 worker 可能不退出。"""
 
@@ -676,6 +687,58 @@ class TestPipelineInterrupt(unittest.TestCase):
 
         self.assertEqual(exited, [True],
                          'KeyboardInterrupt 后必须走 Parallel.__exit__ 终止 worker')
+
+    def test_parallel_uses_multiple_worker_pids(self):
+        """真实 joblib：pool_size=2 必须出现 **>=2 个不同 worker PID**。
+
+        ⚠️ 这条是回归：`tqdm` 只传 `desc/total`、没传 iterable 时，
+        `tqdm_joblib` 回调 `len(None)` 抛错，joblib 完成记账被打断，
+        `Parallel` **一个 worker 都不起、直接挂住**（2026-10-21 实测）。
+        """
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch.object(BasePipeline, '_setup_cpu_affinity',
+                                        lambda self: None), \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            res, stats = _PidPipe(name='review').run_codes(
+                [f'{i:06d}' for i in range(4)], pool_size=2)
+        pids = {r.result for r in res}
+        self.assertGreaterEqual(len(pids), 2, f'只用了 {pids}')
+        self.assertEqual(stats['success_count'], 4)
+        self.assertIn('2 个CPU核心', out.getvalue())
+
+    def test_parallel_banner_prints_core_count(self):
+        """并行开始时必须打出「N 个CPU核心」一行（老树口径，不只在 -v 下）。"""
+        from GolemQ.pipeline.base import BasePipeline, CodeResult
+
+        class _Pipe(BasePipeline):
+            def run_code(self, code, **kwargs):
+                return CodeResult(code=code)
+
+        class _FakeParallel:
+            def __init__(self, n_jobs):
+                self.n_jobs = n_jobs
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def __call__(self, tasks):
+                return []
+
+        out = io.StringIO()
+        with unittest.mock.patch('GolemQ.pipeline.base.Parallel', _FakeParallel), \
+                unittest.mock.patch('GolemQ.pipeline.base.JOBLIB_AVAILABLE', True), \
+                unittest.mock.patch.object(BasePipeline, '_setup_cpu_affinity',
+                                           lambda self: None), \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(io.StringIO()):
+            _Pipe(name='review').run_codes(['600519', '000001'], pool_size=3)
+        text = out.getvalue()
+        self.assertIn('3 个CPU核心', text)
+        self.assertIn('并行处理', text)
 
 
 if __name__ == '__main__':

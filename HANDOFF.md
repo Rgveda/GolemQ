@@ -196,6 +196,8 @@ mswing/ChartScan/4quad/czsc/mainstream-credits 等模型函数；牛股诊股数
 
 | **JIT-MERGE** | `analysis/{magic_nine,quadrant,renko,regtree}.py` 并入对应 `*_jit.py`，原文件删除；核心核显式 numba 签名 | ✅ **D59**，881 条测试 |
 
+| **PARALLEL-FIX** | `tqdm` 未传 iterable ⇒ `tqdm_joblib` 回调抛错 ⇒ joblib 零 worker 挂死；已修并打核心数横幅 | ✅ **P40**，885 条测试 |
+
 ---
 
 ## 四、纪律（上一轮用事故换来的，勿犯）

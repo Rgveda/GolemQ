@@ -224,11 +224,19 @@ class BasePipeline(ABC):
         self.success_count = 0
 
         if pool_size > 0 and JOBLIB_AVAILABLE and len(codelist) > 1:
-            if verbose:
-                print(f'Using parallel processing with {pool_size} workers')
+            # 老树口径：`即将使用 {百分比} —> {N} 个CPU核心进行…并行处理`。
+            # **不是只在 -v 下** —— 这是长任务开始时用户最需要确认的一行。
+            import multiprocessing as _mp
+            _pct = pool_size / max(int(_mp.cpu_count()), 1)
+            print('即将使用 {:.0%} —> {} 个CPU核心进行 {} 的并行处理。'.format(
+                _pct, pool_size, self.name), flush=True)
             try:
-                with tqdm_joblib(tqdm(desc=f'{self.name} Processing',
-                                      total=len(codelist)), '{}'):
+                # ⚠️ **必须把 codelist 作为 tqdm 的 iterable**（老树同款）：
+                # `tqdm_joblib` 的完成回调会读 `len(tqdm_object.iterable)`；
+                # 只传 `desc/total` 时 iterable 是 None ⇒ 回调 TypeError ⇒
+                # joblib 的完成记账被打断，并发任务会挂住。
+                with tqdm_joblib(tqdm(codelist, unit='stock',
+                                      desc=f'{self.name} Processing'), '{}'):
                     # ⚠️ **必须用 `with`**：`Parallel.__exit__` 会终止 worker。
                     # 不用上下文管理器时，Windows 上 Ctrl+C 后父进程可能在等
                     # 永远不结束的 loky worker —— 表现为「按键了但停不下来」。
