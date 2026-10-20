@@ -28,7 +28,8 @@ from GolemQ.agents.messenger import (
     setup_dingtalk_config,
     get_dingtalk_config,
     DingtalkAccessToken,
-    DingReminder
+    DingReminder,
+    sc_send,
 )
 from GolemQ.core.settings import GQSETTING
 
@@ -146,6 +147,65 @@ class TestDingReminder(unittest.TestCase):
         # 这里应该测试没有token时的行为，但当前实现不会抛出异常
         # 只是会跳过发送，所以这个测试需要调整
         DingReminder.send_message(content="Test message")     # 同上，别用位置参数
+
+
+class TestScSendUrl(unittest.TestCase):
+    """Server酱的两种 sendkey 形态 —— 必须解析成**不同**的 URL。"""
+
+    @patch('GolemQ.agents.messenger.requests.post')
+    def test_regular_key(self, mock_post):
+        mock_post.return_value.raise_for_status.return_value = None
+        mock_post.return_value.json.return_value = {'code': 0}
+        sc_send('SCT123abc', 't', 'd')
+        self.assertEqual(mock_post.call_args.args[0],
+                         'https://sctapi.ftqq.com/SCT123abc.send')
+
+    @patch('GolemQ.agents.messenger.requests.post')
+    def test_sctp_key_uses_its_own_host(self, mock_post):
+        """⚠️ `sctp<num>t...` 是 Server酱 Turbo 的新 key；仍打旧域名会 404。"""
+        mock_post.return_value.raise_for_status.return_value = None
+        mock_post.return_value.json.return_value = {'code': 0}
+        sc_send('sctp123tABCD', 't', 'd')
+        self.assertEqual(mock_post.call_args.args[0],
+                         'https://123.push.ft07.com/send/sctp123tABCD.send')
+
+    def test_invalid_sctp_key_raises(self):
+        with self.assertRaises(ValueError):
+            sc_send('sctp-not-a-key', 't', 'd')
+
+
+class TestAlertDispatcher(unittest.TestCase):
+    """告警派发必须复用 `agents` 的传输，**不许再私写一份**。
+
+    历史：`supervisor/messenger.py` 曾自己实现 `_send_serverchan`（form 编码、
+    不支持 `sctp` key），与 `agents.sc_send`（JSON + sctp）已经分叉。
+    """
+
+    @patch('GolemQ.supervisor.messenger.check_serverchan_config', return_value=True)
+    @patch.object(GQSETTING, 'get_config', return_value='SCTtestkey')
+    @patch('GolemQ.supervisor.messenger.sc_send', return_value={'code': 0})
+    def test_uses_shared_transport(self, mock_sc, mock_get, mock_check):
+        from GolemQ.supervisor.messenger import Messenger
+        ok = Messenger().send_alert('title', 'body', 'warning')
+
+        self.assertTrue(ok)
+        mock_sc.assert_called_once()
+        args = mock_sc.call_args.args
+        self.assertEqual(args[0], 'SCTtestkey')
+        self.assertIn('WARNING', args[1])
+        self.assertIn('**消息级别**: WARNING', args[2])
+
+    @patch('GolemQ.supervisor.messenger.check_serverchan_config', return_value=True)
+    @patch.object(GQSETTING, 'get_config', return_value='SCTtestkey')
+    @patch('GolemQ.supervisor.messenger.sc_send', return_value={'error': 'boom'})
+    def test_transport_error_returns_false(self, mock_sc, mock_get, mock_check):
+        from GolemQ.supervisor.messenger import Messenger
+        self.assertFalse(Messenger().send_alert('t', 'm'))
+
+    @patch('GolemQ.supervisor.messenger.check_serverchan_config', return_value=False)
+    def test_no_channel_returns_false(self, mock_check):
+        from GolemQ.supervisor.messenger import Messenger
+        self.assertFalse(Messenger().send_alert('t', 'm'))
 
 
 if __name__ == '__main__':
