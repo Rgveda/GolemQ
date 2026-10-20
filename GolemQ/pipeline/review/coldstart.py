@@ -39,11 +39,15 @@ from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_DAILY,
 CHECKPOINT_STRIDE = 21
 
 
-def _stage_columns(day: pd.DataFrame) -> pd.DataFrame:
-    """日线 STAGE / BOOTSTRAP（稀疏 checkpoint + KMeans）。"""
-    feats = pd.DataFrame(index=day.index)
+def _stage_columns(day: pd.DataFrame, features: pd.DataFrame = None) -> pd.DataFrame:
+    """日线 STAGE / BOOTSTRAP（稀疏 checkpoint + KMeans）。
+
+    ``features`` 传入时**就地复用**已有 day 特征（M9T/Poly9 已算好），
+    只补 STAGE / BOOTSTRAP / GAR 这一组。
+    """
+    feats = features if features is not None else pd.DataFrame(index=day.index)
     feats[AKA.CLOSE] = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
-    ck = feats.iloc[::CHECKPOINT_STRIDE].copy()
+    ck = feats[[AKA.CLOSE]].iloc[::CHECKPOINT_STRIDE].copy()
     if len(ck) == 0 or ck.index[-1] != feats.index[-1]:
         ck = pd.concat([ck, feats.tail(1)])
     try:
@@ -61,12 +65,16 @@ def _stage_columns(day: pd.DataFrame) -> pd.DataFrame:
     return feats
 
 
-def _core_daily(day: pd.DataFrame) -> pd.DataFrame:
-    """日线核心列：STAGE / BOOTSTRAP / M9T(+lag) / Poly9。**因果**（逐 checkpoint）。"""
-    feats = _stage_columns(day)
+def _core_daily(day: pd.DataFrame, feats: pd.DataFrame = None) -> pd.DataFrame:
+    """日线核心列：STAGE / BOOTSTRAP / M9T(+lag) / Poly9。**因果**（逐 checkpoint）。
+
+    ``feats`` 传入时复用 `day_core` 已算好的 M9T/Poly9，**不再重算**。
+    """
+    feats = _stage_columns(day, features=feats)
     close = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
     typical = (day[AKA.OPEN] + day[AKA.HIGH] + day[AKA.LOW] + close) / 4
-    feats[FLD.HMA10] = TA_HMA(typical.to_numpy(), 10)
+    if FLD.HMA10 not in feats.columns:
+        feats[FLD.HMA10] = TA_HMA(typical.to_numpy(), 10)
 
     # `EP_STG_BF` 的两个前置（老树 `fractal/vXII.py:658-660`）：
     #   DEA_O_LAG          = DEA 的金叉/死叉时序
@@ -78,21 +86,28 @@ def _core_daily(day: pd.DataFrame) -> pd.DataFrame:
         feats, FLD.DEA).astype(np.int16)
     _jx = ((dif > dea) & (dif.shift(1) <= dea.shift(1))).to_numpy().astype(np.int16)
     feats['_MACD_JX_BF'] = Timeline_duration(_jx).astype(np.int16)
-    m9t = calc_magic_nine_turns_np_vXs(close.to_numpy().astype(np.float32))
-    feats[FLD.MAGIC_NINE_TURNS] = m9t
-    feats[FLD.MAGIC_NINE_TURNS_MAJOR] = m9t
-    feats[FLD.MAGIC_NINE_TURNS_TIMING_LAG] = calc_event_timing_lag(m9t)
-    try:
-        feats = calc_polynomial9_vXIs(day, feats)
+    if FLD.MAGIC_NINE_TURNS not in feats.columns:
+        feats[FLD.MAGIC_NINE_TURNS] = calc_magic_nine_turns_np_vXs(
+            close.to_numpy().astype(np.float32))
+    feats[FLD.MAGIC_NINE_TURNS_MAJOR] = feats[FLD.MAGIC_NINE_TURNS]
+    feats[FLD.MAGIC_NINE_TURNS_TIMING_LAG] = calc_event_timing_lag(
+        feats[FLD.MAGIC_NINE_TURNS].to_numpy())
+    if FLD.POLYNOMIAL9 in feats.columns:
         feats[FLD.POLYNOMIAL9_MAJOR] = feats[FLD.POLYNOMIAL9]
-        # 与 day step 同口径：norm 输入用 **Poly9 / close**，避免复权断层。
-        _p9_ratio = feats[FLD.POLYNOMIAL9] / close
-        feats[FLD.POLYNOMIAL9_NORM_MAJOR] = mapower_np_vXIIs(
-            _p9_ratio.to_numpy(),
-            range_list=np.array(range(5, 30)).astype(np.int16))
-    except Exception:               # noqa: BLE001
-        for c in (FLD.POLYNOMIAL9_MAJOR, FLD.POLYNOMIAL9_NORM_MAJOR):
-            feats[c] = np.nan
+        if FLD.POLYNOMIAL9_NORM in feats.columns:
+            feats[FLD.POLYNOMIAL9_NORM_MAJOR] = feats[FLD.POLYNOMIAL9_NORM]
+    else:
+        try:
+            feats = calc_polynomial9_vXIs(day, feats)
+            feats[FLD.POLYNOMIAL9_MAJOR] = feats[FLD.POLYNOMIAL9]
+            # 与 day step 同口径：norm 输入用 **Poly9 / close**，避免复权断层。
+            _p9_ratio = feats[FLD.POLYNOMIAL9] / close
+            feats[FLD.POLYNOMIAL9_NORM_MAJOR] = mapower_np_vXIIs(
+                _p9_ratio.to_numpy(),
+                range_list=np.array(range(5, 30)).astype(np.int16))
+        except Exception:           # noqa: BLE001
+            for c in (FLD.POLYNOMIAL9_MAJOR, FLD.POLYNOMIAL9_NORM_MAJOR):
+                feats[c] = np.nan
 
     # `EP_STG_BF`（老树 `features/reviews.py:670`）：GAR 净空 < 0.927 且
     # DEA 时序 < MACD 金叉时序 ⇒ 端点阶段计数。
@@ -138,12 +153,12 @@ def _prophet_columns(day: pd.DataFrame, feats: pd.DataFrame) -> pd.DataFrame:
     return feats
 
 
-def _coldstart_row(day: pd.DataFrame) -> dict:
+def _coldstart_row(day: pd.DataFrame, feats: pd.DataFrame = None) -> dict:
     """在**截至某个目标日**的日线帧上算一行 coldstart（因果）。"""
     if day is None or len(day) < 30:
         return {c: np.nan for c in COLDSTART_COLUMNS}
 
-    feats = _core_daily(day)
+    feats = _core_daily(day, feats=feats)
     feats = _prophet_columns(day, feats)
     last = feats.iloc[-1]
     # ⚠️ Poly9 拟合线是绝对价位 ⇒ **除 close 存比值**（D49 通则，避免复权断层）。
@@ -185,19 +200,14 @@ def _coldstart_row(day: pd.DataFrame) -> dict:
 
 
 def coldstart_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFrame:
-    """每个目标**日期**只用截至该日的数据算一行 —— 因果，且前缀稳定。
+    """取样：`day_core` 已对每个目标日期算好 coldstart，这里只映射到 60min 目标。
 
-    ⚠️ Prophet 是全样本拟合：**不能**在整段帧上拟合后再回填历史行（会用到未来）。
-    因此按目标日期逐个拟合；增量日更通常只有 1 个日期，代价可接受。
+    ⚠️ Prophet 是全样本拟合，仍按目标日期逐个拟合（在 `day_core` 内）；
+    本 step 不重算。
     """
     if targets is None or len(targets) == 0:
         return pd.DataFrame(columns=COLDSTART_COLUMNS)
-    day_all = ctx.frame('day')
-
-    dates = sorted({pd.Timestamp(t).normalize() for t in targets})
-    cache = {}
-    for d in dates:
-        cache[d] = _coldstart_row(slice_asof(day_all, d, 832))
+    cache = ctx.outputs.get('_coldstart_rows') or {}
 
     rows, idx = [], []
     for t in targets:
@@ -214,4 +224,4 @@ def build_coldstart_steps() -> List[FeatureStep]:
     return [FeatureStep(
         name='coldstart', tier=TIER_DAILY, input_freq='day',
         output_family='60min', columns=COLDSTART_COLUMNS,
-        func=coldstart_step, history='anchor')]
+        func=coldstart_step, deps=('day_core',), history='anchor')]

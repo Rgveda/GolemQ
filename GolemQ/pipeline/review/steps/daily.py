@@ -91,74 +91,118 @@ def _weekly_m9t_lag(wk_feats: pd.DataFrame):
     return 0
 
 
-def daily_snapshot_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFrame:
-    """每个日线快照返回一行 13 列。"""
-    rows = []
+def _week_start(t) -> pd.Timestamp:
+    """该 bar 所在周的周一（用于「已完成周」缓存）。"""
+    t = pd.Timestamp(t).normalize()
+    return t - pd.Timedelta(days=t.weekday())
+
+
+def _day_row(day: pd.DataFrame, feats: pd.DataFrame,
+             wk_raw: pd.DataFrame, wk_feats: pd.DataFrame) -> dict:
+    """从已算好的 day / week 特征抽一行（14 列）。"""
+    close = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
+    poly9_ratio = (feats[FLD.POLYNOMIAL9] / close.to_numpy()
+                   if FLD.POLYNOMIAL9 in feats.columns else pd.Series(np.nan, index=feats.index))
+    regtree_ratio = (feats[FLD.REGTREE_PRICE] / close.to_numpy()
+                     if FLD.REGTREE_PRICE in feats.columns else pd.Series(np.nan, index=feats.index))
+    regtree_slope_ratio = (feats[FLD.REGTREE_SLOPE] / close.to_numpy()
+                           if FLD.REGTREE_SLOPE in feats.columns else pd.Series(np.nan, index=feats.index))
+    if len(wk_feats):
+        wk_close = pd.to_numeric(wk_raw[AKA.CLOSE], errors='coerce').reindex(wk_feats.index)
+        poly9_week_ratio = wk_feats[FLD.POLYNOMIAL9] / wk_close
+    else:
+        poly9_week_ratio = pd.Series(dtype=float)
+    return {
+        FTR.ZEN_DASH_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.ZEN_DASH_TIMING_LAG]),
+        FTR.ZEN_PEAK_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.ZEN_PEAK_TIMING_LAG]),
+        FTR.ZEN_DASH_TIMING_LAG_WEEKLY_REAL: _last(
+            wk_feats[FLD.ZEN_DASH_TIMING_LAG]) if len(wk_feats) else np.nan,
+        FTR.POLYNOMIAL9_MAJOR_REAL: _last(poly9_ratio),
+        FTR.POLYNOMIAL9_NORM_MAJOR_REAL: _last(feats[FLD.POLYNOMIAL9_NORM]),
+        FTR.POLYNOMIAL9_WEEKLY_REAL: _last(poly9_week_ratio),
+        FTR.POLYNOMIAL9_NORM_WEEKLY_REAL: _last(
+            wk_feats[FLD.POLYNOMIAL9_NORM]) if len(wk_feats) else np.nan,
+        FTR.MAGIC_NINE_TURNS_MAJOR_REAL: _last(feats[FLD.MAGIC_NINE_TURNS]),
+        FTR.MAGIC_NINE_TURNS_TIMING_LAG_MAJOR_REAL: _last(
+            feats[FLD.MAGIC_NINE_TURNS_TIMING_LAG]),
+        FTR.MAGIC_NINE_TURNS_WEEKLY_REAL: _last(
+            wk_feats[FLD.MAGIC_NINE_TURNS]) if len(wk_feats) else np.nan,
+        FTR.MAGIC_NINE_TURNS_TIMING_LAG_WEEKLY_REAL: _weekly_m9t_lag(wk_feats),
+        FTR.REGTREE_PRICE_MAJOR_REAL: _last(regtree_ratio),
+        FTR.REGTREE_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.REGTREE_TIMING_LAG]),
+        FTR.REGTREE_SLOPE_MAJOR_REAL: _last(regtree_slope_ratio),
+    }
+
+
+def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
+    """**day 唯一一趟**：day 特征 + coldstart（M9T/Poly9 共享，Prophet 逐日）。
+
+    周线按**上一个已完成周**缓存：同一周内的日目标共用一份周线特征。
+    `daily_snapshot` / `coldstart` 只从缓存取样。
+    """
     day_all = ctx.frame('day')
-    for T in targets:
+    day_targets = ctx.targets.get('day', pd.DatetimeIndex([]))
+    cold_dates = {pd.Timestamp(t).normalize()
+                  for t in ctx.targets.get('60min', pd.DatetimeIndex([]))}
+    if len(day_targets) == 0:
+        return None
+
+    from ..coldstart import _coldstart_row     # 延迟导入避免循环
+
+    day_rows, cold_rows = {}, {}
+    wk_cache = {}
+    for T in day_targets:
+        T = pd.Timestamp(T)
         day = slice_asof(day_all, T, 832)
         if len(day) < 30:
             continue
         feats = _frame_features(day, annual=252)
 
-        wk_raw = slice_asof(day_all, T, 2160)
-        wk_feats = pd.DataFrame()
-        if len(wk_raw) > 0:
-            try:
-                wk = weekly_ohlc(wk_raw)
-                if len(wk) > 0:
-                    wk_feats = _frame_features(wk, annual=52)
-            except Exception:    # noqa: BLE001
-                wk_feats = pd.DataFrame()
+        # 周线：同一「已完成周」只算一次（用该周之前的 2160 根日线）
+        wkey = _week_start(T)
+        if wkey not in wk_cache:
+            wk_end = wkey - pd.Timedelta(days=1)
+            wk_raw = slice_asof(day_all, wk_end, 2160)
+            wk_feats = pd.DataFrame()
+            if len(wk_raw) > 0:
+                try:
+                    wk = weekly_ohlc(wk_raw)
+                    if len(wk) > 0:
+                        wk_feats = _frame_features(wk, annual=52)
+                except Exception:    # noqa: BLE001
+                    wk_feats = pd.DataFrame()
+            wk_cache[wkey] = (wk_raw, wk_feats)
+        wk_raw, wk_feats = wk_cache[wkey]
 
-        # ⚠️ **价格导出的列一律存比值**（D49 通则）：Poly9 / RegTree 的拟合线
-        # 是绝对价位，直接落库会在复权换挡时断层。除以**同一行**的 close。
-        close = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
-        poly9_ratio = (feats[FLD.POLYNOMIAL9] / close.to_numpy()
-                       if FLD.POLYNOMIAL9 in feats.columns else pd.Series(np.nan, index=feats.index))
-        regtree_ratio = (feats[FLD.REGTREE_PRICE] / close.to_numpy()
-                         if FLD.REGTREE_PRICE in feats.columns else pd.Series(np.nan, index=feats.index))
-        # 斜率也是「价格 / bar」—— 同样除以 close，变成「相对收益 / bar」。
-        regtree_slope_ratio = (feats[FLD.REGTREE_SLOPE] / close.to_numpy()
-                               if FLD.REGTREE_SLOPE in feats.columns else pd.Series(np.nan, index=feats.index))
-        if len(wk_feats):
-            wk_close = pd.to_numeric(wk_raw[AKA.CLOSE], errors='coerce').reindex(wk_feats.index)
-            poly9_week_ratio = wk_feats[FLD.POLYNOMIAL9] / wk_close
-        else:
-            poly9_week_ratio = pd.Series(dtype=float)
+        day_rows[T] = _day_row(day, feats, wk_raw, wk_feats)
+        if T.normalize() in cold_dates:
+            cold_rows[T.normalize()] = _coldstart_row(day, feats=feats)
 
-        row = {
-            FTR.ZEN_DASH_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.ZEN_DASH_TIMING_LAG]),
-            FTR.ZEN_PEAK_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.ZEN_PEAK_TIMING_LAG]),
-            FTR.ZEN_DASH_TIMING_LAG_WEEKLY_REAL: _last(
-                wk_feats[FLD.ZEN_DASH_TIMING_LAG]) if len(wk_feats) else np.nan,
-            FTR.POLYNOMIAL9_MAJOR_REAL: _last(poly9_ratio),
-            FTR.POLYNOMIAL9_NORM_MAJOR_REAL: _last(feats[FLD.POLYNOMIAL9_NORM]),
-            FTR.POLYNOMIAL9_WEEKLY_REAL: _last(poly9_week_ratio),
-            FTR.POLYNOMIAL9_NORM_WEEKLY_REAL: _last(
-                wk_feats[FLD.POLYNOMIAL9_NORM]) if len(wk_feats) else np.nan,
-            FTR.MAGIC_NINE_TURNS_MAJOR_REAL: _last(feats[FLD.MAGIC_NINE_TURNS]),
-            FTR.MAGIC_NINE_TURNS_TIMING_LAG_MAJOR_REAL: _last(
-                feats[FLD.MAGIC_NINE_TURNS_TIMING_LAG]),
-            FTR.MAGIC_NINE_TURNS_WEEKLY_REAL: _last(
-                wk_feats[FLD.MAGIC_NINE_TURNS]) if len(wk_feats) else np.nan,
-            FTR.MAGIC_NINE_TURNS_TIMING_LAG_WEEKLY_REAL: _weekly_m9t_lag(wk_feats),
-            FTR.REGTREE_PRICE_MAJOR_REAL: _last(regtree_ratio),
-            FTR.REGTREE_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.REGTREE_TIMING_LAG]),
-            FTR.REGTREE_SLOPE_MAJOR_REAL: _last(regtree_slope_ratio),
-        }
-        rows.append((pd.Timestamp(T), ctx.code, row))
+    if day_rows:
+        idx = pd.MultiIndex.from_tuples(
+            [(t, ctx.code) for t in day_rows], names=['ts', 'code'])
+        ctx.outputs['_day_rows'] = pd.DataFrame(
+            list(day_rows.values()), index=idx, columns=list(DAY_COLUMNS))
+    if cold_rows:
+        ctx.outputs['_coldstart_rows'] = cold_rows
+    return None
 
-    if not rows:
+
+def daily_snapshot_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFrame:
+    """取样：`day_core` 已经算好，这里不再重算。"""
+    src = ctx.outputs.get('_day_rows')
+    if src is None or len(src) == 0:
         return pd.DataFrame(columns=DAY_COLUMNS)
-    idx = pd.MultiIndex.from_tuples([(t, c) for t, c, _ in rows],
-                                    names=['ts', 'code'])
-    return pd.DataFrame([r for _, _, r in rows], index=idx)
+    return src
 
 
 def build_daily_steps() -> List[FeatureStep]:
-    return [FeatureStep(
-        name='daily_snapshot', tier=TIER_DAILY, input_freq='day',
-        output_family='day', columns=DAY_COLUMNS,
-        func=daily_snapshot_step, history='bars', warmup=1008,
-    )]
+    return [
+        FeatureStep(name='day_core', tier=TIER_DAILY, input_freq='day',
+                    output_family=None, columns=(), func=day_core_step,
+                    history='bars', warmup=832),
+        FeatureStep(name='daily_snapshot', tier=TIER_DAILY, input_freq='day',
+                    output_family='day', columns=DAY_COLUMNS,
+                    func=daily_snapshot_step, deps=('day_core',),
+                    history='bars', warmup=832),
+    ]

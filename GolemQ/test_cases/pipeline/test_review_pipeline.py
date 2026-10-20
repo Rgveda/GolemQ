@@ -25,7 +25,8 @@ from GolemQ.pipeline.review.pipeline import ReviewPipeline, ReviewOptions
 from GolemQ.pipeline.review.runtime import compute_runtime
 from GolemQ.pipeline.review.contract import (DAY_COLUMNS, HOUR_EXTRA_COLUMNS,
                                              MINOR_COLUMNS, MINOR_15MIN_COLUMNS)
-from GolemQ.pipeline.review.steps.daily import daily_snapshot_step
+from GolemQ.pipeline.review.steps.daily import (daily_snapshot_step,
+                                                day_core_step)
 from GolemQ.pipeline.review.steps.hour_extra import hour_extra_step
 from GolemQ.pipeline.review.steps.minor import minor_signals_step
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, StepRunner,
@@ -100,12 +101,18 @@ class TestDailyStep(unittest.TestCase):
         ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
                             frames={'day': df}, as_of=as_of)
         targets = target_times(df, as_of)[-3:]
+        ctx.targets['day'] = targets
+        ctx.targets['60min'] = targets
+        day_core_step(ctx, targets)
         full = daily_snapshot_step(ctx, targets)
         self.assertEqual(list(full.columns), list(DAY_COLUMNS))
         self.assertEqual(len(full), len(targets))
 
         ctx2 = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
                              frames={'day': df}, as_of=targets[-1])
+        ctx2.targets['day'] = targets[-1:]
+        ctx2.targets['60min'] = targets[-1:]
+        day_core_step(ctx2, targets[-1:])
         one = daily_snapshot_step(ctx2, targets[-1:])
         pd.testing.assert_frame_equal(
             one, full.iloc[[-1]], check_names=False)
@@ -120,6 +127,9 @@ class TestRatioColumns(unittest.TestCase):
         as_of = day.index.get_level_values(0)[-1]
         ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
                             frames={'day': day}, as_of=as_of)
+        ctx.targets['day'] = pd.DatetimeIndex([as_of])
+        ctx.targets['60min'] = pd.DatetimeIndex([as_of])
+        day_core_step(ctx, [as_of])
         out = daily_snapshot_step(ctx, [as_of])
         close = float(day[AKA.CLOSE].iloc[-1])
         for col in ('poly9MajR', 'poly9WekR', 'rTrePrcMajR'):
@@ -248,6 +258,9 @@ class TestColdstart(unittest.TestCase):
                                                  freq='1D'))
         ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
                             frames={'day': day}, as_of=day.index.get_level_values(0)[-1])
+        ctx.targets['day'] = targets
+        ctx.targets['60min'] = targets
+        day_core_step(ctx, targets)
         full = coldstart_step(ctx, targets)
         self.assertEqual(list(full.columns), list(COLDSTART_COLUMNS))
         self.assertEqual(len(full), len(targets))
@@ -261,6 +274,9 @@ class TestColdstart(unittest.TestCase):
         T = targets[3]
         ctx_t = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
                               frames={'day': day}, as_of=T)
+        ctx_t.targets['day'] = targets[:4]
+        ctx_t.targets['60min'] = targets[:4]
+        day_core_step(ctx_t, targets[:4])
         one = coldstart_step(ctx_t, targets[:4])
         pd.testing.assert_frame_equal(one.iloc[[-1]], full.iloc[[3]],
                                       check_dtype=False)
