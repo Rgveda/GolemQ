@@ -24,6 +24,7 @@ import unittest
 import unittest.mock
 
 from GolemQ.markets.StockCN import kline83 as k
+from GolemQ.core.constants import MARKET_TYPE
 
 COLL = 'realtime_2026-10-09'
 
@@ -36,7 +37,8 @@ class _Result:
 
 
 class TestRealtimeReadGuard(unittest.TestCase):
-    def _merge(self, *, collections, frequency='1min', merger=None, raises=False):
+    def _merge(self, *, collections, frequency='1min', merger=None, raises=False,
+               market_type=None, codes=None):
         rt_db = unittest.mock.MagicMock()
         rt_db.list_collection_names.return_value = collections
         result = _Result()
@@ -54,7 +56,8 @@ class TestRealtimeReadGuard(unittest.TestCase):
                                     'GQ_fetch_stock_min_realtime_adv', **kw) as min_m, \
                 unittest.mock.patch('GolemQ.markets.StockCN.realtime.'
                                     'GQ_fetch_stock_day_realtime_adv', **kw) as day_m:
-            out = k._merge_realtime(result, ['600519'], frequency, verbose=False)
+            out = k._merge_realtime(result, codes or ['600519'], frequency,
+                                    verbose=False, market_type=market_type)
         return out, result, min_m, day_m, rt_db
 
     def test_missing_collection_skips_and_never_touches_it(self):
@@ -81,6 +84,20 @@ class TestRealtimeReadGuard(unittest.TestCase):
         _, _, min_m, day_m, _ = self._merge(collections=[COLL], frequency='day')
         self.assertTrue(day_m.called)
         self.assertFalse(min_m.called, '日线频率不该走分钟合并器')
+
+    def test_day_merger_passes_explicit_market_type(self):
+        """ETF 日线必须把 `ETF_CN` 透传给日线合并器 —— 否则会去查流通股本。"""
+        _, _, _, day_m, _ = self._merge(collections=[COLL], frequency='day',
+                                        market_type=MARKET_TYPE.ETF_CN)
+        self.assertEqual(day_m.call_args.kwargs['market_type'],
+                         MARKET_TYPE.ETF_CN)
+
+    def test_day_merger_resolves_etf_when_market_type_missing(self):
+        """调用方没传 market_type 时，按代码解析成 ETF_CN（589490）。"""
+        _, _, _, day_m, _ = self._merge(collections=[COLL], frequency='day',
+                                        codes=['589490'])
+        self.assertEqual(day_m.call_args.kwargs['market_type'],
+                         MARKET_TYPE.ETF_CN)
 
     def test_merge_failure_returns_history_not_none(self):
         """合并炸了 ⇒ **返回纯历史** —— 不能把已经读到手的数据也丢掉。"""

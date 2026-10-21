@@ -412,7 +412,8 @@ def get_kline_price_min(codelist, start=None, market_type=None, frequency='60min
         # **带 REALTIME**（用户 2026-10-09：「我要做分析了，取行情，8.3库，带 REALTIME」）。
         # ⚠️ 本函数那个 `realtime=True` **从"空转"变成"真的合并"** —— 但不需要补数时
         # 代价只有一次 `list_collection_names()`（见 :func:`_merge_realtime` 的两道门）。
-        _merge_realtime(result, codelist, frequency, verbose=verbose)
+        _merge_realtime(result, codelist, frequency, verbose=verbose,
+                        market_type=market_type)
     return result, codename
 
 
@@ -460,11 +461,13 @@ def get_kline_price_v3(codelist, start=None, market_type=None, verbose=True,
     result = KlineResult(_to_kline_frame(df))
     _apply_adjustments(result, market, codelist, if_fq=if_fq, verbose=verbose)
     if realtime:
-        _merge_realtime(result, codelist, 'day', verbose=verbose)
+        _merge_realtime(result, codelist, 'day', verbose=verbose,
+                        market_type=market_type)
     return result, codename
 
 
-def _merge_realtime(result, codelist, frequency, verbose=False):
+def _merge_realtime(result, codelist, frequency, verbose=False,
+                    market_type=None):
     """**带 REALTIME**：把 ``realtime_YYYY-MM-DD`` 的 L1 tick 合成进结果（就地改 `result`）。
 
     这是「历史 + 盘中」那条路的**读侧入口**（写侧是 `--sub`；合成是 `realtime.py`
@@ -505,7 +508,16 @@ def _merge_realtime(result, codelist, frequency, verbose=False):
     try:
         if frequency == 'day':
             from .realtime import GQ_fetch_stock_day_realtime_adv
-            return GQ_fetch_stock_day_realtime_adv(codelist, result, verbose=verbose)
+            # ⚠️ **必须透传 market_type**：`GQ_fetch_stock_day_realtime_adv`
+            # 只在 `STOCK_CN` 分支查 `liutongguben`；默认值是 STOCK_CN，
+            # ETF/指数若不走这里会 KeyError（2026-10-21 实测 589490）。
+            if market_type is None:
+                from .symbol import is_stock_cn
+                probe = (codelist[0] if isinstance(codelist, (list, tuple, set))
+                         else codelist)
+                market_type = is_stock_cn(probe)[1]
+            return GQ_fetch_stock_day_realtime_adv(
+                codelist, result, market_type=market_type, verbose=verbose)
         from .realtime import GQ_fetch_stock_min_realtime_adv
         return GQ_fetch_stock_min_realtime_adv(codelist, result, frequency,
                                                verbose=verbose)
