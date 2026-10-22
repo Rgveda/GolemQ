@@ -23,7 +23,7 @@
 `getPoolRate`              本模块（对数积水率）
 `getPoolRate_vX`           本模块（稳健版；只服务老树的 `COEF` 列，**不写 DUMMY**）
 `LINEAREG_PRICE`           `talib.LINEARREG(close, 20)` —— 一行
-`QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY`  `analysis/quadrant.py` 产出
+`QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY`  `analysis/quadrant_jit.py` 产出
 `AKA.CLOSE`                行情自带
 `ZEN_DASH_COUNT` / `POWERLINE_UPRISING_LAG`  **可选**（决定 log10 是否夹到 10；
                            缺省时退化为直接用 lag，见 :func:`_effective_lag`）

@@ -1,5 +1,5 @@
 # coding:utf-8
-"""`analysis/quadrant.py`（四量图 + 6 指标）的正确性测试。
+"""`analysis/quadrant_jit.py`（四量图 + 6 指标）的正确性测试。
 
 对拍是唯一正确性证据（`DECISIONS.md` D35/D36）
 ==========================================

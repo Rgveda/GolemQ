@@ -92,7 +92,7 @@ streamlit run examples/app_renko.py
 `class renko` 的 `source_aligned[idx]` 在下跌砖上返回 `[上一砖位, 上一砖位 - 砖高]`
 （即 **lb > ub**）。本 demo 走的是 `renko_chart`，它的 lb/ub **有序** —— 实测两族
 都满足 `lb <= ub`。要走 `source_aligned` 的那条线（另案的 `calc_renko_atr_vX`）
-必须自己 `min/max`。详见 `analysis/renko.py` 的模块 docstring。
+必须自己 `min/max`。详见 `analysis/renko_jit.py` 的模块 docstring。
 
 ## `app_pivot_renko.py` —— 缠论中枢 × RENKO 砖块界（**叠加图**）
 
@@ -158,9 +158,9 @@ streamlit run examples/app_chartscan.py
 |:--|:--|:--|
 | 取数 | `GolemQ.get_active_market().get_kline_price_v3 / get_kline_price_min` | 市场实例；日线 / 60min / 15min 三档 |
 | ↓ | `markets/StockCN/kline83.py` | MongoDB **8.3** 时序集合，**已前复权** |
-| 出图 | `chartscan/render.GQ_generate_chart_stock` | ⚠️ **与线上推理同一个函数**，不是另画一份 |
-| 推理 | `chartscan/model.load_model().predict` | YOLOv8（52 MB 权重在 `datastore/models/weights/`） |
-| 像素→bar | `chartscan/predict.calculate_i` | `(x-386)/6.5-1`，只在固定标定下成立 |
+| 出图 | `analysis/cv/render.GQ_generate_chart_stock` | ⚠️ **与线上推理同一个函数**，不是另画一份 |
+| 推理 | `analysis/cv/model.load_model().predict` | YOLOv8（52 MB 权重在 `datastore/models/weights/`） |
+| 像素→bar | `analysis/cv/predict.calculate_i` | `(x-386)/6.5-1`，只在固定标定下成立 |
 | 对照 | `reality_save.fetch_reality_feat` | 库里**已有**的检出（稀疏） |
 
 ### 三条刻意设计

@@ -100,7 +100,7 @@ def _attach_persisted(out: Dict[str, pd.DataFrame], code: str, market_type,
     from GolemQ.markets.StockCN.reality_save import fetch_reality_feat
     from GolemQ import get_active_market
 
-    db = get_active_market().GOLEMQ_STOCK_CN
+    db = get_active_market().get_database()
     start = (as_of - pd.Timedelta(days=365 * 5)).strftime('%Y-%m-%d')
     end = as_of.strftime('%Y-%m-%d')
     for fam in families:

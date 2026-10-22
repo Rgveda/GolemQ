@@ -85,6 +85,17 @@ class TestContract(unittest.TestCase):
             with self.subTest(n=n):
                 self.assertEqual(len(rolling_poly9_v2(_px(n), 252)), n)
 
+    def test_rank_warning_is_silenced(self):
+        """平盘窗口的 `RankWarning` 是预期的，不许刷屏（`_cheb_fit` 压掉）。"""
+        import warnings
+        from GolemQ.analysis.timeseries import _RankWarning
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            out = rolling_poly9_v2(np.ones(600), 252)
+        self.assertFalse([w for w in caught
+                          if issubclass(w.category, _RankWarning)])
+        self.assertEqual(len(out), 600)
+
     def test_linear_series_is_reproduced_exactly(self):
         """线性序列上九次拟合是精确的 ⇒ 端点值就是原值（`w` 大于序列长时）。"""
         y = rolling_poly9_v2(np.arange(30, dtype=float), 20)

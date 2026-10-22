@@ -133,6 +133,15 @@ DOCTEST_MODULES = (
     # 一条（老树的 8 个择时信号与那个**坏掉的** `pre_rsrs_zscore_np_func` 都没搬）。
     # 它的 doctest 钉两件事：**列序**（5 列，顺序即契约）与**索引对齐**。
     'GolemQ.analysis.rsrs',
+    # XGBoost 模型层（2026-10-21 搬，`analysis/xgboost/`）。
+    # ⚠️ 模块级不 import xgboost/sklearn/matplotlib（都在函数内惰性导入），
+    # 所以 GolemQ 主环境能收集；doctest 只钉纯逻辑（契约计数、3 类映射、
+    # 缺列报错、模型文件名），不训练、不碰库。
+    'GolemQ.analysis.xgboost.features',
+    'GolemQ.analysis.xgboost.model',
+    'GolemQ.analysis.xgboost.markup',
+    'GolemQ.analysis.xgboost.rank',
+    'GolemQ.analysis.xgboost.train',
     # ChartScan（CV）结果的落点（2026-10-13 搬）。⚠️ 模块里**有碰库的函数**
     # （`save_reality_feat` / `fetch_reality_feat`），但按本文件的规矩**收不收是
     # 逐函数的** —— 只有纯函数 `reality_feat_name` / `reality_feat_rows` 挂了
@@ -150,12 +159,12 @@ DOCTEST_MODULES = (
     # ChartScan 的渲染与权重路径（2026-10-13 搬）。⚠️ 两者**模块级都不 import 重依赖**
     # （mplfinance / matplotlib / ultralytics 都在函数体里）⇒ 收集本模块**不需要 GolemAI env**，
     # 在 GolemQ env 下也进得来。doctest 钉 `calculate_i` 的像素↔bar 标定与权重路径的形状。
-    'GolemQ.markets.StockCN.chartscan.render',
-    'GolemQ.markets.StockCN.chartscan.model',
+    'GolemQ.analysis.cv.render',
+    'GolemQ.analysis.cv.model',
     # 客户端的 `market_type_of`（逐码定市场类型，**对旧 CLI 的刻意更正**）。
     # ⚠️ `server.py` / `client.py` **模块级不 import zmq**（只在 GolemAI env 有），
     # 故本模块在 GolemQ env 下也收集得动；`server.py` 没有 doctest，不入列。
-    'GolemQ.markets.StockCN.chartscan.client',
+    'GolemQ.analysis.cv.client',
 )
 
 

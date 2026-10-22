@@ -96,11 +96,90 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 **每天全量重扫 618 交易日 × 3 频率**。已修 + 补 `test_chartscan_predict.py`（14 条）；
 **回退修复会 6 失败 + 2 错误**，用例确实咬得住。
 
+### ChartScan 盘中扫描 no-op（2026-10-21 查明并修复，**P41**）
+
+**现象**：服务端刷
+`without_processing code: 920183 True True True [Timestamp('2026-10-21 00:00:00')]`，
+盘中 60min / 15min 的 `*_reality_feat_*` 当天一行都不更新。
+
+**根因**（已用 600519 / 000001 / 920183 实测）：
+1. 盘中客户端在 `calc_ChartScaned_persistence` 里把 `recent_list` **强制成
+   `[今天]`** ⇒ 已扫完的码拿到 `mode=2`、`start=end=今天` 的单日任务。
+2. 服务端 `_fetch('day', 今天, 今天, ...)` 走 `get_kline_price_v3(realtime=False)`：
+   `stock_day` 里今天那根要等**收盘后 `--save`** 才有 ⇒ 历史查询为空 ⇒
+   `get_kline_price_v3` **在实时合并之前**就返回 `None` ⇒ `kline_baseline is None`
+   ⇒ 三个频率的循环全部跳过 ⇒ 打印 `without_processing`。
+3. 旧树 `calc_ChartScanAI_reality` 有**独立的 `GQ_fetch_stock_day_realtime`
+   补数**（`ohlc_day=None` 也能仅凭实时库造出当日日线）；新树按
+   「`realtime=True` 已内建」整块删掉了它 —— **这个等价不成立**，只在
+   「窗口里至少有一根历史日线」时才成立。实测：
+   `_fetch(600519, 'day', 10-21, 10-21)` → `None`；
+   `_fetch(600519, 'day', 10-19, 10-21)` → 3 根，含 `10-21`（实时合并生效）。
+
+**影响**：
+* SH/SZ 盘中 **60min / 15min 不更新**；只有等收盘 `--save` 写入当日日线后，
+  下一次扫描才会补上当天。分钟行的时间戳也只会停在最后一次跑批的时刻。
+* **北交所 `920xxx` 即使修好日线回退也不会盘中更新**：实测
+  `realtime_2026-10-21` 里 `920` 开头 **0 行**（腾讯 L1 快照不供北交所），
+  只能等 `--save`。
+* `chartscan_cli.ps1` 的 `while($n -lt 6)` **没有 `$n++`** ⇒ 实际是死循环，
+  即“一直扫”。如果本意是 5 轮，这是个笔误。
+
+**已修（2026-10-21）**：`_fetch` 在「日线为空且窗口末端就是最近交易日」时，
+往前回看 **512 天** 重读一次（`realtime=True`），再把结果裁回原请求窗口；
+回看日只负责触发实时合并，不参与扫描。不动 `kline83` 的 `None` 语义。
+实测 `_fetch('600519','day',今天,今天)` 修复后返回今天 1 行；`920183` 仍为
+`None`（北交所无实时，符合边界）。新增 6 条回归用例（896 条全绿）。
+
+**已修（2026-10-21 续）**：分钟扫描挑「最近框」的锚点由 `end_date`（00:00）
+改为交易日 **15:00** ⇒ 选当天**最晚**的检出；日频与非交易日保持原行为
+（`_closest_anchor`，新增 4 条用例）。全量 **900 条测试全绿**。
+
+**仍未做**：同一根未走完的 bar 每个 pass 会重复扫（无「bar 未前进就跳过」的判断）。
+
+### XGBoost 迁移（**D61 / D62**）—— ✅ 框架 + compact 生产者，⏳ 训练/落库未做
+
+`analysis/xgboost/` 已落地：`features.py`（契约）、`markup.py`（标签 +
+分型统计）、`rank.py`（旧 `calc_portfolio_returns` 的 -9..9 评分 rank，
+含 `rank_from_83`：8.3 分钟线 → MACD 死叉 → rank）、`train.py`
+（蓝本 `benchmark/train_xgboost.py`）、`predict.py`、`model.py`。
+**纯 DataFrame 进/出**。
+
+**compact 生产者（D62）**：`analysis/compact.py::calc_compact_features`
+已接 **37 个 derivable 列**，并内置 rank 7 列；支持 60min-only 与
+60min+day（日线 `_MAJ`/weekly 按**因果**映射：盘中用上一交易日、15:00 用当日）。
+另补搬 `ATR_RSI_Stops_v2` / `ATR_SuperTrend_cross_v2`（`analysis/indicators.py`
+的 `atr_rsi_stops` / `atr_supertrend`），产出 ATR Stopline/SuperTrend 及
+`_MAJOR`/`_WEEKLY` 列；以及 `calc_peak_point_vX`（`analysis/peak.py` +
+`lineareg_band`），产出 `PEAK_LOW_TIMING_LAG` 等。
+`--strategy compact`（`pipeline/compact/`）已可跑，**只读、不落库**；
+固定 60min+day+rank，**没有命令专属开关**；`--eval` 缺省 fast。
+仍未搬的 2 列：`MA90_CLR_RET_GAR`、`PeakLowLag`（返回 NaN）。
+
+特征契约现状（`feature_status_report()`）：
+旧 58 条目 → **55 唯一列**（3 组 `MTMPOWER30*` 与 `MTM_NORM*` 同列）；
+用户定废弃 **4 列**（ZEN wavelet / DESINTY_CHAIN / MAPOWER30_METRIC），
+用户定**废弃 14 列**（旧 4 列 + MASSIVE 2 + `ZEN_PEAK_RET_GAR` 2 +
+`MA90_CLR_RET_GAR` + 资金流 4 + `MTM_FLOW_LAG`），默认 **41 列**。
+`feature_status_report()`：`produced` **41** / `missing_*` **0** /
+`deprecated` **14**。按实际非空列：**compact 单独 37/41，compact+review
+41/41（无缺口）**；替代特征见 `features.REPLACEMENTS`。
+
+常量侧：AST 审计 8 个常量类，**0 个未定义**（补了 AKA 14 + TRD 3）；
+守卫 `test_constant_refs` 钉住。
+
+**下一步**：
+1. markup 的 21 个必需输入（`ZEN_WAVELET_TIMING_LAG`、Donchian、ATR 等）
+   补齐后才可能真正训练 —— 当前缺列**明确拒绝**，不静默 NaN；
+2. 横截面统计（按日聚合 rank/特征）→ 再决定落库形态（用户：详细数据暂不落库）；
+3. `--train` / `--strategy xgb` 与预测落点。
+
 ### Mainstream 移植（`models/mainstream.py`）—— ⏳ 待启动
 
 老树 2,103 行 + workload 848 行，输出 **83 列**；其中 **64 列**新树无生产者、
-也不在 review 契约里。还缺核心 builder `calc_compact_features`（1,200+ 行）与
-mswing/ChartScan/4quad/czsc/mainstream-credits 等模型函数；牛股诊股数据也未搬。
+也不在 review 契约里。`calc_compact_features` 的**新树精简版**已在 D62 落地
+（37 列 + rank），但 mainstream 的 83 列还缺 mswing/ChartScan/4quad/czsc/
+mainstream-credits 等模型函数；牛股诊股数据也未搬。
 架构与阶段拆分见 worklog 2026-10-20「再续六」：
 `pipeline/mainstream/` + `MainstreamPipeline(BasePipeline)` + `--strategy mainstream`，
 先搬 compact builder 并对拍，不能一次搬完。
@@ -197,6 +276,12 @@ mswing/ChartScan/4quad/czsc/mainstream-credits 等模型函数；牛股诊股数
 | **JIT-MERGE** | `analysis/{magic_nine,quadrant,renko,regtree}.py` 并入对应 `*_jit.py`，原文件删除；核心核显式 numba 签名 | ✅ **D59**，881 条测试 |
 
 | **PARALLEL-FIX** | `tqdm` 未传 iterable ⇒ `tqdm_joblib` 回调抛错 ⇒ joblib 零 worker 挂死；已修并打核心数横幅 | ✅ **P40**，885 条测试 |
+| **CV-MOVE** | `markets/StockCN/chartscan/` 五个模块整体迁至 `analysis/cv/`；库实例改由 `StockCN.get_database()` 中性注入，市场包外不再出现库名/句柄；新增「库名不外泄」树扫描守卫 | ✅ **D60**，890 条测试 |
+| **CV-INTRADAY** | 单日窗口日线为空的回退（回看 512 天再裁回），修复盘中 60min/15min 不更新；分钟 `closest` 锚点改为交易日 15:00 | ✅ **P41**，900 条测试 |
+| **XGB-FRAME** | `analysis/xgboost/`：55 列特征契约（51 默认 + 4 废弃）、markup/rank/训练/预测/模型路径；`rank_from_83` 已接 8.3 读取 | ✅ **D61 / P42**，944 条测试 |
+| **XGB-COMPACT** | `analysis/compact.py::calc_compact_features`（37 derivable + rank 7 列 + ATR + peak，60min/day 因果映射）；`pipeline/compact/` + `--strategy compact` 只读 | ✅ **D62**，958 条测试 |
+| **D59-EXAMPLES** | `examples/` 里 `analysis.renko` / `analysis.quadrant` 旧 import 同步到 `*_jit`（D59 合并后漏改） | ✅ 2026-10-21 |
+| **NOISE-FIX** | Prophet 1.5 的 cmdstanpy INFO / `Logging error` 与 Chebyshev `RankWarning` 刷屏；`old_tree` 不再误删真实 polars | ✅ **P44**，960 条测试 |
 
 ---
 

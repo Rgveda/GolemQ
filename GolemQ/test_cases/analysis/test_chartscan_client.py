@@ -1,5 +1,5 @@
 # coding:utf-8
-"""`chartscan/client.py` 的**休市节流**（`_throttle`）。
+"""`analysis/cv/client.py` 的**休市节流**（`_throttle`）。
 
 2026-10-18 用户实测报：「Stock_CN 的周末休息 4 小时生效，ETF_CN 不生效」。
 
@@ -20,10 +20,16 @@
 """
 from __future__ import annotations
 
+import os, sys
+try:
+    import GolemQ
+except ImportError:
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
+
 import unittest
 from unittest import mock
 
-from GolemQ.markets.StockCN.chartscan import client
+from GolemQ.analysis.cv import client
 
 
 def _hours(jobs, total, scope, weekday=5, hour=10, tradetime=False):

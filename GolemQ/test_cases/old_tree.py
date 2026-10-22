@@ -116,6 +116,17 @@ def load_old(relpath: str, override=(), patch_attrs=None):
     if not os.path.isfile(path):
         return None
 
+    # ⚠️ **先导入真的第三方**，再记 `before` —— 否则它们会被当成「本次加载新增」
+    # 在 finally 里删出 `sys.modules`；后续 `import polars` 会拿到**第二个模块实例**，
+    # 与已缓存的 `pl.Expr` / `DataFrame` 混用会在 `df.select(exprs)` 处炸
+    # （实测：全量跑时 `test_kline_save` 5 条 error）。
+    for name in ('talib', 'polars'):
+        if name not in sys.modules:
+            try:
+                importlib.import_module(name)
+            except Exception:            # noqa: BLE001 没装就留给下面的 shim
+                pass
+
     before = set(sys.modules)
     replaced = {}
     patched = []
@@ -129,11 +140,17 @@ def load_old(relpath: str, override=(), patch_attrs=None):
                 prev = getattr(m, attr, _MISSING)
                 patched.append((m, attr, prev))
                 setattr(m, attr, val)
-        # 第三方里可能有老树要、本机没装的（如 QUANTAXIS 生态）—— 一并兜住
+        # 第三方里可能有老树要、本机没装的（如 QUANTAXIS 生态）—— 一并兜住。
+        # ⚠️ **装了就用真的**：无条件替身会让 `statsmodels`（旧 timeseries 导入）
+        # 看到 `polars` 空模块 ⇒ `AttributeError: module 'polars' has no attribute
+        # 'DataFrame'`，`test_poly9` 单独跑就挂。
         for name in ('talib', 'polars'):
             if name not in sys.modules:
-                replaced[name] = None
-                sys.modules[name] = _auto_shim(name)
+                try:
+                    importlib.import_module(name)
+                except Exception:
+                    replaced[name] = None
+                    sys.modules[name] = _auto_shim(name)
 
         for name in override:
             replaced[name] = sys.modules.get(name)

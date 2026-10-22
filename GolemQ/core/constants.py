@@ -366,6 +366,23 @@ class AKA(metaclass=_StubMeta):
     CHECKPOINT = 'ChkPoi'
     STAGE = 'STAGE'
 
+    # ── 2026-10-21 补：ChipDistribution 用到的列名（真值逐字取自老树
+    # `utils/parameter.py::AKA`；MongoDB 实际存储名，别改写）──
+    CHIP_DENSITY = 'ChipDensity'
+    COST5_BOOTSTRAP_BEFORE = 'cost5BstBf'
+    COST5_BOOTSTRAP_CANDIDATE = 'cost5BstCand'
+    COST5_BOOTSTRAP_CANDIDATE_BEFORE = 'cost5BstCandBf'
+    COST85_PRICE = 'cost85Prz'
+    COST90 = 'cost9'
+    COST90_CHANNEL = 'cost9W'
+    COST95_ENDPOINT_CANDIDATE = 'cost95EpCand'
+    COST95_ENDPOINT_CANDIDATE_BEFORE = 'cost95EpCandBf'
+    COST95_PRICE = 'cost95Prz'
+    FINAL_COST90 = 'FIN_COST9'
+    FINAL_PROFIT = 'FIN_PROF'
+    PROFIT = 'profit'
+    RETURN_COST5 = 'RetCost5'
+
     def __new__(cls):
         """Singleton pattern implementation"""
         if cls._instance is None:
@@ -625,6 +642,54 @@ class FIELD(metaclass=_StubMeta):
     REGTREE_TREND = 'regtreeTrd'
     REGTREE_TREND_RETURNS = 'regtreeTrdRet'
 
+    # ── 2026-10-21 随 compact builder 补（真值逐字取自老树
+    # `utils/parameter.py::INDICATOR_FIELD`；MongoDB 实际存储名，别改写）──
+    CCI = 'CCI'
+    RSI = 'RSI'
+    CCI_NORM = 'CCI_NORM'
+    BOLL_UB = 'BOLL_UB'
+    BOLL = 'BOLL_MA'
+    BOLL_LB = 'BOLL_LB'
+    BOLL_CHANNEL = 'BOLL_WIDTH'
+    BOLL_DELTA = 'BBW_diff_1T'
+    MTM = 'MTM'
+    MTMMA = 'MTMMA'
+    MA90_CLEARANCE = 'MA90_CLR'
+    MA90_CLEARANCE_TIMING_LAG = 'MA90_CLR_LAG'
+    MA90_CLR_RETURNS_GARIDENT = 'MA90_CLR_RET_GAR'
+    DRAWDOWN_RATIO = 'DRDN_RATIO'
+    VOLUME_NORM = 'VOL_NORM'
+    VOLUME_NORM_TIMING_LAG = 'VOL_NORM_LAG'
+    MAGIC_NINE_TURNS_BEFORE_MAJOR = 'm9tBfMaj'
+    MAGIC_NINE_TURNS_SX_BEFORE_MAJOR = 'm9tSxBfMaj'
+    MAPOWER30_TIMING_LAG_MAJOR = 'MPWR3_LAG_MAJ'
+    MAPOWER30_MEDIAN = 'MPWR3_MED'
+    MAPOWER30_MAJOR_MEDIAN = 'MPWR3_MAJ_MED'
+    MTM_NORM_WEEKLY = 'MTM_NORM_WEK'
+    MTMMA_NORM = 'MTMMA_NORM'
+    MTMMA_NORM_WEEKLY = 'MTMMA_NORM_WEK'
+    MTMMA_NORM_MAJOR = 'MTMMA_NORM_MAJ'
+    POLYNOMIAL9_TIMING_LAG_MAJOR = 'poly9_LAG_MAJ'
+    PEAK_LOW_TIMING_LAG = 'PeakLowLag'
+    PEAK_HIGH_BACKWARD = 'PEAK_HI_BKWRD'
+    PEAK_LOW_BACKWARD = 'PEAK_LO_BKWRD'
+    MAPOWER30_PEAK_HIGH_BEFORE = 'MPWR3_PEAK_HI_BF'
+    MAPOWER30_PEAK_LOW_BEFORE = 'MPWR3_PEAK_LO_BF'
+    #: ATR Stopline / SuperTrend（2026-10-21 随 markup 工具补；真值取自老树）。
+    ATR_Stopline = 'ATR_Stopline'
+    ATR_Stopline_PRICE = 'ATRStplnPrc'
+    ATR_SuperTrend = 'ATR_SUPTRD'
+    ATR_Stopline_TIMING_LAG_WEEKLY = 'ATR_Stopline_LAG_WEK'
+    ATR_SuperTrend_TIMING_LAG_WEEKLY = 'ATR_SUPTRD_LAG_WEK'
+    #: Linear-regression band / peak 极值点（2026-10-21 随 `calc_peak_point_vX` 补）。
+    LINEAREG_PRICE = 'LRC_PRICE'
+    ATR_UB = 'ATR_UB'
+    LINEAREG_TREND_TIMING_LAG = 'LRG_TRD_LAG'
+    LINEAREG_BAND_TIMING_LAG = 'LRG_BAND_LAG'
+    PEAK_TOWARDS_TIMING_LAG = 'PEAK_TOWARDS_LAG'
+    PEAK_HIGH_TIMING_LAG = 'PEAK_HIGH_LAG'
+    PEAK_TOWARDS_BEFORE = 'PEAK_TOWARDS_BF'
+
 class FEATURES(metaclass=_StubMeta):
     """
     Feature column name constants (stub — to be populated).
@@ -691,6 +756,9 @@ class TREND_STATUS(metaclass=_StubMeta):
     # 它是数据在 MongoDB 里的实际存储名（`PITFALLS.md` P1：缺常量不许编）。
     PEAK_POINT = 'PEAK_POINT'
     PEAK_POINT_MAX_FACTOR = 'PEAK_POINT_MAX_FACTOR'
+    #: 2026-10-21 随 `calc_peak_point_vX` 补（老树 `TREND_STATUS` 真值）。
+    CLUSTER_GROUP_TOWARDS = 'CLT_GRP_TOWARDS'
+    PEAK_TOWARDS = 'PEAK_TOWARDS'
 
 class STATE(metaclass=_StubMeta):
     """

@@ -53,6 +53,13 @@
 |:--|:--|:--|
 | f | `find_zs(points)` | 输入笔或线段标记点，输出中枢识别结果。 `[dt]` |
 
+### `compact`
+calc_compact_features —— XGBoost xgb_scan 的 37 个 derivable 特征。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `calc_compact_features(ohlc_data, ohlc_day, annual, include_rank, verbose)` | 60min（或任意单帧）的 compact 特征；可选叠加 day 周期 / 周线派生。 |
+
 ### `fbprophet`
 Prophet 价格区间（旧树 FBPROPHET_* 四列）—— 只搬算术，落库存比值。
 
@@ -71,6 +78,10 @@ Prophet 价格区间（旧树 FBPROPHET_* 四列）—— 只搬算术，落库�
 | f | `available()` | talib 在不在（TA_HMA 全靠它）。 |
 | f | `TA_HMA(close, period)` | 赫尔移动平均（Hull Moving Average）。 `[dt]` |
 | f | `calc_macd_qa(close, short, long, mid)` | QUANTAXIS 口径的 MACD（QA_indicator_MACD，逐字等价）。 |
+| f | `cross_above(a, b)` | A 上穿 B —— 与 QUANTAXIS CROSS(A, B) 逐字等价。 `[dt]` |
+| f | `atr_rsi_stops(ohlc, period)` | ATR RSI Stops（旧 signal/base.py::ATR_RSI_Stops_v2，逐字搬）。 |
+| f | `atr_supertrend(ohlc, length, factor)` | ATR SuperTrend（旧 signal/base.py::ATR_SuperTrend_cross_v2，逐字搬）。 |
+| f | `lineareg_band(ohlc, nATR, nlookback, scale)` | 线性回归 + ATR 通道（旧 indices/base.py::lineareg_band，逐字搬）。 |
 
 ### `magic_nine_jit`
 神奇九转 —— numba.jit 版（唯一实现）。
@@ -90,6 +101,7 @@ Prophet 价格区间（旧树 FBPROPHET_* 四列）—— 只搬算术，落库�
 | f | `thresholding_algo_py(y, lag, threshold, influence)` | 纯 numpy 参照实现（jit 版必须与它逐值一致）。 |
 | f | `thresholding_algo(y, lag, threshold, influence)` | 鲁棒极值点识别（z-score）。返回 3×len(y) 的数组。 `[dt]` |
 | f | `calc_peak_point_v8(ohlc_data, features)` | 鲁棒性极值点识别（基于方差统计与 ZSCORE 排序）—— 写 ST.PEAK_POINT。 `[dt]` |
+| f | `calc_peak_point_vX(ohlc_data, features)` | 鲁棒性极值点识别（旧 features/base.py:1007，逐字搬）。 |
 | f | `calc_peak_points(closep, lineareg_price)` | 两个输入的极值合成：收盘价算一遍、拟合价算一遍，加权合成。 `[dt]` |
 
 ### `pivot`
@@ -266,6 +278,43 @@ Garident STAGE —— 用 K-Means 把收盘价聚成「支撑/压力带」，再
 
 ## GolemQ.analysis.cv
 
+### `client`
+ChartScan 的 ZeroMQ REQ 客户端 —— 按 scope 解析出任务、逐条发给服务端。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `market_type_of(code)` | 逐码定市场类型 —— 见模块 docstring 的 ⚠️。 `[dt]` |
+| f | `build_jobs(code_list, verbose, db)` | 逐码问「要重扫什么」→ 任务列表 (ticker, market_type, mode, start, end)。 |
+| f | `run_client(scope, port, verbose)` | 解析 scope → 建任务 → 逐条 REQ。返回 (code_list, code_job)（便于测试）。 |
+| f | `main(argv)` |  |
+
+### `model`
+ChartScan 的 YOLO 权重路径与惰性加载。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `weights_path()` | YOLO 权重路径。解析顺序： `[dt]` |
+| f | `load_model(model)` | 取一个 YOLO 模型：给了 model 就原样返回，否则惰性 import ultralytics 载入。 |
+
+### `predict`
+ChartScan 的推理与编排 —— 搬自旧树 GolemAI/GolemQ/CV/charts.py:124-743。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `GQ_markup_daily_ChartScaned(code, kline_data, market_type, verbose, db)` | 「没探到」时在日族留一行只有 ChartScaned 的标记（照旧 :124-143）。 |
+| f | `GQ_markup_ChartScaned(code, kline_data, market_type, verbose, family, db)` | 「没探到」时在 family 族留一行只有 ChartScaned 的标记（照旧 :146-166）。 |
+| f | `GQ_predict_ChartScanAI(code, market_type, freq, end_date, chunk_size, model, if_fq, verbose, db)` | 单标的 × 单频率：取数 → 出图 → YOLO → 挑最近 end_date 的框 → 落库。 |
+| f | `calc_ChartScaned_persistence(ticker, market_type, start_date, end_date, ret_metadata, db)` | 读回已扫结果，决定该标的要重扫什么 —— 搬自旧树 charts.py:448-565。 |
+| f | `calc_ChartScanAI_reality(ticker, market_type, start_date, end_date, enforce, model, if_fq, db)` | 编排：读回已扫状态 → 取日线 baseline → 逐日 × 三频率跑预测。搬自 :568-742。 |
+
+### `render`
+ChartScan 的 K 线渲染（纯出图，不碰 DB、不做推理）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `GQ_generate_chart_stock(kline, ticker, chunk_size, figsize, dpi, freq)` | 把 kline 的最后 chunk_size 根画成蜡烛图，返回内存里的 PNG BytesIO。 |
+| f | `calculate_i(x, chunk_size)` | YOLO 框的像素 x → 第几根 bar（相对 kline.tail(chunk_size)）。 `[dt]` |
+
 ### `scopes`
 scan scope 解析 —— 从旧树 perpar_symbol_range 搬来的 6 个分支。
 
@@ -274,6 +323,91 @@ scan scope 解析 —— 从旧树 perpar_symbol_range 搬来的 6 个分支。
 | C | `ScanDataset` | scope 解析所需的数据落点。跨市场：换市场 = 换一个实例。 |
 | f | `focus_block_codes(dataset, verbose, echo)` | focus_block 的成分股（去重、6 位、排序）。 |
 | f | `perpar_symbol_range(eval_range, dataset, verbose, echo)` | --eval <scope> → 代码列表；解析不出来返回 False（沿用旧树约定）。 `[dt]` |
+
+### `server`
+ChartScan 的 ZeroMQ REP 服务端。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `run_server(port, is_thread)` | 在 port 上起一个 REP 服务端并永不返回（直到 ZMQ 错误 / Ctrl-C）。 |
+| f | `main(argv)` |  |
+
+## GolemQ.analysis.xgboost
+
+### `features`
+xgb_scan 的特征契约（旧树 models/preprocessing.py:242-300 的 58 个条目）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `FeatureSpec` | 一列 xgb_scan 特征的契约。 |
+| f | `FeatureSpec.deprecated()` |  |
+| f | `FeatureSpec.effective_status()` | 报告用状态：analysis/compact.py 已接线的列算 produced。 |
+| f | `feature_specs(model, include_deprecated)` | 返回该模型的 :class:FeatureSpec 元组。 `[dt]` |
+| f | `feature_names(model, include_deprecated)` | 训练/预测要取的列（默认 41 列，不含废弃的 14 列）。 `[dt]` |
+| f | `missing_columns(features, model, include_deprecated)` | features（列名集合）里缺的契约列，按契约顺序返回。 |
+| f | `validate_features(features, model, include_deprecated)` | 训练/预测前的硬闸：缺列直接 ValueError，绝不静默补 NaN。 `[dt]` |
+| f | `feature_status_report(model)` | 按状态分组的缺口报告（含 deprecated）。 `[dt]` |
+
+### `markup`
+xgb_scan 的 markup 标签（旧树 markup/mark_uprising.py:130-325）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `markup_required_columns()` | 返回 {逻辑名: (canonical, legacy)} —— 供缺口报告/文档使用。 |
+| f | `validate_markup_inputs(features)` | 缺必需输入就一次性列出并 ValueError（可选输入见声明）。 `[dt]` |
+| f | `calc_transcation_stats_np(fractal_triggers, closep, fractal_forcast_position, fractal_timing_lag, taxfee, long)` | 分型触发的交易状态机（逐字搬自旧树 portfolio/utils.py:461-620）。 |
+| f | `calc_fractal_stats(symbol, display_name, fractal_uid, fractal_triggers, ref_features, rsk_fre, annual, taxfee, long, mode)` | 分型触发点的绩效统计 —— 只搬 mode='raw'（旧 portfolio/utils.py:49-283）。 |
+| f | `markup_uprising_labels(features, verbose)` | xgb_scan 的多空标签 —— 逐条搬自旧树 markup/mark_uprising.py:130-325。 |
+
+### `model`
+XGBoost 模型文件的路径解析与 Booster 存取。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `model_name(eval_range, short)` | 模型文件名。 `[dt]` |
+| f | `portable_model_dir()` | 程序目录下的模型目录（不创建，供解析用）。 |
+| f | `user_model_dir()` | 用户目录下的模型目录（不创建，供解析用）。 |
+| f | `resolve_model(clf_name, eval_range, short)` | 解析模型文件的绝对路径；先 portable、再用户目录。 |
+| f | `save_model_path(clf_name, eval_range, short)` | 训练输出的落点（程序目录；目录不存在会被创建）。 |
+| f | `load_booster(path)` | 加载原生 XGBoost booster。 |
+| f | `save_booster(model, path)` | 把 XGBClassifier / Booster 存成原生格式，返回路径。 |
+
+### `predict`
+xgb_scan 的推理（旧树 fractal/vXI.py:5141-5235）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `calc_xgbclf_pred_prob(features, clf_filename, features_subset, columns, verbose)` | 对 features 的每一行跑一次分类，返回新帧（不修改入参）。 |
+| f | `predict_xgb_scan(features, eval_range, short, verbose)` | xgb_scan 的便捷入口：默认多头模型，short=True 用空头模型。 |
+
+### `rank`
+markup 的评分 rank（-9..9）—— 旧树 portfolio/base.py:1923-2227。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `get_wait_all_greedy_opt(ys, prd)` | 贪婪买点：未来 prd+1 根全部上涨 → 1，否则 -1（旧树 jit 的纯 numpy 版）。 `[dt]` |
+| f | `get_wait_all_greedy_neg(ys, prd)` | 贪婪空点：get_wait_all_greedy_opt 的符号取反版（旧树原样）。 |
+| f | `macd_cross_features(ohlc)` | 从 OHLC 现算 MACD 死叉两列（rank 的必需输入）。 |
+| f | `calc_portfolio_metaphase(stock_portfolio_rank_lag_np, macd_cross_sx_before, macd_cross_sx_bf_maj)` | 走势阶段（旧树 portfolio/base.py:1852-1920，逐字）。 |
+| f | `calc_portfolio_rank(features, ohlc_data, verbose)` | 给 bar 打 -9..9 的 rank（旧树 calc_portfolio_returns 的 DataFrame 版）。 |
+| f | `rank_from_83(code, start, end, frequency, if_fq, realtime, verbose)` | 从 8.3 读一只标的 → 现算 MACD 死叉 → :func:calc_portfolio_rank。 |
+
+### `train`
+xgb_scan 的训练（旧树 benchmark/train_xgboost.py:435-540）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `default_params()` | 返回一份可传给 XGBClassifier 的参数副本。 `[dt]` |
+| C | `PrepareData` | 按契约列切出训练矩阵（旧树 Prepare_data 的 DataFrame 版）。 |
+| f | `PrepareData.rescale_data(data)` | 旧树的标准化步骤（core.preprocessing.normalize）。 |
+| C | `Main` | 训练/评估的最小封装（旧树 benchmark/train_xgboost.py:110-430）。 |
+| f | `Main.prepare_X_y(data, labels)` | 标签 → 3 类整数；最后一行丢弃（旧树原样）。 `[dt]` |
+| f | `Main.split_train_test(X, y, split_ratio)` | 时序切分：前 90% 训练、后 10% 测试（旧树同款，不 shuffle）。 |
+| f | `Main.train_model(train_x, train_y)` | 训练 XGBClassifier；参数默认见 :func:default_params。 |
+| f | `Main.predict(model, X_test, y_test)` | 返回预测数组；给了 y_test 时打印一份分类报告。 |
+| f | `Main.predict_proba(model, X_test, y_test)` | 返回概率矩阵（列顺序 = model.classes_）。 |
+| f | `Main.plot_feature_imp(data, model)` | 特征重要性图（可选；无 matplotlib/seaborn 时只打印前 20）。 |
+| f | `train_xgb_scan(features, labels, neg_labels, eval_range, columns, params, verbose)` | 训练 xgb_scan 多头 + （可选）空头模型，返回模型与落点。 |
 
 ## GolemQ.cli
 
@@ -345,6 +479,14 @@ ChartScan（CV 图形识别）的两条 CLI 入口 —— --scan / --server。
 | f | `add_server_arguments(parser)` |  |
 | f | `run_chartscan_scan(args)` | --scan ChartScan → chartscan.client.run_client。 |
 | f | `run_chartscan_server(args)` | --server ChartScan → chartscan.server.main（含逗号分隔的多端口）。 |
+
+### `compact`
+--strategy compact —— 逐码计算 compact 特征（只读，不落库）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `add_compact_arguments(parser)` | compact 没有自己的参数：scope/代码走全局 --eval。 |
+| f | `run_compact_cli(args)` |  |
 
 ### `fill_turnover`
 --fill-turnover —— 用「成交量 ÷ 流通股本」现算补齐 stock_reality_feat_day 缺的换手率。
@@ -1046,53 +1188,6 @@ A 股参考集合的取数与落库编排 —— 对应 CLI 的 --save <SOURCE> 
 
 *(无公开成员)*
 
-## GolemQ.markets.StockCN.chartscan
-
-### `client`
-ChartScan 的 ZeroMQ REQ 客户端 —— 按 scope 解析出任务、逐条发给服务端。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `market_type_of(code)` | 逐码定市场类型 —— 见模块 docstring 的 ⚠️。 `[dt]` |
-| f | `build_jobs(code_list, verbose)` | 逐码问「要重扫什么」→ 任务列表 (ticker, market_type, mode, start, end)。 |
-| f | `run_client(scope, port, verbose)` | 解析 scope → 建任务 → 逐条 REQ。返回 (code_list, code_job)（便于测试）。 |
-| f | `main(argv)` |  |
-
-### `model`
-ChartScan 的 YOLO 权重路径与惰性加载。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `weights_path()` | YOLO 权重路径。解析顺序： `[dt]` |
-| f | `load_model(model)` | 取一个 YOLO 模型：给了 model 就原样返回，否则惰性 import ultralytics 载入。 |
-
-### `predict`
-ChartScan 的推理与编排 —— 搬自旧树 GolemAI/GolemQ/CV/charts.py:124-743。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `GQ_markup_daily_ChartScaned(code, kline_data, market_type, verbose)` | 「没探到」时在日族留一行只有 ChartScaned 的标记（照旧 :124-143）。 |
-| f | `GQ_markup_ChartScaned(code, kline_data, market_type, verbose, family)` | 「没探到」时在 family 族留一行只有 ChartScaned 的标记（照旧 :146-166）。 |
-| f | `GQ_predict_ChartScanAI(code, market_type, freq, end_date, chunk_size, model, if_fq, verbose)` | 单标的 × 单频率：取数 → 出图 → YOLO → 挑最近 end_date 的框 → 落库。 |
-| f | `calc_ChartScaned_persistence(ticker, market_type, start_date, end_date, ret_metadata)` | 读回已扫结果，决定该标的要重扫什么 —— 搬自旧树 charts.py:448-565。 |
-| f | `calc_ChartScanAI_reality(ticker, market_type, start_date, end_date, enforce, model, if_fq)` | 编排：读回已扫状态 → 取日线 baseline → 逐日 × 三频率跑预测。搬自 :568-742。 |
-
-### `render`
-ChartScan 的 K 线渲染（纯出图，不碰 DB、不做推理）。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `GQ_generate_chart_stock(kline, ticker, chunk_size, figsize, dpi, freq)` | 把 kline 的最后 chunk_size 根画成蜡烛图，返回内存里的 PNG BytesIO。 |
-| f | `calculate_i(x, chunk_size)` | YOLO 框的像素 x → 第几根 bar（相对 kline.tail(chunk_size)）。 `[dt]` |
-
-### `server`
-ChartScan 的 ZeroMQ REP 服务端。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `run_server(port, is_thread)` | 在 port 上起一个 REP 服务端并永不返回（直到 ZMQ 错误 / Ctrl-C）。 |
-| f | `main(argv)` |  |
-
 ## GolemQ.markets.StockCN.datasource
 
 ### `akshare_source`
@@ -1230,7 +1325,8 @@ Model alias constants (stub — to be populated).
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | C | `LTT` | LTT alias constants (stub). |
-| C | `TRD` | 交易信号字段名 —— 只补了四量图链用到的那两条。 |
+| C | `PFL` | 组合评分（-9..9 rank）的字段名。 |
+| C | `TRD` | 交易信号字段名 —— 只补了四量图链 / markup rank 用到的几条。 |
 | C | `ZEN` | 走势中枢（盘整箱体 / pivot）的字段名。 |
 
 ### `massive`
@@ -1281,6 +1377,18 @@ FeatureStep 与因果切片工具 —— review 管线的唯一编排层。
 | C | `StepRunner` | 按依赖顺序执行 step；只合并 已请求 的族/档。 |
 | f | `StepRunner.run(ctx, steps, families, tiers)` |  |
 | f | `ensure_sorted(frame)` | 按 (ts, code) 排序 —— 落库/对齐前统一顺序。 |
+
+## GolemQ.pipeline.compact
+
+### `pipeline`
+CompactPipeline —— 从 8.3 读 60min + day，算 calc_compact_features。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `CompactPipeline` | 逐码 compact 管线（只读）。固定 60min + day + rank，无开关。 |
+| f | `CompactPipeline.market_type_of(code)` |  |
+| f | `CompactPipeline.run_code(code, as_of)` |  |
+| f | `run_compact(eval_range, codes, pct_of_cores, offset, verbose)` | 解析 scope → 逐码算 compact → 返回 (results, stats)。不写库。 |
 
 ## GolemQ.pipeline.review
 
@@ -1545,6 +1653,44 @@ GolemQ 测试运行脚本
 
 ## GolemQ.test_cases.analysis
 
+### `test_chartscan_client`
+analysis/cv/client.py 的休市节流（_throttle）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestThrottleCountsCodesNotJobs` |  |
+| f | `TestThrottleCountsCodesNotJobs.test_etf_rests_when_only_a_few_codes_left()` | ⚠️ 核心回归：429 个任务但只有 13 只码 ⇒ 必须按 13/506 算，要休 4 小时。 |
+| f | `TestThrottleCountsCodesNotJobs.test_fast_rests_too()` | 股票侧本来就休 —— 修完不能把它弄坏。 |
+| f | `TestThrottleCountsCodesNotJobs.test_nothing_left_no_rest()` | 全部码都有任务 ⇒ 不休（阈值 0.618 之上）。 |
+| f | `TestThrottleCountsCodesNotJobs.test_trading_time_never_rests()` |  |
+| f | `TestThrottleCountsCodesNotJobs.test_night_label_hours()` | 夜里（非周末）同一档是 2 小时。 |
+| f | `TestThrottleCountsCodesNotJobs.test_in_trading_hours_label()` | 工作日盘中时段（非交易时段判据为 False）是 1 小时。 |
+
+### `test_chartscan_predict`
+analysis/cv/predict.py 的写库路由用例（DECISIONS.md D51）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestPersistenceReadsAcrossFamilies` | 读的一侧：重扫判定读日族、按 market_type 取表，并把三套坐标一起转时间戳。 |
+| f | `TestPersistenceReadsAcrossFamilies.test_reads_day_family_with_market_type()` |  |
+| f | `TestPersistenceReadsAcrossFamilies.test_coords_are_converted_to_datetime()` |  |
+| f | `TestPersistenceReadsAcrossFamilies.test_missing_coord_columns_do_not_raise()` | 缺列的旧文档不能炸 —— 缺的那套按 None 处理（否则整只标的读不动）。 |
+| C | `TestHeadlessRendering` | ⚠️ 多线程服务端 + matplotlib GUI 后端 = 每个标的都静默渲染失败。 |
+| f | `TestHeadlessRendering.test_mpbackend_is_forced_to_agg()` |  |
+| f | `TestHeadlessRendering.test_render_module_sets_it_at_import()` | 不是靠调用方传 —— 模块导入那一刻就得钉住（matplotlib 可能已被别人先导入）。 |
+| C | `TestClosestAnchor` | 分钟频率挑「最近框」的锚点（_closest_anchor）。 |
+| f | `TestClosestAnchor.test_minute_on_trading_day_uses_close()` |  |
+| f | `TestClosestAnchor.test_day_keeps_date()` |  |
+| f | `TestClosestAnchor.test_non_trading_day_keeps_date()` | 2026-10-17 是周六 —— 拿不到收盘锚点时保持原行为。 |
+| C | `TestDayBaselineTodayFallback` | 单日窗口 [今天, 今天] 的日线回退（2026-10-21 盘中 no-op 的回归）。 |
+| f | `TestDayBaselineTodayFallback.test_today_only_retries_with_lookback_and_clips()` |  |
+| f | `TestDayBaselineTodayFallback.test_lookback_rows_outside_window_are_dropped()` | 回看只用来「点火」—— 没有落在请求窗口内的行 ⇒ 仍然不扫。 |
+| f | `TestDayBaselineTodayFallback.test_old_empty_window_does_not_retry()` | 历史窗口为空（如上市前）不该白跑一次 512 天回看。 |
+| f | `TestDayBaselineTodayFallback.test_non_empty_single_day_does_not_retry()` |  |
+| f | `TestDayBaselineTodayFallback.test_identical_512d_window_does_not_retry()` | 日频预测本身就用 512 天窗口 —— 为空时回看同一段没有意义。 |
+| C | `TestTodayOnlyJobActuallyRuns` | baseline 有今天那根时，三频率必须真的被调用（不再 without_processing）。 |
+| f | `TestTodayOnlyJobActuallyRuns.test_today_only_runs_all_three_frequencies()` |  |
+
 ### `test_chip_distribution`
 
 | | 名称 | 摘要 |
@@ -1555,6 +1701,9 @@ GolemQ 测试运行脚本
 | f | `TestMissingTurnoverRaises.test_missing_turnover_raises_and_names_the_fill_function()` |  |
 | f | `TestMissingTurnoverRaises.test_full_coverage_runs_to_completion()` | 全覆盖时一路跑通，并把 MA250 / MACD 三件套 / 滞回列都算出来。 |
 | f | `TestMissingTurnoverRaises.test_partial_coverage_still_raises()` | 只缺一天也抛 —— 不设「差几天才报」的余地。 |
+| C | `TestMatchesOldNonJit` | 新 ChipDistribution_jit vs 老树非 jit ChipDistribution.py。 |
+| f | `TestMatchesOldNonJit.test_calculate_chip_distribution_matches()` |  |
+| f | `TestMatchesOldNonJit.test_winner_and_cost_match()` |  |
 | f | `test_performance()` | 命令行直接运行入口（保持原脚本用法） |
 
 ### `test_fbprophet`
@@ -1568,6 +1717,7 @@ analysis/fbprophet.py —— Prophet 区间（存比值）的用例（DECISIONS.
 | C | `TestReindexByDate` |  |
 | f | `TestReindexByDate.test_daily_values_map_onto_intraday_bars()` |  |
 | C | `TestProphetBand` |  |
+| f | `TestProphetBand.test_cmdstanpy_logging_is_suppressed()` | Chain [1] start processing 不许刷屏，且退出后 logger 要还原。 |
 | f | `TestProphetBand.setUpClass()` |  |
 | f | `TestProphetBand.test_columns_and_index()` |  |
 | f | `TestProphetBand.test_ordering_and_no_nan()` |  |
@@ -1614,7 +1764,7 @@ analysis/magic_nine_jit.py 的逐值对拍 + 结构性钉子。
 | f | `TestShape.test_values_are_in_known_set()` | 取值只可能是 {1, -1, 2, -2, NaN} —— 出现别的就是算法走岔了。 |
 
 ### `test_mapower`
-analysis/quadrant.py 的 mapower 一族 —— 与老树逐值对拍 + jit 一致性。
+analysis/quadrant_jit.py 的 mapower 一族 —— 与老树逐值对拍 + jit 一致性。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -1690,6 +1840,7 @@ analysis/timeseries.py 的 rolling_poly9_v2 —— 与老树的逐值对拍。
 | f | `TestMatchesOld.test_empty_input_raises_on_both_sides()` | ⚠️ 空序列两边都不支持（Chebyshev.fit 不吃空数组）。 |
 | C | `TestContract` | 不依赖老树的结构性钉子。 |
 | f | `TestContract.test_output_length_equals_input()` |  |
+| f | `TestContract.test_rank_warning_is_silenced()` | 平盘窗口的 RankWarning 是预期的，不许刷屏（_cheb_fit 压掉）。 |
 | f | `TestContract.test_linear_series_is_reproduced_exactly()` | 线性序列上九次拟合是精确的 ⇒ 端点值就是原值（w 大于序列长时）。 |
 | f | `TestContract.test_no_nan_when_window_halves()` | w=252 作用在 900 长序列上要走递归折半 —— 不许留 NaN。 |
 | C | `TestWeeklyPoly9` | calc_polynomial9_weekly_vXIs —— 周线 POLYNOMIAL9（poly9Wek）。 |
@@ -1715,7 +1866,7 @@ analysis/poly9.py（Poly9 编排层）与老树的逐值对拍。
 | f | `TestNormGate.test_gate_boundary_is_strict()` | 判据是 > 不是 >=：annual == 200 不算。 |
 
 ### `test_quadrant`
-analysis/quadrant.py（四量图 + 6 指标）的正确性测试。
+analysis/quadrant_jit.py（四量图 + 6 指标）的正确性测试。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -1798,7 +1949,7 @@ analysis/regtree_jit.py —— jit 版与 regtree.py 的对拍。
 | f | `TestStatusWithoutNumba.test_status_shape()` |  |
 
 ### `test_renko`
-analysis/renko.py —— 与旧树 indices/renko.py 的逐值对拍。
+analysis/renko_jit.py —— 与旧树 indices/renko.py 的逐值对拍。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -1928,6 +2079,100 @@ analysis/timing.py —— 从旧树搬回的时序累积器与金叉/死叉间�
 | C | `TestMatchesOldTree` | 对拍：同一批随机输入，与旧树的同名实现逐值比。 |
 | f | `TestMatchesOldTree.setUpClass()` |  |
 | f | `TestMatchesOldTree.test_all_six_match()` |  |
+
+### `test_xgboost_compact`
+analysis/compact.py + pipeline/compact 的用例（合成数据，不读库）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestCausalMap` |  |
+| f | `TestCausalMap.test_intraday_uses_previous_day_1500_uses_today()` |  |
+| C | `TestCalcCompactFeatures` |  |
+| f | `TestCalcCompactFeatures.test_single_frame_has_full_contract()` |  |
+| f | `TestCalcCompactFeatures.test_day_mode_maps_day_values_causally()` |  |
+| f | `TestCalcCompactFeatures.test_rank_columns_are_emitted()` |  |
+| f | `TestCalcCompactFeatures.test_does_not_mutate_input()` |  |
+| f | `TestCalcCompactFeatures.test_missing_ohlc_raises()` |  |
+| C | `TestAtr` |  |
+| f | `TestAtr.test_columns_are_produced()` |  |
+| f | `TestAtr.test_matches_old_tree()` |  |
+| C | `TestPeakPoint` |  |
+| f | `TestPeakPoint.test_peak_columns_are_produced()` |  |
+| C | `TestCompactPipeline` |  |
+| f | `TestCompactPipeline.test_run_compact_with_codes()` |  |
+| C | `TestCompactCli` |  |
+| f | `TestCompactCli.test_registered()` |  |
+| f | `TestCompactCli.test_defaults_to_fast_without_eval()` | 用户 2026-10-21：只需要 --strategy compact，不给 --eval 默认 fast。 |
+
+### `test_xgboost_features`
+analysis/xgboost/features.py 的契约用例。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestFeatureContract` |  |
+| f | `TestFeatureContract.test_58_entries_collapse_to_55_unique_columns()` |  |
+| f | `TestFeatureContract.test_default_feature_names_exclude_deprecated()` |  |
+| f | `TestFeatureContract.test_deprecated_set_is_the_user_chosen_group()` | 2026-10-21 用户定：14 列放弃（资金流 / MASSIVE / 两个 GAR / 旧 4 列）。 |
+| f | `TestFeatureContract.test_replacements_are_produced_columns()` |  |
+| f | `TestFeatureContract.test_status_report_totals()` |  |
+| f | `TestFeatureContract.test_validate_features_reports_every_missing_column()` |  |
+| f | `TestFeatureContract.test_validate_features_passes_with_full_contract()` |  |
+| f | `TestFeatureContract.test_legacy_alias_duplicates_resolve_to_one_canonical()` |  |
+| f | `TestFeatureContract.test_feature_names_order_is_legacy_order()` |  |
+
+### `test_xgboost_markup`
+analysis/xgboost/markup.py 的用例。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestTransactionStats` |  |
+| f | `TestTransactionStats.test_shape_and_long_column()` |  |
+| f | `TestTransactionStats.test_matches_old_tree_exactly()` |  |
+| C | `TestFractalStats` |  |
+| f | `TestFractalStats.test_matches_old_tree_exactly()` |  |
+| f | `TestFractalStats.test_only_raw_mode_is_ported()` |  |
+| C | `TestMarkupLabels` |  |
+| f | `TestMarkupLabels.test_labels_are_in_domain_and_input_untouched()` |  |
+| f | `TestMarkupLabels.test_missing_required_column_is_rejected()` |  |
+| f | `TestMarkupLabels.test_optional_inputs_can_be_absent()` | Score_M15_PUNCH / MPWR3_MTR_CAN_LAG / regtreeSlp 在旧树里可缺。 |
+
+### `test_xgboost_rank`
+analysis/xgboost/rank.py 的用例（markup 的 -9..9 评分 rank）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestGreedy` |  |
+| f | `TestGreedy.test_monotonic_up_is_buy()` |  |
+| f | `TestGreedy.test_neg_is_opt_sign_flipped()` |  |
+| f | `TestGreedy.test_matches_old_tree()` |  |
+| C | `TestMacdCross` |  |
+| f | `TestMacdCross.test_cross_above_fixed_points()` |  |
+| f | `TestMacdCross.test_macd_cross_features_columns_and_major_reset()` |  |
+| f | `TestMacdCross.test_missing_close_raises()` |  |
+| C | `TestRankFrom83` |  |
+| f | `TestRankFrom83.test_reads_83_and_computes_rank()` |  |
+| f | `TestRankFrom83.test_empty_returns_none()` |  |
+| C | `TestPortfolioRank` |  |
+| f | `TestPortfolioRank.test_matches_old_tree()` |  |
+| f | `TestPortfolioRank.test_does_not_mutate_input()` |  |
+| f | `TestPortfolioRank.test_missing_close_raises()` |  |
+| f | `TestPortfolioRank.test_missing_macd_raises()` |  |
+| f | `TestPortfolioRank.test_metaphase_matches_old_tree()` |  |
+
+### `test_xgboost_train_predict`
+analysis/xgboost/{train,predict,model}.py 的端到端用例（合成数据，真 xgboost）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestTrainPredictRoundtrip` |  |
+| f | `TestTrainPredictRoundtrip.setUp()` |  |
+| f | `TestTrainPredictRoundtrip.test_train_save_load_predict()` |  |
+| f | `TestTrainPredictRoundtrip.test_short_model_is_trained_when_labels_given()` |  |
+| f | `TestTrainPredictRoundtrip.test_train_refuses_missing_feature_columns()` |  |
+| f | `TestTrainPredictRoundtrip.test_predict_refuses_missing_feature_columns()` |  |
+| C | `TestModelResolution` |  |
+| f | `TestModelResolution.test_missing_model_raises()` |  |
+| f | `TestModelResolution.test_model_name()` |  |
 
 ## GolemQ.test_cases.cli
 
@@ -2140,6 +2385,13 @@ BLAS / OpenMP 线程数守卫（GolemQ/__init__.py 顶部）。
 | f | `TestBlasThreadGuard.test_guard_sets_one_in_a_clean_interpreter()` | 真回归：起一个剥掉这些变量的新解释器，import GolemQ 之后必须变成 '1'。 |
 | f | `TestBlasThreadGuard.test_guard_does_not_override_explicit_setting()` | setdefault 语义：调用方自己 export 的都该原样保留。 |
 
+### `test_constant_refs`
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestConstantRefs` | FLD.X / AKA.X 这类引用必须在常量类里真实存在。 |
+| f | `TestConstantRefs.test_no_undefined_constant_attribute()` |  |
+
 ### `test_epoch_divisor`
 EPOCH_DIVISOR —— datetime → 秒的唯一换算系数（DECISIONS.md D52）。
 
@@ -2199,6 +2451,15 @@ EPOCH_DIVISOR —— datetime → 秒的唯一换算系数（DECISIONS.md D52）
 | f | `TestAlertDispatcher.test_uses_shared_transport(mock_sc, mock_get, mock_check)` |  |
 | f | `TestAlertDispatcher.test_transport_error_returns_false(mock_sc, mock_get, mock_check)` |  |
 | f | `TestAlertDispatcher.test_no_channel_returns_false(mock_check)` |  |
+
+### `test_no_db_name_leak`
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestNoDbNameLeak` | 「库名不外泄」守卫（CLAUDE.md 硬规定 / D60）。 |
+| f | `TestNoDbNameLeak.test_no_db_name_or_handle_outside_market_package()` |  |
+| f | `TestNoDbNameLeak.test_database_accessor_is_the_same_handle()` | 中性访问口必须就是市场自己的那个库实例（不是另开连接）。 |
+| f | `TestNoDbNameLeak.test_handles_are_not_in_public_all()` | __all__ 是公开 API 声明 —— 句柄/库名不该出现在里面。 |
 
 ### `test_no_quantaxis`
 
@@ -2283,32 +2544,6 @@ core/presentation.py 的状态 banner —— 纯渲染、显示宽度、光标�
 | f | `test_messenger_integration()` | 测试消息通知集成 |
 
 ## GolemQ.test_cases.markets
-
-### `test_chartscan_client`
-chartscan/client.py 的休市节流（_throttle）。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| C | `TestThrottleCountsCodesNotJobs` |  |
-| f | `TestThrottleCountsCodesNotJobs.test_etf_rests_when_only_a_few_codes_left()` | ⚠️ 核心回归：429 个任务但只有 13 只码 ⇒ 必须按 13/506 算，要休 4 小时。 |
-| f | `TestThrottleCountsCodesNotJobs.test_fast_rests_too()` | 股票侧本来就休 —— 修完不能把它弄坏。 |
-| f | `TestThrottleCountsCodesNotJobs.test_nothing_left_no_rest()` | 全部码都有任务 ⇒ 不休（阈值 0.618 之上）。 |
-| f | `TestThrottleCountsCodesNotJobs.test_trading_time_never_rests()` |  |
-| f | `TestThrottleCountsCodesNotJobs.test_night_label_hours()` | 夜里（非周末）同一档是 2 小时。 |
-| f | `TestThrottleCountsCodesNotJobs.test_in_trading_hours_label()` | 工作日盘中时段（非交易时段判据为 False）是 1 小时。 |
-
-### `test_chartscan_predict`
-chartscan/predict.py 的写库路由用例（DECISIONS.md D51）。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| C | `TestPersistenceReadsAcrossFamilies` | 读的一侧：重扫判定读日族、按 market_type 取表，并把三套坐标一起转时间戳。 |
-| f | `TestPersistenceReadsAcrossFamilies.test_reads_day_family_with_market_type()` |  |
-| f | `TestPersistenceReadsAcrossFamilies.test_coords_are_converted_to_datetime()` |  |
-| f | `TestPersistenceReadsAcrossFamilies.test_missing_coord_columns_do_not_raise()` | 缺列的旧文档不能炸 —— 缺的那套按 None 处理（否则整只标的读不动）。 |
-| C | `TestHeadlessRendering` | ⚠️ 多线程服务端 + matplotlib GUI 后端 = 每个标的都静默渲染失败。 |
-| f | `TestHeadlessRendering.test_mpbackend_is_forced_to_agg()` |  |
-| f | `TestHeadlessRendering.test_render_module_sets_it_at_import()` | 不是靠调用方传 —— 模块导入那一刻就得钉住（matplotlib 可能已被别人先导入）。 |
 
 ### `test_etf_routing`
 ETF 独立成 ETF_CN / etf_* 之后的路由测试。
@@ -2666,6 +2901,8 @@ REALTIME 合成读路径（get_kline_price_* 的 realtime=True）的回归钉子
 | f | `TestRealtimeReadGuard.test_missing_collection_skips_and_never_touches_it()` | ⚠️ 集合不存在 ⇒ 直接返回：既省一次 tick 读，也不建集合。 |
 | f | `TestRealtimeReadGuard.test_existing_collection_calls_the_minute_merger()` |  |
 | f | `TestRealtimeReadGuard.test_existing_collection_calls_the_day_merger()` |  |
+| f | `TestRealtimeReadGuard.test_day_merger_passes_explicit_market_type()` | ETF 日线必须把 ETF_CN 透传给日线合并器 —— 否则会去查流通股本。 |
+| f | `TestRealtimeReadGuard.test_day_merger_resolves_etf_when_market_type_missing()` | 调用方没传 market_type 时，按代码解析成 ETF_CN（589490）。 |
 | f | `TestRealtimeReadGuard.test_merge_failure_returns_history_not_none()` | 合并炸了 ⇒ 返回纯历史 —— 不能把已经读到手的数据也丢掉。 |
 | f | `TestRealtimeReadGuard.test_realtime_false_never_touches_the_realtime_db()` | realtime=False ⇒ 一次都不碰实时库（这是「不带 REALTIME」该有的代价：0）。 |
 | f | `TestRealtimeReadGuard.test_both_readers_default_to_realtime_true()` | ⚠️ 两族的默认都必须是 True，且必须与 base_market 的抽象声明一致。 |
@@ -2910,3 +3147,5 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `TestReviewCliDefaults.test_keyboard_interrupt_returns_130()` | Ctrl+C 必须干净退出（130），不能被当成运行期失败 1。 |
 | C | `TestPipelineInterrupt` | 并行段必须用 with Parallel(...)，否则 Ctrl+C 后 worker 可能不退出。 |
 | f | `TestPipelineInterrupt.test_parallel_is_terminated_on_keyboard_interrupt()` |  |
+| f | `TestPipelineInterrupt.test_parallel_uses_multiple_worker_pids()` | 真实 joblib：pool_size=2 必须出现 >=2 个不同 worker PID。 |
+| f | `TestPipelineInterrupt.test_parallel_banner_prints_core_count()` | 并行开始时必须打出「N 个CPU核心」一行（老树口径，不只在 -v 下）。 |

@@ -66,7 +66,6 @@ from czsc import CZSC
 from czsc.objects import Freq, RawBar
 
 from GolemQ import get_active_market
-from GolemQ.analysis import renko as RENKO
 from GolemQ.analysis import renko_jit as RENKO_JIT
 from GolemQ.analysis.pivot import (
     bi_confirm_map, bi_list_to_points, calc_pivots, classify_pivots,
@@ -90,8 +89,8 @@ COEF_COL = LTT.QUADRANT_UPRISING_I_COEF_DUMMY
 
 #: 走 jit 还是纯版 —— **指标卡上要如实标出来**（两者逐值相同，但速度差 ~6×）
 _HAS_JIT = RENKO_JIT.available()
-_renko_feats = (RENKO_JIT.renko_trend_cross_func_jit if _HAS_JIT
-                else RENKO.renko_trend_cross_func)
+# D59 起 `renko_jit` 是唯一实现；`renko_trend_cross_func` 是 jit 版的兼容别名。
+_renko_feats = RENKO_JIT.renko_trend_cross_func
 
 st.set_page_config(page_title="中枢 × RENKO × 上升系数", layout="wide")
 st.title("📦🧱📈 缠论中枢 × RENKO 砖块界 × 上升系数（叠加图）")
@@ -129,7 +128,7 @@ def _powerline(ohlc, code):
     `calc_four_quadrant_boost` 只依赖 `ohlc` 与 talib 指标，**不需要**外来的
     features —— 所以每个频率都能独立算一份。
     """
-    from GolemQ.analysis.quadrant import calc_four_quadrant_boost
+    from GolemQ.analysis.quadrant_jit import calc_four_quadrant_boost
     f = calc_four_quadrant_boost(code, features=pd.DataFrame(index=ohlc.index),
                                  ohlc_data=ohlc, annual=252)
     return f[LTT.QUADRANT_POWERLINE]
@@ -188,8 +187,8 @@ def _macd_cross_sx_before(ohlc):
 
 
 def _leadin_x5(ohlc):
-    """15min 的 `MsLeadinx5Bf`（新树 `analysis/quadrant.py::calc_mainstream_feats`）。"""
-    from GolemQ.analysis.quadrant import calc_mainstream_feats
+    """15min 的 `MsLeadinx5Bf`（新树 `analysis/quadrant_jit.py::calc_mainstream_feats`）。"""
+    from GolemQ.analysis.quadrant_jit import calc_mainstream_feats
     feats = pd.DataFrame(index=ohlc.index)
     feats[FLD.MACD] = _qa_macd(ohlc)[2].to_numpy()
     feats = calc_mainstream_feats(ohlc, feats)
@@ -240,7 +239,7 @@ def _calc_coef(code: str, ohlc, bi_list):
     （ZEN 笔方向、星线死叉、两条 event-lag —— 不拖 ZEN/BS 整链）。
     """
     from GolemQ.analysis.pivot import calc_zen_dash_timing_lag
-    from GolemQ.analysis.quadrant import (
+    from GolemQ.analysis.quadrant_jit import (
         calc_bs_star_down, calc_quadrant_leverage_macd_timing_lag,
         calc_quadrant_powerline_uprisal_lag, calc_quadrant_stardown_count,
         calc_quadrant_zen_dash_count)

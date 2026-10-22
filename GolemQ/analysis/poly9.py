@@ -1,7 +1,7 @@
 # coding:utf-8
 """Poly9 家族的**编排层** —— 把 `rolling_poly9_v2` / `mapower` 串成指标列。
 
-本模块与 `analysis/timeseries.py` / `analysis/quadrant.py` 的分工
+本模块与 `analysis/timeseries.py` / `analysis/quadrant_jit.py` 的分工
 ==============================================================
 * 那两处是**算术核**（`rolling_poly9_v2`、`mapower_np_vXIIs`）——纯序列进、纯序列出；
 * 本模块做**编排**：从 `ohlc_data` 与 `features` 里取输入、拼 `s`、

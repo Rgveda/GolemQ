@@ -9,8 +9,8 @@
 
     GolemQ.get_active_market().get_kline_price_v3 / get_kline_price_min
         → markets/StockCN/kline83.py     # MongoDB 8.3 时序集合，已前复权
-    GolemQ.analysis.renko.renko             # 砖块序列（真正的 Renko 图）
-    GolemQ.analysis.renko.renko_trend_cross_func   # S/L 两族特征列
+    GolemQ.analysis.renko_jit.renko         # 砖块序列（真正的 Renko 图）
+    GolemQ.analysis.renko_jit.renko_trend_cross_func   # S/L 两族特征列（jit 兼容别名）
 
 两个页签看的是**同一份数据的两个面**：
 
@@ -29,7 +29,7 @@
 
 ⚠️ **别把 `source_aligned` 的两列当有序的上下界**：下跌砖上它返回的是
 `[上一砖位, 上一砖位 - 砖高]`（**反序**）。本 demo 走的是 `renko_chart`，
-它输出的 lb/ub **是有序的** —— 见 `analysis/renko.py` 的模块 docstring。
+它输出的 lb/ub **是有序的** —— 见 `analysis/renko_jit.py` 的模块 docstring。
 """
 import os
 import sys
@@ -47,7 +47,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from GolemQ import get_active_market
-from GolemQ.analysis.renko import renko, renko_trend_cross_func
+from GolemQ.analysis.renko_jit import renko, renko_trend_cross_func
 from GolemQ.core.constants import AKA, FIELD as FLD
 
 #: 频率 → (取数方式, 加长历史时回溯的自然日数)
@@ -134,7 +134,7 @@ def load(symbol: str, frequency: str, brick_mode: str, manual_brick: float,
     try:
         feats = renko_trend_cross_func(df)
     except Exception as exc:                       # noqa: BLE001
-        # ⚠️ 那个函数里有个裸 `except`（保真搬运，见 analysis/renko.py 的「已知缺陷」2），
+        # ⚠️ 那个函数里有个裸 `except`（保真搬运，见 analysis/renko_jit.py 的「已知缺陷」2），
         # 极端输入下会以 NameError 收场 —— 演示里如实报出来，别静默。
         # ⚠️ 返回**字符串**而不是异常对象：`st.cache_data` 要 pickle 返回值，
         # 掺一个异常实例进去是自找麻烦。
@@ -267,4 +267,4 @@ with tab_feat:
     st.dataframe(f[cols].tail(200), width='stretch')
     st.caption("⚠️ `RENKO_PRICE_S/L` 是**砖位价**（不是收盘价），`RENKO_OPTIMAL` 只在"
                "每个 1200 bar 窗口的首行有值、其余为 0；这三列旧树也**写后无人读**"
-               "（见 `analysis/renko.py` 的「写到哪些列」）。")
+               "（见 `analysis/renko_jit.py` 的「写到哪些列」）。")

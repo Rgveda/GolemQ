@@ -19,6 +19,7 @@ from ._registry import (      # noqa: F401 再导出，供 __main__ 与测试用
 )
 from . import (      # noqa: F401 导入即注册（见上）
     chartscan,
+    compact,
     fill_turnover,
     heartbeat,
     metadata_align,
@@ -62,6 +63,8 @@ register([
     # `--review-runtime` 是只读内存 API。scope 用全局 `--eval`。
     review.REVIEW_DAILY,
     review.REVIEW_RUNTIME,
+    # compact（只读：8.3 60min+day → calc_compact_features）—— `--strategy compact`
+    compact.COMPACT,
     # —— 外部抓取（HTTP，落 stock_reality_feat_day）——
     moneyflow.MONEYFLOW,             # --moneyflow {eastmoney|ths|all}
     # 现算补齐（不连 4.4、不抓外网）—— 与 MONEYFLOW 同层，都落 stock_reality_feat_day

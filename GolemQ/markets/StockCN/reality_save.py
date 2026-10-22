@@ -207,8 +207,8 @@ def save_reality_feat(features: pd.DataFrame, family: str, market_type,
 
     :param market_type: **该 code 的**市场类型（一只 code 一次调用，同旧 `charts.py`）；
         决定落 ``stock_`` 还是 ``index_`` 前缀，见 :func:`reality_feat_name`。
-    :param db: ``golemq_stock_cn`` 的**数据库实例**（调用方从市场实例取，
-        如 ``get_active_market().GOLEMQ_STOCK_CN``）。``None`` ⇒ 本模块自己取
+    :param db: 行情库的**数据库实例**（调用方从市场实例取，
+        如 ``get_active_market().get_database()``）。``None`` ⇒ 本模块自己取
         （仅供**市场层内部**调用；pipeline/CLI 必须显式传，见 CLAUDE.md 的「库名不外泄」）。
     :returns: ``{'name','rows','written','upserted','modified'}``
     """
@@ -343,7 +343,7 @@ def _close_for_restore(codes, start, end, family):
 #: 它们的签名是 `(features, collections=<一个 Collection 句柄>)`，而本模块收的是
 #: `(features, family, market_type)` —— **同名不同义**。留着当别名只会诱出错误调用
 #: （`collections=` 一传就 TypeError），而那样的错在移植时最容易被顺手"修好"成
-#: 传错的东西。搬过来的 `chartscan/predict.py` 一律用本模块的**新名**。
+#: 传错的东西。搬过来的 `analysis/cv/predict.py` 一律用本模块的**新名**。
 __all__ = [
     'REALITY_FAMILIES', 'UNIQUE_KEYS',
     'reality_feat_name', 'reality_feat_rows', 'save_reality_feat', 'fetch_reality_feat',
@@ -352,7 +352,7 @@ __all__ = [
 
 
 #: 每张 `*_reality_feat_*` 表里**真正的 CV 载荷列**（= 新树 writer 写的那套，见
-#: `chartscan/predict.py:218-231`）。⚠️ **4.4 的同名表里混着三套命名**
+#: `analysis/cv/predict.py` 的写口）。⚠️ **4.4 的同名表里混着三套命名**
 #: （`ClsMaj` / `ClsMin` / `Class`），但实测**同一行上多套并存**
 #: （60min 表：带 CV 的 1,340 行里 1,242 行两套都有，日期范围完全相同）
 #: ⇒ 按本表挑一套**不丢数据**。

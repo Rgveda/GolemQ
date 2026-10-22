@@ -1,5 +1,5 @@
 # coding:utf-8
-"""`analysis/quadrant.py` 的 `mapower` 一族 —— 与老树**逐值对拍** + jit 一致性。
+"""`analysis/quadrant_jit.py` 的 `mapower` 一族 —— 与老树**逐值对拍** + jit 一致性。
 
 判据 `np.array_equal`，**不用容差**（`DECISIONS.md` D35/D36）。
 老树 `GolemQ_old/` 不在场时对拍整份跳过（harness 见 `old_tree.py`）。

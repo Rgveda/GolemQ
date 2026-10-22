@@ -1,7 +1,7 @@
 # coding:utf-8
 """持仓收益的计算 —— 纯函数，为 JIT / Cython 而写成显式循环。
 
-从旧树 `GolemQ_old/portfolio/utils.py` 搬回（`analysis/regtree.py` 要用）。
+从旧树 `GolemQ_old/portfolio/utils.py` 搬回（`analysis/regtree_jit.py` 要用）。
 新树的 `portfolio/` 原只有 costs / engine / rules / sizing / strategy 五个模块，
 **没有** utils —— 所以这一个独立成模块，而不是往回造一个 `utils.py` 杂物间。
 """

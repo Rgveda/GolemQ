@@ -89,7 +89,7 @@ MIN_PACKAGES = (
     # numba 主要是**可选加速器**，不是"缺了就断"—— 两个用它模块写好了降级：
     # `analysis/peak.py` 退回纯实现（`thresholding_algo_py`）、
     # `analysis/regtree_jit.py` 的 `available()` 报 False 并让调用方另作打算。
-    # ⚠️ **但 2026-10-10 起多了一个不降级的用户**：`analysis/renko.py` 的
+    # ⚠️ **但 2026-10-10 起多了一个不降级的用户**：`analysis/renko_jit.py` 的
     # `renko_chart` 是**模块级** `@nb.jit(nopython=True)`，缺 numba 时**整个模块
     # import 就失败**。所以 numba 事实上已经从"可选"变成"缺了就断 renko"。
     # 写进本表 = 它进了 `ENV_GATE_NODES` 的 `依赖包` 节点 ⇒ **缺 numba 时 CLI 硬拦**
@@ -101,7 +101,7 @@ MIN_PACKAGES = (
     # 本项目的门槛一贯是"能跑的下限"，2.0/2.3 那两条的注释里也写着理由。
     ('numba', '0.61'),
     # ⚠️ 下面两条是 2026-10-10 随 RENKO 搬运**第一次**进新树的依赖
-    # （`analysis/renko.py`）。它们**不能**换成自实现：
+    # （`analysis/renko_jit.py`）。它们**不能**换成自实现：
     # `talib.ATR` 定砖高、`scipy.optimize.fminbound` 搜最优砖高 —— 换成"等价"实现
     # 会**改变砖高**，与旧树的**逐值对拍**立刻失真，而对拍是那个模块唯一的正确性证据。
     #
@@ -174,7 +174,7 @@ REPAIR_COMMANDS = frozenset({'setup', 'mongodb-init', 'dingtalk-init', 'serverch
 #: 具体那次的起因：`--scan ChartScan` / `--server ChartScan` 要跑在 GolemAI env，
 #: 而那个 env 当时 `numpy 1.26.4 < 2.0` 过不了 `依赖包` 闸。**正确的解法是升级依赖**，
 #: 不是放行 —— 而且那两条命令**本来就不会在 CV env 里执行这道闸**：
-#: `cli/commands/chartscan.py` 切 env 后跑的是 `python -m ...chartscan.server`（模块），
+#: `cli/commands/chartscan.py` 切 env 后跑的是 `python -m ...analysis.cv.server`（模块），
 #: 不是 `python -m GolemQ.cli`。只有「在 CV env 里直接敲 CLI」才会碰到闸 ——
 #: 那种跑法就该被拦住。
 #:

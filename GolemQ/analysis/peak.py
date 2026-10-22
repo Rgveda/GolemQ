@@ -30,10 +30,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from GolemQ.core.constants import AKA, TREND_STATUS as ST
+from GolemQ.core.constants import AKA, FIELD, TREND_STATUS as ST
 
 __all__ = ['thresholding_algo', 'thresholding_algo_py', 'peak_status',
-           'calc_peak_point_v8', 'calc_peak_points']
+           'calc_peak_point_v8', 'calc_peak_points', 'calc_peak_point_vX']
 
 
 def _nb():
@@ -162,6 +162,105 @@ def calc_peak_point_v8(ohlc_data: pd.DataFrame, features: pd.DataFrame = None) -
                                 columns=[ST.PEAK_POINT])
     else:
         features[ST.PEAK_POINT] = peak_point_candicate
+    return features
+
+
+def calc_peak_point_vX(ohlc_data: pd.DataFrame,
+                       features: pd.DataFrame = None) -> pd.DataFrame:
+    """鲁棒性极值点识别（旧 `features/base.py:1007`，逐字搬）。
+
+    产出 `PEAK_LOW_TIMING_LAG`（markup 的必需输入）以及
+    `LINEAREG_PRICE` / `ATR_UB` / `ATR_LB` / `PEAK_TOWARDS_*` /
+    `PEAK_HIGH_TIMING_LAG` / `CLUSTER_GROUP_TOWARDS` 等中间列。
+
+    ⚠️ 需要 `ZEN_DASH_TIMING_LAG`（以及 `MACD_ZERO_TIMING_LAG` /
+    `ZEN_PEAK_TIMING_LAG`）；`features` 里没有就先调
+    :func:`analysis.zen.calc_zen_timing_lag`，否则 `LINEAREG_BAND_TIMING_LAG`
+    无法生成 —— 直接 `ValueError`，不静默给 NaN。
+    """
+    from GolemQ.analysis.indicators import lineareg_band
+    from GolemQ.analysis.timing import Timeline_duration, calc_event_timing_lag
+
+    if features is None:
+        features = pd.DataFrame(index=ohlc_data.index)
+    if FIELD.ZEN_DASH_TIMING_LAG not in features.columns:
+        from GolemQ.analysis.zen import calc_zen_timing_lag
+        features = calc_zen_timing_lag(ohlc_data, features=features)
+
+    lag, threshold, influence = 5, 3.5, 0.5
+    if FIELD.LINEAREG_PRICE not in features.columns:
+        lrc, lrc_u, lrc_l, _ = lineareg_band(ohlc_data)
+        features[FIELD.LINEAREG_PRICE] = lrc.astype(np.float32)
+        features[FIELD.ATR_UB] = lrc_u.astype(np.float32)
+        features[FIELD.ATR_LB] = lrc_l.astype(np.float32)
+        features[FIELD.LINEAREG_TREND_TIMING_LAG] = calc_event_timing_lag(
+            np.where(features[FIELD.LINEAREG_PRICE]
+                     > features[FIELD.LINEAREG_PRICE].shift(1), 1, -1)).astype(np.int16)
+        features[FIELD.LINEAREG_BAND_TIMING_LAG] = calc_event_timing_lag(np.where(
+            (features[FIELD.LINEAREG_TREND_TIMING_LAG]
+             + features[FIELD.ZEN_DASH_TIMING_LAG]) > 0, 1, -1)).astype(np.int16)
+
+    if FIELD.LINEAREG_BAND_TIMING_LAG not in features.columns:
+        raise ValueError(
+            'calc_peak_point_vX 需要 LINEAREG_BAND_TIMING_LAG / ZEN_DASH_TIMING_LAG')
+
+    candidates = [
+        thresholding_algo(ohlc_data[AKA.CLOSE].values,
+                          lag=lag, threshold=threshold, influence=influence)[0, :],
+        thresholding_algo(features[FIELD.LINEAREG_PRICE].values,
+                          lag=lag, threshold=threshold, influence=influence)[0, :],
+    ]
+
+    features = features.reindex(columns=list(set([
+        *features.columns,
+        *[ST.CLUSTER_GROUP_TOWARDS, ST.PEAK_TOWARDS,
+          FIELD.PEAK_TOWARDS_TIMING_LAG, FIELD.PEAK_HIGH_TIMING_LAG,
+          FIELD.PEAK_LOW_TIMING_LAG, FIELD.PEAK_TOWARDS_BEFORE]])))
+    features[ST.CLUSTER_GROUP_TOWARDS] = 0
+    for i, peak_point in enumerate(candidates):
+        features[ST.CLUSTER_GROUP_TOWARDS] = np.where(
+            peak_point != 0, peak_point * (9 - i),
+            features[ST.CLUSTER_GROUP_TOWARDS]).astype(np.float16)
+
+    towards = [
+        np.where((features[ST.CLUSTER_GROUP_TOWARDS] < 0)
+                 & (features[FIELD.MACD_ZERO_TIMING_LAG] < 0), 1, 0),
+        np.where((features[ST.CLUSTER_GROUP_TOWARDS] > 0)
+                 & (features[FIELD.MACD_ZERO_TIMING_LAG] > 0)
+                 & (features[FIELD.LINEAREG_BAND_TIMING_LAG] < 0), -1, 0),
+        np.where((features[ST.CLUSTER_GROUP_TOWARDS] < 0)
+                 & (features[FIELD.MACD_ZERO_TIMING_LAG] > 0)
+                 & (features[FIELD.ZEN_DASH_TIMING_LAG] > 0), 1, 0),
+        np.where((features[ST.CLUSTER_GROUP_TOWARDS] > 0)
+                 & (features[FIELD.MACD_ZERO_TIMING_LAG] > 0)
+                 & (features[FIELD.ZEN_DASH_TIMING_LAG] < 0), -1, 0),
+        np.where((features[ST.CLUSTER_GROUP_TOWARDS] > 0)
+                 & (features[FIELD.ZEN_PEAK_TIMING_LAG] < 0), -1, 0),
+    ]
+    features[ST.PEAK_TOWARDS] = 0
+    for i, p in enumerate(towards):
+        features[ST.PEAK_TOWARDS] = np.where(
+            p != 0, p * (9 - i), features[ST.PEAK_TOWARDS])
+
+    features[FIELD.PEAK_TOWARDS_BEFORE] = Timeline_duration(
+        np.where(features[ST.PEAK_TOWARDS] > 0, 1, 0)).astype(np.int16)
+    jx = Timeline_duration(np.where(features[ST.PEAK_TOWARDS] > 0, 1, 0)).astype(np.int16)
+    sx = Timeline_duration(np.where(features[ST.PEAK_TOWARDS] < 0, 1, 0)).astype(np.int16)
+    features[FIELD.PEAK_TOWARDS_TIMING_LAG] = calc_event_timing_lag(
+        np.where(jx < sx, 1, -1)).astype(np.int16)
+    features[FIELD.PEAK_HIGH_TIMING_LAG] = calc_event_timing_lag(
+        np.where(features[ST.CLUSTER_GROUP_TOWARDS] > 0, 1, -1)).astype(np.int16)
+    features[FIELD.PEAK_HIGH_TIMING_LAG] = calc_event_timing_lag(np.where(
+        (features[FIELD.PEAK_HIGH_TIMING_LAG]
+         + features[FIELD.LINEAREG_BAND_TIMING_LAG]) > 0, 1, -1)).astype(np.int16)
+    features[FIELD.PEAK_LOW_TIMING_LAG] = calc_event_timing_lag(
+        np.where(features[ST.CLUSTER_GROUP_TOWARDS] < 0, -1, 1)).astype(np.int16)
+    features[FIELD.PEAK_LOW_TIMING_LAG] = calc_event_timing_lag(np.where(
+        (features[FIELD.PEAK_LOW_TIMING_LAG]
+         + features[FIELD.LINEAREG_BAND_TIMING_LAG]) < 0, -1,
+        np.where((features[FIELD.LINEAREG_BAND_TIMING_LAG] < 0)
+                 & (features[FIELD.MACD] < features[FIELD.DIF])
+                 & (features[FIELD.ZEN_PEAK_TIMING_LAG] < 0), -1, 1))).astype(np.int16)
     return features
 
 

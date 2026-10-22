@@ -2,7 +2,7 @@
 """ChartScan 的 **ZeroMQ REQ 客户端** —— 按 scope 解析出任务、逐条发给服务端。
 
     python -m GolemQ.cli --scan ChartScan --eval fast --port 6666   # ← 首选（自动切 env）
-    python -m GolemQ.markets.StockCN.chartscan.client --eval etf  --port 7777
+    python -m GolemQ.analysis.cv.client --eval etf  --port 7777
 
 ⚠️ 同 `server.py`：要在 `GolemAI` env 里跑（要 pyzmq；且它读的账本在服务端那侧）。
 走 CLI 那条时**不需要**手动切 —— `cli/commands/chartscan.py` 会 re-exec 过去（D51）。
@@ -55,7 +55,7 @@ def market_type_of(code: str) -> str:
     return is_stock_cn(code)[1]
 
 
-def build_jobs(code_list, verbose=True):
+def build_jobs(code_list, verbose=True, db=None):
     """逐码问「要重扫什么」→ 任务列表 `(ticker, market_type, mode, start, end)`。
 
     逐字搬自旧树那一段（含 mode 1 的**按月切块**、mode 0 跳过、以及 `>28 天` 的
@@ -64,7 +64,7 @@ def build_jobs(code_list, verbose=True):
     from tqdm import tqdm
     code_job = []
     for code in tqdm(code_list, desc='Processing symbols', unit='code', disable=not verbose):
-        req = calc_ChartScaned_persistence(code, market_type=market_type_of(code))
+        req = calc_ChartScaned_persistence(code, market_type=market_type_of(code), db=db)
         if req[2] == 1:
             start_date, end_date = req[3], req[4]
             cur = start_date
@@ -144,13 +144,14 @@ def run_client(scope, port, verbose=True):
     # scope 解析在**跨市场**的 `analysis/cv/scopes.py`，数据落点由本站的 `scan_dataset()`
     # 注入 —— 那个模块不 import 任何市场包（2026-10-13 归位，见 D44）。
     from GolemQ.core.market_registry import get_active_market
-    code_list = perpar_symbol_range(scope, dataset=get_active_market().scan_dataset(),
+    market = get_active_market()
+    code_list = perpar_symbol_range(scope, dataset=market.scan_dataset(),
                                     verbose=verbose)
     if code_list is False:
         say(f'错误: 无法获取股票列表 [{scope}]。可先跑 `--save tdx` 灌 stock_list。')
         sys.exit(1)
 
-    code_job = build_jobs(code_list, verbose=verbose)
+    code_job = build_jobs(code_list, verbose=verbose, db=market.get_database())
     if (len(code_job) < len(code_list) * 2.68) and _if_tradetime():
         code_job = _remove_outdated_jobs(code_job)
     say(f'Total: {len(code_job)}')

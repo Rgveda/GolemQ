@@ -5,7 +5,7 @@
     python -m GolemQ.cli --scan   ChartScan --eval fast --port 5555
 
 搬自旧树 `GolemAI/GolemQ/cli/__main__.py`（参数在 `:86-100`，实现分别委托给
-`markets/StockCN/chartscan/{server,client}.py` —— 那两个模块也是从那里搬的）。
+`analysis/cv/{server,client}.py` —— 那两个模块也是从那里搬的）。
 **本模块只做参数校验 + 委托**，业务逻辑不在这里。
 
 ⚠️ 这两条命令**自动切换到 GolemAI conda env**
@@ -17,7 +17,7 @@ torch / ultralytics 只装在那儿；GolemQ env 是 **NoMKL**，跑不了 torch
 
 ⚠️ 切过去之后跑的是**模块**，不是 CLI
 =====================================
-`_re_exec` 起的是 ``python -m GolemQ.markets.StockCN.chartscan.{server,client}``
+`_re_exec` 起的是 ``python -m GolemQ.analysis.cv.{server,client}``
 —— **不是** ``python -m GolemQ.cli``。所以 `bootstrap` 那道「依赖包」硬闸
 **根本不会在 CV env 里执行**，也就**不需要**给它开任何豁免
 （用户 2026-10-17 定死：围栏不加豁免，依赖不齐就去升级依赖）。
@@ -89,7 +89,7 @@ def in_cv_env() -> bool:
 def _re_exec(module: str, argv) -> int:
     """用 GolemAI 的 python 跑 ``module argv``，退出码原样返回。
 
-    :param module: ``GolemQ.markets.StockCN.chartscan.server`` / ``...client``
+    :param module: ``GolemQ.analysis.cv.server`` / ``...client``
     :param argv: 传给那个模块的参数列表
     """
     exe = cv_python()
@@ -160,9 +160,9 @@ def run_chartscan_scan(args) -> int:
     """
     argv = ['--eval', str(args.eval_scope), '--port', str(args.port)]
     if not in_cv_env():
-        return _re_exec('GolemQ.markets.StockCN.chartscan.client', argv)
+        return _re_exec('GolemQ.analysis.cv.client', argv)
 
-    from GolemQ.markets.StockCN.chartscan.client import main as client_main
+    from GolemQ.analysis.cv.client import main as client_main
     client_main(argv)
     return 0
 
@@ -175,9 +175,9 @@ def run_chartscan_server(args) -> int:
     """
     argv = ['--port', str(args.port)]
     if not in_cv_env():
-        return _re_exec('GolemQ.markets.StockCN.chartscan.server', argv)
+        return _re_exec('GolemQ.analysis.cv.server', argv)
 
-    from GolemQ.markets.StockCN.chartscan.server import main as server_main
+    from GolemQ.analysis.cv.server import main as server_main
     server_main(argv)
     return 0
 

@@ -23,9 +23,26 @@
 回迁后实测与 QUANTAXIS **输出逐值一致**（2026-09-21，600519 的 960 根 1min：
 5min→192 / 15min→64 / 30min→32 / 60min→16 / 1D→8 行，形状与数值最大差 0）。
 """
+import warnings
+
 import numpy as np
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
+
+#: numpy 2 起 `RankWarning` 在 `np.exceptions`；旧版在 `np` 顶层。
+_RankWarning = getattr(getattr(np, 'exceptions', np), 'RankWarning', Warning)
+
+
+def _cheb_fit(x, y, deg):
+    """`Chebyshev.fit` 的静音包装。
+
+    ⚠️ 平盘/近似重复点的窗口必然触发 `RankWarning: The fit may be poorly
+    conditioned` —— 这是**预期**的（九次多项式在常数列上本来就不适定），
+    不是数据错误；不压掉会让紧凑管线每个窗口刷一行。数值结果不变。
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', _RankWarning)
+        return np.polynomial.Chebyshev.fit(x, y, deg)
 
 # ⚠️ **2026-10-12 补**：这两个常量原先**被引用却从未定义** —— `_min_conversion()` 一调就
 # `NameError`，于是 `GQ_data_min_resample` / `GQ_data_min_to_day` **两个重采样器一直是死的**
@@ -169,7 +186,7 @@ def rolling_poly9_v2(s, w: int = 252):
     x_index = range(w)
 
     def last_poly9(sx):
-        p = np.polynomial.Chebyshev.fit(x_index, sx, 9)
+        p = _cheb_fit(x_index, sx, 9)
         return p(x_index)[-1]
 
     if (len(s) > w) and (w > 122):
@@ -183,7 +200,7 @@ def rolling_poly9_v2(s, w: int = 252):
         return rolling_poly9_v2(s, w=int(w / 2))
     else:
         x_index = range(len(s))
-        p = np.polynomial.Chebyshev.fit(x_index, s, 9)
+        p = _cheb_fit(x_index, s, 9)
         return p(x_index)
 
 

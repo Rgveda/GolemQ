@@ -50,6 +50,9 @@ D49）。这里存 `yhat / close`（**同一个 bar**）—— `1.0` = 与 close
 """
 from __future__ import annotations
 
+import logging
+from contextlib import contextmanager
+
 import numpy as np
 import pandas as pd
 
@@ -79,6 +82,36 @@ DEFAULT_CHANGEPOINT_RANGE = 0.96
 #: "重跑幂等"就成了一句空话。固定后实测**逐位相同**。
 #: （`yhat` 本身是确定的，只有区间受这个影响。）
 UNCERTAINTY_SEED = 20260101
+
+
+@contextmanager
+def _quiet_prophet_logging():
+    """临时压掉 `cmdstanpy` / `prophet` 的 INFO，并避免 `Logging error`。
+
+    为什么需要两步
+    ==============
+    * cmdstanpy 通过 Python `logging` 打 `Chain [1] start processing` ——
+      `suppress_stdout_stderr` 只重定向 **文件描述符**，压不住 `logging`；
+    * 它的 handler 可能在 fd 重定向期间被创建/关闭，`__exit__` 关掉 devnull 后
+      再写日志就会打 `--- Logging error ---`。临时换成 `NullHandler` 一并解决。
+
+    ⚠️ 只在 fit 期间生效，退出后**原样还原**（level / handlers / propagate）。
+    """
+    saved = []
+    for name in ('cmdstanpy', 'prophet'):
+        logger = logging.getLogger(name)
+        saved.append((logger, logger.level, logger.handlers[:],
+                      logger.propagate))
+        logger.setLevel(logging.ERROR)
+        logger.handlers = [logging.NullHandler()]
+        logger.propagate = False
+    try:
+        yield
+    finally:
+        for logger, level, handlers, propagate in saved:
+            logger.setLevel(level)
+            logger.handlers = handlers
+            logger.propagate = propagate
 
 
 def _seeded_predict(model, future) -> pd.DataFrame:
@@ -120,8 +153,8 @@ def prophet_band(ohlc, periods: int = DEFAULT_PERIODS,
         raise ValueError('prophet_band 的时间轴有重复值（{} 个）'.format(int(ds.duplicated().sum())))
     y = pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce').astype(float).to_numpy()
 
-    model = Prophet(changepoint_range=changepoint_range)
-    with suppress_stdout_stderr():                   # cmdstanpy 会往 stdout 刷 INFO
+    with _quiet_prophet_logging(), suppress_stdout_stderr():
+        model = Prophet(changepoint_range=changepoint_range)
         model.fit(pd.DataFrame({'ds': ds, 'y': y}))
         # ⚠️ 必须走 `_seeded_predict`：区间是**抽样**出来的（见 `UNCERTAINTY_SEED`）
         forecast = _seeded_predict(model, model.make_future_dataframe(periods=periods))

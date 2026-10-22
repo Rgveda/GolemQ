@@ -1,8 +1,8 @@
 # coding:utf-8
 """ChartScan 的 **ZeroMQ REP 服务端**。
 
-    python -m GolemQ.markets.StockCN.chartscan.server --port 6666
-    python -m GolemQ.markets.StockCN.chartscan.server --port "6666,7777"
+    python -m GolemQ.analysis.cv.server --port 6666
+    python -m GolemQ.analysis.cv.server --port "6666,7777"
 
 ⚠️ **必须用 `GolemAI` conda env 跑**（torch / ultralytics / pyzmq 在那里；
 GolemQ env 是 NoMKL 跑不了 torch）。
@@ -55,6 +55,8 @@ def run_server(port, is_thread=False):
     else:
         print(f'Server thread is running on port {port}.')
 
+    from GolemQ.core.market_registry import get_active_market
+    db = get_active_market().get_database()
     model = load_model()                    # 权重缺失会抛 —— 让它抛（静默重试只会更难查）
     while True:
         try:
@@ -71,7 +73,7 @@ def run_server(port, is_thread=False):
                     start_date=pd.to_datetime(message['start_date']),
                     end_date=pd.to_datetime(message['end_date']),
                     enforce=message.get('enforce', None),
-                    model=model,
+                    model=model, db=db,
                 )
                 socket.send_json({'status': 'success'})
             except Exception as exc:        # noqa: BLE001 照旧：打栈后**照样回** error

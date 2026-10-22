@@ -1254,7 +1254,8 @@ seconds = series.astype('int64') // epoch_divisor(series.dtype)   # 按**这条�
 
 ### P36. 多线程服务端 + matplotlib **GUI 后端** ⇒ 每个标的都「静默渲染失败」，一条结果都写不进库
 
-**位置**：`markets/StockCN/chartscan/render.py`（2026-10-18 修复）。
+**位置**：`analysis/cv/render.py`（2026-10-18 修复；2026-10-21 从
+`markets/StockCN/chartscan/` 迁入）。
 
 **症状**（真机，`chartscan.ps1` 起 4 端口服务端）：
 
@@ -1403,3 +1404,109 @@ with tqdm_joblib(tqdm(codelist, unit='stock',
 
 **验证**：`pool_size=4`、8 个任务 → **4 个不同 worker PID**（修复前 0 个）；
 `TestPipelineInterrupt.test_parallel_uses_multiple_worker_pids` 钉住。
+
+### P41. 日线读口**先判空、后合并实时** ⇒ 单日窗口 `[今天, 今天]` 永远读不到当日那根
+
+**位置**：`markets/StockCN/kline83.py::get_kline_price_v3`（判定顺序）与
+`analysis/cv/predict.py::_fetch`（2026-10-21 修）。
+
+**症状**：ChartScan 服务端盘中反复打印
+`without_processing code: 920183 True True True [Timestamp('2026-10-21 ...')]`，
+当天 `*_reality_feat_{60min,15min}` **一行都不更新**。
+
+**机制**：`stock_day` 里「今天那根」要等收盘后 `--save` 才写；而
+`get_kline_price_v3` 是
+
+```python
+if df.empty:
+    return None, codename      # ← 先返回
+...
+if realtime:
+    _merge_realtime(...)       # ← 永远走不到
+```
+
+所以「只查今天」时历史为空 ⇒ 返回 `None`，实时合并**根本没机会执行**。
+旧树为此有一条独立的 `GQ_fetch_stock_day_realtime(ohlc_day=None)` 兜底；
+新树按「`realtime=True` 已内建」删掉它时，**漏了单日窗口这个反例**。
+
+**该怎么办**：需要当日 bar 的消费方在窗口为空且末端是最近交易日时，**往前回看**
+一段再读（历史非空才会触发合并），然后**裁回原请求窗口**，回看日不参与计算。
+`analysis/cv/predict.py` 里是 `_DAY_BASELINE_LOOKBACK_DAYS = 512` + `_fetch` 的
+单日回退。⚠️ 别把这个当成「读口 bug」直接改 `get_kline_price_v3` 的 `None` 语义 ——
+`services/persistence/_daily.py` 等调用方依赖「无历史 ⇒ None」。
+
+**边界**：北交所 `920xxx` 在 `realtime_YYYY-MM-DD` 里**没有任何行**
+（腾讯 L1 快照不供北交所，实测 2026-10-21 `920` 前缀 0 行）⇒ 回看也补不出当日，
+只能等 `--save`。
+
+**验证**：`test_chartscan_predict.TestDayBaselineTodayFallback`（5 条）+
+`TestTodayOnlyJobActuallyRuns`；实测 `_fetch('600519','day',今天,今天)` 修复后
+返回今天 1 行，`920183` 仍为 `None`（符合边界）。
+
+### P42. 旧 `xgb_scan` 的「58 个特征」只有 **55 个唯一列**；新旧列名不能靠猜
+
+**位置**：`analysis/xgboost/features.py`（2026-10-21 搬，`DECISIONS.md` D61）。
+
+**两个坑**：
+
+1. **重复别名**：旧 `feature_names('xgb_scan')` 的 58 个条目里，
+   `MTMPOWER30` / `MTMPOWER30_MAJOR` / `MTMPOWER30_WEEKLY` 与
+   `MTM_NORM` / `MTM_NORM_MAJOR` / `MTM_NORM_WEEKLY` 指向**同一存储列**
+   （`MTM_NORM` / `MTM_NORM_MAJ` / `MTM_NORM_WEK`）⇒ 实际只有 55 列。
+   直接按 58 列建契约会让模型拿到 3 组完全重复的输入。
+2. **新旧名不同**：`zDLag` → `zDLagMajR`（带 R 的比值口径）、
+   `ZEN_D_LAG_MIN` → `zDLagMinR`、`poly9pwr3_MAJ` → `poly9pwr3Maj`（去下划线）、
+   `MTM_NORM` → `mtmNorm`。**按名字猜映射会静默错列**。
+
+**该怎么办**：以 `XGB_SCAN_FEATURES` 的 `FeatureSpec(name, legacy, status)`
+为唯一契约；旧快照用 `LEGACY_TO_CANONICAL` 映射；`status='ambiguous'`
+的三列（`zDLagMajR` / `m9t` / `m9tMaj`）在核对口径前**不许**当成已对齐。
+
+**验证**：`test_xgboost_features.py` 钉 55/41/14 三个数；
+`feature_status_report()` 给分组缺口。
+
+### P43. 老树「日线 → 盘中」的 `.bfill()` 是**未来函数**，新 compact 不许照抄
+
+**位置**：`analysis/compact.py::_map_causal`（2026-10-21，`DECISIONS.md` D62）。
+
+**老树做法**：`features/base.py` 的 `merge_features_day_2_hours` 通过
+`resample_multi_frequency_indices_func(..., frequency='30min')` 把**日终值**
+`.bfill()` 到当天更早的盘中 bar 上 —— 盘中 10:30 的行拿到了 15:00 才知道的
+收盘派生值。这是 lookahead，回测会虚高。
+
+**新树口径**：`_map_causal` 盘中 bar（< 15:00）用**上一交易日**的日线值，
+15:00 bar 才用当日值。用户 2026-10-21 明确「旧口径可以被新口径替换，目标重训」，
+所以**不要**为了与老模型对齐把 `.bfill()` 改回来。
+
+**验证**：`test_xgboost_compact.TestCausalMap.test_intraday_uses_previous_day_1500_uses_today`。
+
+### P44. Prophet 1.5 的 cmdstanpy INFO / `Logging error` 与 Chebyshev `RankWarning` 刷屏
+
+**位置**：`analysis/fbprophet.py::_quiet_prophet_logging`、
+`analysis/timeseries.py::_cheb_fit`（2026-10-22）。
+
+**症状**：
+
+```
+01:14:03 - cmdstanpy - INFO - Chain [1] start processing
+--- Logging error ---
+numpy/polynomial/chebyshev.py:1676: RankWarning: The fit may be poorly conditioned
+```
+
+**机制**：
+
+* `suppress_stdout_stderr` 只重定向 **fd 1/2**，压不住 Python `logging`
+  （cmdstanpy 走 logger）；且它的 handler 可能在 fd 重定向期间被创建/关闭，
+  `__exit__` 关掉 devnull 后再写日志就刷 `Logging error`。
+* `rolling_poly9_v2` 在**平盘/近似重复点**窗口上做九次 Chebyshev 拟合，
+  `RankWarning` 是**预期**的（不适定），不是数据错误；每个窗口刷一行。
+
+**怎么办**：
+
+* `prophet_band` 的 fit/predict 包在 `_quiet_prophet_logging()` 里：临时把
+  `cmdstanpy` / `prophet` logger 换成 `NullHandler` + `ERROR`，退出**原样还原**；
+* `timeseries._cheb_fit` 用 `warnings.catch_warnings()` 只压
+  `np.exceptions.RankWarning`，数值不变。
+
+**验证**：`test_fbprophet.TestProphetBand.test_cmdstanpy_logging_is_suppressed`
+（`assertNoLogs` + level 还原）、`test_poly9.TestContract.test_rank_warning_is_silenced`。

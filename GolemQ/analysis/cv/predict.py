@@ -27,7 +27,11 @@
    （`kline83._apply_adjustments`）⇒ 再调会二次缩放；而且 `KlineResult` **没有**
    这个方法，留着直接 `AttributeError`。
 2. **实时补数**（`GQ_fetch_stock_day_realtime` / `GQ_fetch_stock_min_realtime`）——
-   已折进读口的 `realtime=True`（`kline83._merge_realtime`）。
+   已折进读口的 `realtime=True`（`kline83._merge_realtime`）。⚠️ **但「单日窗口
+   `[今天, 今天]`」是个例外**：读口先判 `df.empty` 再合并，历史为空时根本走不到
+   合并 ⇒ `_fetch` 保留了一条**回看 512 天再读**的等价回退（见
+   `_DAY_BASELINE_LOOKBACK_DAYS`）。2026-10-21 实测：没有它，盘中 60min/15min
+   当天一行都不更新。
 
 ⚠️ **复权口径是刻意变更**（用户 2026-10-13 定）：旧代码对指数/ETF **不调 `to_qfq`**
 （即不复权），新读口对非股票一律前复权。故本模块**显式传 `if_fq='qfq'`** ——
@@ -64,17 +68,46 @@ __all__ = ['GQ_predict_ChartScanAI', 'calc_ChartScaned_persistence',
 #: 检出置信度阈值 —— 照旧树 `charts.py:262`。
 CONFIDENCE = 0.26
 
+#: 日线 baseline 为空、且窗口末端就是最近交易日时，**回看多久**再试一次。
+#:
+#: 为什么需要回看：`stock_day` 里「今天那根」要等收盘后 `--save` 才写；而
+#: `get_kline_price_v3` 是**先判 `df.empty` 返回 `None`、之后才做实时合并** ⇒
+#: 单日窗口 `[今天, 今天]` 永远读不到实时那根。往前取一段（历史非空）才能让
+#: `_merge_realtime` 执行；取回后再裁掉回看日，回看日**不参与扫描**。
+#: 512 天与日频预测窗口同量级，覆盖绝大多数停牌/新股间隔。
+_DAY_BASELINE_LOOKBACK_DAYS = 512
+
 
 def _last_day():
     """`GQ_util_get_last_day` 的**显式传参**包装（见模块 docstring 的告警）。"""
-    from ..date_utils import GQ_util_get_last_day
+    from GolemQ.markets.StockCN.date_utils import GQ_util_get_last_day
     return GQ_util_get_last_day(ts=dt.today())
 
 
 def _if_tradetime(now=None):
     """`GQ_util_if_tradetime` 的**显式传参**包装（见模块 docstring 的告警）。"""
-    from ..date_utils import GQ_util_if_tradetime
+    from GolemQ.markets.StockCN.date_utils import GQ_util_if_tradetime
     return GQ_util_if_tradetime(now or dt.now())
+
+
+def _if_trade(day):
+    """`GQ_util_if_trade` 的包装（`day` 为 ``'YYYY-MM-DD'``）。"""
+    from GolemQ.markets.StockCN.date_utils import GQ_util_if_trade
+    return GQ_util_if_trade(day)
+
+
+def _closest_anchor(end_date, freq):
+    """分钟扫描挑「最近框」的锚点。
+
+    `end_date` 是日线 baseline 的**日期**（00:00），而分钟 bar 横跨
+    09:45–15:00。若拿 00:00 当锚，`09:45` 反而比 `15:00`「更近」⇒ **全天永远
+    选中当天最早的那个框**（旧树原样继承）。交易日改用**收盘 15:00** 作锚，
+    选中的才是当天**最晚**的检出；日频仍用日期本身（`CoordinatesMaj` 就是日期）。
+    非交易日（理论上不会来自日线 baseline）保持原行为。
+    """
+    if freq != 'day' and _if_trade(str(pd.Timestamp(end_date).date())):
+        return pd.Timestamp(end_date).normalize() + timedelta(hours=15)
+    return end_date
 
 
 def _chart_scaned_flag(kline_data):
@@ -101,7 +134,7 @@ def _fetch(code, freq, start_date, end_date, if_fq, verbose=False):
     """
     # ⚠️ `_merge_realtime` 是 `kline83` 的**私有**名 —— 这里刻意复用而不是另写一份：
     # 合并逻辑（两道门 + 组装）只能有一处，否则又是一次「平行实现」。
-    from ..kline83 import _merge_realtime
+    from GolemQ.markets.StockCN.kline83 import _merge_realtime
 
     # ⚠️ **取 K 线一律走市场实例**（2026-10-18 用户定：「必须走 get_kline_price_v3/_min」、
     # 「不要直接操作 MongoDB」）。此前从 `..kline83` 直接 import —— 那是**实现**，
@@ -122,6 +155,30 @@ def _fetch(code, freq, start_date, end_date, if_fq, verbose=False):
             end=(_end + timedelta(hours=17)).strftime('%Y-%m-%d %H:%M:%S'),
             frequency=freq, realtime=False, if_fq=if_fq, verbose=False)
     if res is None or len(getattr(res, 'data', ())) == 0:
+        # ⚠️ 单日窗口 `[今天, 今天]` 的**唯一**出口：`stock_day` 里今天那根要等
+        # 收盘后 `--save` 才有，而读口在实时合并**之前**就因 `df.empty` 返回
+        # `None`（`kline83.get_kline_price_v3`）。若直接返回 `None`，盘中
+        # `calc_ChartScanAI_reality` 的 baseline 恒空 ⇒ 三个频率全部跳过 ⇒
+        # 60min/15min 当天一行都不更新（2026-10-21 实测 600519/000001/920183）。
+        #
+        # 修法：窗口末端就是最近交易日时，**往前回看一段**再读一次。历史非空
+        # 才会触发 `_merge_realtime` 把今天那根并进来；随后裁回原请求区间，
+        # 回看日只用来「点火」，不参与扫描（否则每码每 pass 多扫 512 天）。
+        lookback = _end - timedelta(days=_DAY_BASELINE_LOOKBACK_DAYS)
+        # `lookback < start` 才叫「回看」；日频预测本身就用 512 天窗口，
+        # 那里为空时再查同一段没有意义（新股/从未有数据），不白跑一遍。
+        if freq == 'day' and _end >= _last_day() - timedelta(days=1) \
+                and lookback < pd.to_datetime(start_date):
+            res, codename = market.get_kline_price_v3(
+                code, start=lookback.strftime('%Y-%m-%d'),
+                end=_end.strftime('%Y-%m-%d'), realtime=True,
+                if_fq=if_fq, verbose=False)
+            if res is not None and len(getattr(res, 'data', ())) > 0:
+                data = res.data
+                data = data[data.index.get_level_values(level=0)
+                            >= pd.to_datetime(start_date)]
+                if len(data) > 0:
+                    return data, codename
         return None, codename
     last_date = pd.to_datetime(res.data.tail(1).index.get_level_values(level=0)[-1])
     # 旧树 `charts.py:229-232` 那三条判据，逐字（第三条要用刚取回的 `last_date`）
@@ -131,22 +188,22 @@ def _fetch(code, freq, start_date, end_date, if_fq, verbose=False):
     return res.data, codename
 
 
-def GQ_markup_daily_ChartScaned(code, kline_data, market_type, verbose=False):
+def GQ_markup_daily_ChartScaned(code, kline_data, market_type, verbose=False, db=None):
     """「没探到」时在**日族**留一行**只有 `ChartScaned`** 的标记（照旧 `:124-143`）。"""
-    from ..reality_save import save_reality_feat
+    from GolemQ.markets.StockCN.reality_save import save_reality_feat
     try:
         frame = pd.DataFrame([{
             'code': code,
             'date': pd.to_datetime(kline_data.tail(1).index.get_level_values(level=0)[-1].date()),
             'ChartScaned': _chart_scaned_flag(kline_data),
         }]).set_index(['date', 'code'], drop=False)
-        save_reality_feat(frame, 'day', market_type, verbose=verbose)
+        save_reality_feat(frame, 'day', market_type, verbose=verbose, db=db)
     except Exception:                     # noqa: BLE001 照旧：吞掉但打栈
         traceback.print_exc()
 
 
 def GQ_markup_ChartScaned(code, kline_data, market_type, verbose=False,
-                          family='60min'):
+                          family='60min', db=None):
     """「没探到」时在 **`family` 族**留一行只有 `ChartScaned` 的标记（照旧 `:146-166`）。
 
     :param family: 落哪个分钟族（`'60min'` / `'15min'`）。⚠️ 旧树的同名函数收的是
@@ -154,7 +211,7 @@ def GQ_markup_ChartScaned(code, kline_data, market_type, verbose=False,
         搬过来时把参数换成 `family`（收 `market_type` 由 `reality_feat_name` 出前缀），
         默认 `'60min'` **保持旧默认行为**。
     """
-    from ..reality_save import save_reality_feat
+    from GolemQ.markets.StockCN.reality_save import save_reality_feat
     try:
         frame = pd.DataFrame([{
             'code': code,
@@ -162,7 +219,7 @@ def GQ_markup_ChartScaned(code, kline_data, market_type, verbose=False,
             'datetime': pd.to_datetime(kline_data.tail(1).index.get_level_values(level=0)[-1]),
             'ChartScaned': _chart_scaned_flag(kline_data),
         }]).set_index(['datetime', 'code'], drop=False)
-        save_reality_feat(frame, family, market_type, verbose=verbose)
+        save_reality_feat(frame, family, market_type, verbose=verbose, db=db)
     except Exception:                     # noqa: BLE001
         traceback.print_exc()
 
@@ -170,12 +227,12 @@ def GQ_markup_ChartScaned(code, kline_data, market_type, verbose=False,
 def GQ_predict_ChartScanAI(code: str = '300085', market_type=MARKET_TYPE.STOCK_CN,
                           freq: str = 'day', end_date=pd.to_datetime('2024-07-03'),
                           chunk_size: int = CHUNK_SIZE, model=None,
-                          if_fq: str = 'qfq', verbose: bool = False):
+                          if_fq: str = 'qfq', verbose: bool = False, db=None):
     """单标的 × 单频率：取数 → 出图 → YOLO → 挑最近 `end_date` 的框 → 落库。
 
     逐字搬自旧树 `charts.py:169-445`；上表那几处取数/复权/实时已换（见模块 docstring）。
     """
-    from ..reality_save import save_reality_feat
+    from GolemQ.markets.StockCN.reality_save import save_reality_feat
 
     if verbose:
         print(f'Code: {code}', end_date, freq)
@@ -247,12 +304,15 @@ def GQ_predict_ChartScanAI(code: str = '300085', market_type=MARKET_TYPE.STOCK_C
             # 一个框都没有：非日频的按「收盘那几根」补标记（照旧 `:431-443`）
             if freq != 'day':
                 if kline_data.tail(1).index.get_level_values(level=0)[-1].strftime('%H:%M') in CLOSE_TIMES:
-                    GQ_markup_ChartScaned(code, kline_data, market_type, verbose)
-                GQ_markup_daily_ChartScaned(code, kline_data, market_type, verbose)
+                    GQ_markup_ChartScaned(code, kline_data, market_type, verbose, db=db)
+                GQ_markup_daily_ChartScaned(code, kline_data, market_type, verbose, db=db)
             return
 
         key = {'day': 'CoordinatesMaj', '15min': 'CoordinatesMin'}.get(freq, 'Coordinates')
-        closest = min(results, key=lambda x: abs((x[key] - end_date).total_seconds()))
+        # ⚠️ 锚点不是 `end_date`（那是 00:00）—— 分钟频率用当日 **15:00**，
+        # 否则全天永远选中最早的框。见 `_closest_anchor`。
+        target = _closest_anchor(end_date, freq)
+        closest = min(results, key=lambda x: abs((x[key] - target).total_seconds()))
         # 只写「近 31 天」的框；远的放弃（照旧 `:333` / `:356` / `:396`）
         anchor = closest['date'] if freq == 'day' else closest['datetime']
         if (anchor - closest[key]) < timedelta(days=31):
@@ -265,43 +325,44 @@ def GQ_predict_ChartScanAI(code: str = '300085', market_type=MARKET_TYPE.STOCK_C
             # ⚠️ 曾把这里写成「按 freq 选族」，后果是日族永远收不到分钟列的检出 ⇒
             # `all_nat_min` 恒真 ⇒ **每天全量重扫 618 交易日 × 3 频率**。
             save_reality_feat(pd.DataFrame([closest]).set_index(['date', 'code'], drop=False),
-                              'day', market_type, verbose=verbose)
+                              'day', market_type, verbose=verbose, db=db)
             if freq == '15min':
                 # 15min 的检出**同时**写 60min 与 15min 两个族（照旧 `:367-377`），
                 # 但 60min 只认「收盘那几根」。
                 ok60 = closest['datetime'].strftime('%H:%M') in CLOSE_TIMES
                 for family in (('60min', '15min') if ok60 else ('15min',)):
                     save_reality_feat(pd.DataFrame([closest]).set_index(['datetime', 'code'], drop=False),
-                                      family, market_type, verbose=verbose)
+                                      family, market_type, verbose=verbose, db=db)
             elif freq != 'day':
                 # 60min：**无条件**写 60min 族（照旧 `:411-414`，没有收盘时刻闸）
                 save_reality_feat(pd.DataFrame([closest]).set_index(['datetime', 'code'], drop=False),
-                                  '60min', market_type, verbose=verbose)
+                                  '60min', market_type, verbose=verbose, db=db)
         else:
             if verbose:
                 print(f'远端买卖点，自动放弃：{closest[key]}')
             if freq == 'day':
                 return
             if closest['datetime'].strftime('%H:%M') in CLOSE_TIMES:
-                GQ_markup_ChartScaned(code, kline_data, market_type, verbose)
+                GQ_markup_ChartScaned(code, kline_data, market_type, verbose, db=db)
             if freq == '15min':
                 # ⚠️ 旧树 15min 这条**无条件**再写一张 15min 表（`:385`）——
                 # 漏掉它 ⇒ 15min 族在「探到但太远」时永远没有 `ChartScaned` 记录。
                 GQ_markup_ChartScaned(code, kline_data, market_type, verbose,
-                                      family='15min')
-            GQ_markup_daily_ChartScaned(code, kline_data, market_type, verbose)
+                                      family='15min', db=db)
+            GQ_markup_daily_ChartScaned(code, kline_data, market_type, verbose, db=db)
     except Exception:                     # noqa: BLE001 照旧：整段吞掉打栈
         traceback.print_exc()
 
 
 def calc_ChartScaned_persistence(ticker, market_type=MARKET_TYPE.STOCK_CN,
-                                 start_date=None, end_date=None, ret_metadata: bool = False):
+                                 start_date=None, end_date=None, ret_metadata: bool = False,
+                                 db=None):
     """读回已扫结果，决定该标的要**重扫什么** —— 搬自旧树 `charts.py:448-565`。
 
     :returns: ``ret_metadata=True`` → `(全部NaT?, 日NaT?, 分钟NaT?, 待扫日期列表)`；
         否则 → `(ticker, market_type, mode, start, end)`，`mode` 0=不用扫 / 1=全扫 / 2=只扫末端。
     """
-    from ..reality_save import fetch_reality_feat
+    from GolemQ.markets.StockCN.reality_save import fetch_reality_feat
 
     if start_date is None:
         start_date = _last_day() - timedelta(days=1008)
@@ -310,7 +371,7 @@ def calc_ChartScaned_persistence(ticker, market_type=MARKET_TYPE.STOCK_CN,
 
     stock_daily_feats = fetch_reality_feat(ticker, start_date.strftime('%Y-%m-%d'),
                                            end_date.strftime('%Y-%m-%d'),
-                                           'day', market_type)
+                                           'day', market_type, db=db)
     if stock_daily_feats is not None:
         stock_daily_feats = _coords_to_datetime(stock_daily_feats)
         last_day = _last_day()
@@ -367,7 +428,8 @@ def _coords_to_datetime(df: pd.DataFrame) -> pd.DataFrame:
 def calc_ChartScanAI_reality(ticker: str = '300085', market_type=MARKET_TYPE.STOCK_CN,
                              start_date=pd.to_datetime('2020-01-01'),
                              end_date=pd.to_datetime('2024-07-03'),
-                             enforce: bool = False, model=None, if_fq: str = 'qfq'):
+                             enforce: bool = False, model=None, if_fq: str = 'qfq',
+                             db=None):
     """编排：读回已扫状态 → 取日线 baseline → **逐日 × 三频率**跑预测。搬自 `:568-742`。
 
     :returns: `without_processing`（True = 这一趟什么都没跑）。
@@ -375,7 +437,7 @@ def calc_ChartScanAI_reality(ticker: str = '300085', market_type=MARKET_TYPE.STO
     if not enforce:
         all_nat, all_nat_maj, all_nat_min, recent = calc_ChartScaned_persistence(
             ticker=ticker, market_type=market_type,
-            start_date=start_date, end_date=end_date, ret_metadata=True)
+            start_date=start_date, end_date=end_date, ret_metadata=True, db=db)
     else:
         all_nat = all_nat_maj = all_nat_min = True
         recent = [start_date, end_date]
@@ -388,8 +450,9 @@ def calc_ChartScanAI_reality(ticker: str = '300085', market_type=MARKET_TYPE.STO
         lo, hi = start_date, end_date
     else:
         lo, hi = recent[0], recent[-1]
-    # 日线 baseline：**新读口的 `realtime=True` 已把「当日实时那根」并进来**，
-    # 故旧树那两段 `GQ_fetch_stock_day_realtime` 补数整块删掉。
+    # 日线 baseline：`_fetch` 会在「窗口末端是最近交易日且历史为空」时自动回看
+    # 512 天再读一次 —— 那是旧树 `GQ_fetch_stock_day_realtime` 补数的等价物
+    # （读口先判空、后合并，单日窗口否则永远取不到今天那根）。
     kline_baseline, _ = _fetch(ticker, 'day', lo, hi, if_fq)
     if kline_baseline is not None and len(kline_baseline) > 0:
         kline_baseline = kline_baseline.set_index(['ts', 'code'], drop=True).sort_index() \
@@ -406,7 +469,7 @@ def calc_ChartScanAI_reality(ticker: str = '300085', market_type=MARKET_TYPE.STO
             lambda x, _f=freq: GQ_predict_ChartScanAI(
                 code=ticker, market_type=market_type, freq=_f,
                 end_date=pd.to_datetime(x.index.get_level_values(level=0)[0]),
-                model=model, if_fq=if_fq, verbose=bool(enforce)))
+                model=model, if_fq=if_fq, verbose=bool(enforce), db=db))
         if len(kline_baseline) > 0:
             without_processing = False
 

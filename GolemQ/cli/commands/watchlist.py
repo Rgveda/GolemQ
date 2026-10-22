@@ -27,7 +27,7 @@ def _watchlist_db():
     服务层（`services/watchlist.py`）收 `db` 参数，不自己连库。
     """
     from GolemQ.core.market_registry import get_active_market
-    return get_active_market().GOLEMQ_STOCK_CN
+    return get_active_market().get_database()
 
 
 def add_add_arguments(parser) -> None:

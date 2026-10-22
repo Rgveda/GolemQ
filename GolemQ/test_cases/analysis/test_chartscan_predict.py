@@ -1,5 +1,5 @@
 # coding:utf-8
-"""`chartscan/predict.py` 的**写库路由**用例（`DECISIONS.md` D51）。
+"""`analysis/cv/predict.py` 的**写库路由**用例（`DECISIONS.md` D51）。
 
 为什么单独钉这个
 ================
@@ -15,7 +15,14 @@
 """
 from __future__ import annotations
 
+import os, sys
+try:
+    import GolemQ
+except ImportError:
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
+
 import io
+import types
 import unittest
 from unittest import mock
 
@@ -24,7 +31,7 @@ import pandas as pd
 
 from GolemQ.core.constants import AKA, MARKET_TYPE
 
-_PREDICT = 'GolemQ.markets.StockCN.chartscan.predict'
+_PREDICT = 'GolemQ.analysis.cv.predict'
 _REALITY = 'GolemQ.markets.StockCN.reality_save'
 
 def _x_for_bar(i):
@@ -91,7 +98,7 @@ class _Recorder:
         self.calls = []
 
     def __call__(self, features, family, market_type, verbose=True,   # noqa: ARG002
-                 echo=None, created_at=None):
+                 echo=None, created_at=None, db=None):
         from GolemQ.markets.StockCN.reality_save import (reality_feat_name,
                                                          reality_feat_rows)
         # 走**真**组行函数：这样断言的是「**写进库的字段集**」，而不是调用方传进来的列。
@@ -116,7 +123,7 @@ class _ChartScanWriteTest(unittest.TestCase):
     """跑 `GQ_predict_ChartScanAI` 的完整写路径，全程替身。"""
 
     def setUp(self):
-        from GolemQ.markets.StockCN.chartscan import predict
+        from GolemQ.analysis.cv import predict
         self.predict = predict
         self.rec = _Recorder()
 
@@ -197,6 +204,18 @@ class _ChartScanWriteTest(unittest.TestCase):
         self.assertEqual(day['docs'][0]['date_stamp'],
                          int(pd.Timestamp('2026-10-16', tz='Asia/Shanghai').timestamp()))
 
+    def test_minute_closest_uses_close_time_anchor(self):
+        """分钟频率的「最近框」以 **15:00** 为锚 ⇒ 选当天**最晚**的检出。
+
+        锚点若是 `end_date`（00:00），`09:00` 比 `15:00` 更近 ⇒ 永远选最早的框。
+        `_kline` 的分钟帧按 6 小时一根造，最后两根正好是 09:00 / 15:00。
+        """
+        self._run('15min', '2026-10-16 15:00',
+                  boxes=[_Box(_x_for_bar(-2)), _Box(_x_for_bar(-1))])
+        doc = self.rec.calls[0]['docs'][0]        # 日族那笔带 `CoordinatesMin`
+        want = int(pd.Timestamp('2026-10-16 15:00', tz='Asia/Shanghai').timestamp()) * 1000
+        self.assertEqual(doc['CoordinatesMin'], want)
+
     # ---- 逐码路由（D51 的 `etf_` 前缀）-----------------------------------
 
     def test_market_type_routes_prefix(self):
@@ -257,7 +276,7 @@ class _ChartScanWriteTest(unittest.TestCase):
 
     def test_real_traceback_never_fires(self):
         """写入路径不许靠 `except` 兜底 —— 兜住了就说明前面某处已经抛了。"""
-        from GolemQ.markets.StockCN.chartscan import predict
+        from GolemQ.analysis.cv import predict
         with mock.patch.object(predict, 'traceback') as tb:
             self._run('15min', '2026-10-16 15:00')
             tb.print_exc.assert_not_called()
@@ -283,7 +302,7 @@ class TestPersistenceReadsAcrossFamilies(unittest.TestCase):
         }, index=idx)
 
     def test_reads_day_family_with_market_type(self):
-        from GolemQ.markets.StockCN.chartscan import predict
+        from GolemQ.analysis.cv import predict
         with mock.patch('GolemQ.markets.StockCN.reality_save.fetch_reality_feat',
                         return_value=self._frame()) as fetch:
             predict.calc_ChartScaned_persistence('510300', market_type='etf_cn')
@@ -292,14 +311,14 @@ class TestPersistenceReadsAcrossFamilies(unittest.TestCase):
         self.assertEqual(args[4], 'etf_cn', '必须按市场类型取表，否则静默读空')
 
     def test_coords_are_converted_to_datetime(self):
-        from GolemQ.markets.StockCN.chartscan.predict import _coords_to_datetime
+        from GolemQ.analysis.cv.predict import _coords_to_datetime
         out = _coords_to_datetime(self._frame())
         for col in ('Coordinates', 'CoordinatesMaj', 'CoordinatesMin'):
             self.assertTrue(pd.api.types.is_datetime64_any_dtype(out[col]), col)
 
     def test_missing_coord_columns_do_not_raise(self):
         """缺列的旧文档不能炸 —— 缺的那套按 None 处理（否则整只标的读不动）。"""
-        from GolemQ.markets.StockCN.chartscan.predict import _coords_to_datetime
+        from GolemQ.analysis.cv.predict import _coords_to_datetime
         frame = self._frame().drop(columns=['Coordinates', 'CoordinatesMin'])
         out = _coords_to_datetime(frame)
         self.assertIn('Coordinates', out.columns)
@@ -317,23 +336,48 @@ class TestHeadlessRendering(unittest.TestCase):
 
     def test_mpbackend_is_forced_to_agg(self):
         import os
-        from GolemQ.markets.StockCN.chartscan import render  # noqa: F401 导入即设
+        from GolemQ.analysis.cv import render  # noqa: F401 导入即设
         self.assertEqual(os.environ.get('MPLBACKEND'), 'Agg')
 
     def test_render_module_sets_it_at_import(self):
         """不是靠调用方传 —— 模块**导入**那一刻就得钉住（matplotlib 可能已被别人先导入）。"""
         from pathlib import Path
-        src = Path(__file__).resolve().parents[2] / 'markets/StockCN/chartscan/render.py'
+        src = Path(__file__).resolve().parents[2] / 'analysis/cv/render.py'
         text = src.read_text(encoding='utf-8')
         self.assertIn("os.environ['MPLBACKEND'] = 'Agg'", text)
         self.assertIn("matplotlib.use('Agg', force=True)", text)
+
+
+class TestClosestAnchor(unittest.TestCase):
+    """分钟频率挑「最近框」的锚点（`_closest_anchor`）。"""
+
+    def test_minute_on_trading_day_uses_close(self):
+        from GolemQ.analysis.cv import predict
+        for freq in ('15min', '60min'):
+            with self.subTest(freq=freq):
+                self.assertEqual(
+                    predict._closest_anchor(pd.Timestamp('2026-10-16'), freq),
+                    pd.Timestamp('2026-10-16 15:00'))
+
+    def test_day_keeps_date(self):
+        from GolemQ.analysis.cv import predict
+        self.assertEqual(
+            predict._closest_anchor(pd.Timestamp('2026-10-16'), 'day'),
+            pd.Timestamp('2026-10-16'))
+
+    def test_non_trading_day_keeps_date(self):
+        """2026-10-17 是周六 —— 拿不到收盘锚点时保持原行为。"""
+        from GolemQ.analysis.cv import predict
+        self.assertEqual(
+            predict._closest_anchor(pd.Timestamp('2026-10-17'), '60min'),
+            pd.Timestamp('2026-10-17'))
 
 
 class _MarkupFamilyTest(unittest.TestCase):
     """`GQ_markup_ChartScaned` 的 `family=` 参数（旧树的 `collections=` 对应物）。"""
 
     def test_family_param_routes(self):
-        from GolemQ.markets.StockCN.chartscan import predict
+        from GolemQ.analysis.cv import predict
         from GolemQ.markets.StockCN.reality_save import reality_feat_name
         kline = _kline('60min', '2026-10-16 15:00')
         rec = _Recorder()
@@ -345,12 +389,113 @@ class _MarkupFamilyTest(unittest.TestCase):
 
     def test_default_family_is_60min(self):
         """默认值必须**保持旧默认行为**（旧签名默认就是 60min 那张表）。"""
-        from GolemQ.markets.StockCN.chartscan import predict
+        from GolemQ.analysis.cv import predict
         kline = _kline('60min', '2026-10-16 15:00')
         rec = _Recorder()
         with mock.patch(_REALITY + '.save_reality_feat', rec):
             predict.GQ_markup_ChartScaned('600519', kline, MARKET_TYPE.STOCK_CN)
         self.assertEqual(rec.names, ['stock_reality_feat_60min'])
+
+
+def _day_frame(dates, code='600519'):
+    """`(ts, code)` 两层索引的日线帧（`_fetch` 的返回形状）。"""
+    idx = pd.MultiIndex.from_arrays(
+        [pd.to_datetime(dates), [code] * len(dates)], names=['ts', 'code'])
+    return pd.DataFrame({AKA.CLOSE: np.arange(len(dates), dtype=float)}, index=idx)
+
+
+class _FakeMarket:
+    """只实现 `_fetch` 用到的日线读口，按顺序弹出预置响应。"""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def get_kline_price_v3(self, code, start=None, end=None, realtime=True,
+                           if_fq='qfq', verbose=False):   # noqa: ARG002
+        self.calls.append({'start': start, 'end': end, 'realtime': realtime})
+        return self.responses.pop(0)
+
+
+class TestDayBaselineTodayFallback(unittest.TestCase):
+    """单日窗口 `[今天, 今天]` 的日线回退（2026-10-21 盘中 no-op 的回归）。
+
+    背景：`stock_day` 里今天那根要等收盘 `--save` 才有，而 `get_kline_price_v3`
+    先判 `df.empty` 再合并实时 ⇒ 单日窗口恒 `None` ⇒ 三频率全部跳过。
+    `_fetch` 必须回看一段再裁回原窗口。
+    """
+
+    TODAY = pd.Timestamp('2026-10-21')
+
+    def _run(self, responses, start=None, end=None):
+        from GolemQ.analysis.cv import predict
+        fake = _FakeMarket(responses)
+        with mock.patch('GolemQ.core.market_registry.get_active_market',
+                        return_value=fake), \
+                mock.patch.object(predict, '_last_day', return_value=self.TODAY):
+            data, name = predict._fetch('600519', 'day',
+                                        start or self.TODAY, end or self.TODAY, 'qfq')
+        return data, name, fake
+
+    def test_today_only_retries_with_lookback_and_clips(self):
+        frame = _day_frame(['2026-10-20', '2026-10-21'])
+        data, _, fake = self._run([
+            (None, '600519'),                                # 单日历史：空
+            (types.SimpleNamespace(data=frame), '600519'),   # 回看 + realtime：有今天
+        ])
+        self.assertEqual(len(fake.calls), 2)
+        self.assertTrue(fake.calls[1]['realtime'])
+        self.assertEqual(fake.calls[1]['start'],
+                         (self.TODAY - pd.Timedelta(days=512)).strftime('%Y-%m-%d'))
+        self.assertEqual(list(data.index.get_level_values(0)), [self.TODAY])
+
+    def test_lookback_rows_outside_window_are_dropped(self):
+        """回看只用来「点火」—— 没有落在请求窗口内的行 ⇒ 仍然不扫。"""
+        frame = _day_frame(['2026-10-18', '2026-10-19', '2026-10-20'])
+        data, _, _ = self._run([
+            (None, '600519'),
+            (types.SimpleNamespace(data=frame), '600519'),
+        ])
+        self.assertIsNone(data)
+
+    def test_old_empty_window_does_not_retry(self):
+        """历史窗口为空（如上市前）不该白跑一次 512 天回看。"""
+        old = pd.Timestamp('2026-01-05')
+        data, _, fake = self._run([(None, '600519')], start=old, end=old)
+        self.assertIsNone(data)
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_non_empty_single_day_does_not_retry(self):
+        frame = _day_frame(['2026-10-21'])
+        data, _, fake = self._run([(types.SimpleNamespace(data=frame), '600519')])
+        self.assertEqual(len(data), 1)
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_identical_512d_window_does_not_retry(self):
+        """日频预测本身就用 512 天窗口 —— 为空时回看同一段没有意义。"""
+        start = self.TODAY - pd.Timedelta(days=512)
+        data, _, fake = self._run([(None, '600519')], start=start, end=self.TODAY)
+        self.assertIsNone(data)
+        self.assertEqual(len(fake.calls), 1)
+
+
+class TestTodayOnlyJobActuallyRuns(unittest.TestCase):
+    """baseline 有今天那根时，三频率必须真的被调用（不再 `without_processing`）。"""
+
+    def test_today_only_runs_all_three_frequencies(self):
+        from GolemQ.analysis.cv import predict
+        today = pd.Timestamp('2026-10-21')
+        baseline = _day_frame([today])
+        with mock.patch.object(predict, 'calc_ChartScaned_persistence',
+                               return_value=(True, True, True, [today])), \
+                mock.patch.object(predict, 'load_model', return_value=object()), \
+                mock.patch.object(predict, '_fetch', return_value=(baseline, '600519')), \
+                mock.patch.object(predict, 'GQ_predict_ChartScanAI') as pred:
+            without_processing = predict.calc_ChartScanAI_reality(
+                ticker='600519', start_date=today, end_date=today)
+        self.assertFalse(without_processing)
+        self.assertEqual([c.kwargs['freq'] for c in pred.call_args_list],
+                         ['day', '15min', '60min'])
 
 
 if __name__ == '__main__':

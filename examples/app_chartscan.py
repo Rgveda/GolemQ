@@ -14,9 +14,9 @@ r"""ChartScan（YOLOv8 买卖点识别）**Streamlit 演示** —— 新树 / Mo
 
     GolemQ.get_active_market().get_kline_price_v3 / get_kline_price_min   # 市场实例
         → markets/StockCN/kline83.py                                      # 8.3 时序集合，已前复权
-    chartscan/render.GQ_generate_chart_stock                              # **与推理时同一个出图函数**
-    chartscan/model.load_model().predict                                  # YOLOv8
-    chartscan/predict.calculate_i                                         # 像素 x → 第几根 bar
+    analysis/cv/render.GQ_generate_chart_stock                            # **与推理时同一个出图函数**
+    analysis/cv/model.load_model().predict                                # YOLOv8
+    analysis/cv/predict.calculate_i                                       # 像素 x → 第几根 bar
 
 ⚠️ **为什么坚持用 `GQ_generate_chart_stock` 出图**，而不是在 app 里另画一份：
 YOLO 的像素 x 靠 `calculate_i` 映射回 bar（`(x-386)/6.5-1`），那两个常数只在
@@ -42,11 +42,11 @@ import pandas as pd
 import streamlit as st
 
 from GolemQ import get_active_market
-from GolemQ.markets.StockCN.chartscan.predict import CONFIDENCE, calculate_i
-from GolemQ.markets.StockCN.chartscan.render import (
+from GolemQ.analysis.cv.predict import CONFIDENCE, calculate_i
+from GolemQ.analysis.cv.render import (
     CHUNK_SIZE, CLOSE_TIMES, GQ_generate_chart_stock,
 )
-from GolemQ.markets.StockCN.chartscan.model import weights_path
+from GolemQ.analysis.cv.model import weights_path
 from GolemQ.markets.StockCN.reality_save import (
     UNIQUE_KEYS, fetch_reality_feat, reality_feat_name,
 )
@@ -107,7 +107,7 @@ def load_detections(code: str, family: str, days: int):
 @st.cache_resource(show_spinner='载入 YOLOv8 权重…')
 def get_model():
     """进程内只载一次（52 MB）。`st.cache_resource` 跨 rerun 持有。"""
-    from GolemQ.markets.StockCN.chartscan.model import load_model
+    from GolemQ.analysis.cv.model import load_model
     return load_model()
 
 

@@ -148,7 +148,7 @@ class TestRunDelegates(unittest.TestCase):
 
     def test_scan_in_cv_env_calls_module_in_process(self):
         with mock.patch.object(chartscan, 'in_cv_env', return_value=True), \
-                mock.patch('GolemQ.markets.StockCN.chartscan.client.main') as main:
+                mock.patch('GolemQ.analysis.cv.client.main') as main:
             self.assertEqual(chartscan.run_chartscan_scan(self._args()), 0)
         main.assert_called_once_with(['--eval', 'fast', '--port', '6666'])
 
@@ -157,11 +157,11 @@ class TestRunDelegates(unittest.TestCase):
                 mock.patch.object(chartscan, '_re_exec', return_value=3) as re_exec:
             self.assertEqual(chartscan.run_chartscan_scan(self._args()), 3)
         re_exec.assert_called_once_with(
-            'GolemQ.markets.StockCN.chartscan.client', ['--eval', 'fast', '--port', '6666'])
+            'GolemQ.analysis.cv.client', ['--eval', 'fast', '--port', '6666'])
 
     def test_server_in_cv_env_calls_module_in_process(self):
         with mock.patch.object(chartscan, 'in_cv_env', return_value=True), \
-                mock.patch('GolemQ.markets.StockCN.chartscan.server.main') as main:
+                mock.patch('GolemQ.analysis.cv.server.main') as main:
             self.assertEqual(chartscan.run_chartscan_server(self._args()), 0)
         main.assert_called_once_with(['--port', '6666'])
 
@@ -170,7 +170,7 @@ class TestRunDelegates(unittest.TestCase):
                 mock.patch.object(chartscan, '_re_exec', return_value=0) as re_exec:
             self.assertEqual(chartscan.run_chartscan_server(self._args()), 0)
         re_exec.assert_called_once_with(
-            'GolemQ.markets.StockCN.chartscan.server', ['--port', '6666'])
+            'GolemQ.analysis.cv.server', ['--port', '6666'])
 
 
 if __name__ == '__main__':

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""`analysis/renko.py` —— 与旧树 `indices/renko.py` 的**逐值对拍**。
+"""`analysis/renko_jit.py` —— 与旧树 `indices/renko.py` 的**逐值对拍**。
 
 为什么这份用例是这次搬运的**主要证据**
 ======================================

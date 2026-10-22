@@ -199,7 +199,7 @@ class ReviewPipeline(BasePipeline):
         # 「库名不外泄」：pipeline 不拼库名，只从 **Active Market** 取实例，
         # 再作为参数传给写口/水位函数。
         from GolemQ import get_active_market
-        db = get_active_market().GOLEMQ_STOCK_CN
+        db = get_active_market().get_database()
         frames = self._fetch_frames(code, as_of,
                                     freqs=self._required_freqs(families))
         if not frames:

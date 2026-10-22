@@ -124,6 +124,16 @@ class StockCN(BaseMarket):
             # 纯粹是同一份 HTTP 响应落两遍。QMT 那条 ETF 占位同批删除。
             # 于是 `GQSUBSCRIBER` 现在只有 `l1_tencent` / `tencent` 两个键。
 
+    def get_database(self):
+        """行情库句柄 —— **市场包外部取库的唯一入口**。
+
+        「库名不外泄」：库名 ``golemq_stock_cn`` 与句柄名 ``GOLEMQ_STOCK_CN``
+        只允许出现在 ``markets/StockCN/`` 之内。别处（pipeline / CLI / analysis /
+        services）一律 ``get_active_market().get_database()``，不要引用句柄常量、
+        不要自己连库、不要拼库名 —— 判错**不会报错**，只会静默读到另一个库/空集。
+        """
+        return self.GOLEMQ_STOCK_CN
+
     @property
     def name(self) -> str:
         return self._name
@@ -285,10 +295,10 @@ _stockcn_instance = StockCN()
 
 
 # 导出公共接口
+# ⚠️ 库句柄 `GOLEMQ_STOCK_CN` / 库名 `GOLEMQ_STOCK_CN_NAME` **刻意不在此列**：
+# 它们是市场包内部实现，外部取库只能走 `StockCN.get_database()`（「库名不外泄」）。
 __all__ = [
     'StockCN',
-    'GOLEMQ_STOCK_CN',
-    'GOLEMQ_STOCK_CN_NAME',
     'normalize_code',
     'is_stock_cn',
     'sub_l1_from_tencent',

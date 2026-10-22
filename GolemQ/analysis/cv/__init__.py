@@ -24,11 +24,27 @@
 # SOFTWARE.
 #
 
-#: CV（图形识别）那条链里**跨市场**的部分。
+#: CV（图形识别）整条链 —— **跨市场共用**。
 #:
-#: 目前只有 :mod:`GolemQ.analysis.cv.scopes` —— 「把 scan scope 名解析成一份代码清单」。
-#: 它不 import 任何市场包：数据落点由 `dataset` 参数注入（`DECISIONS.md` D44）。
+#: * :mod:`GolemQ.analysis.cv.scopes`：scan scope → 代码清单（数据落点由 `dataset` 注入）；
+#: * `client` / `server` / `predict` / `render` / `model`：原
+#:   `markets/StockCN/chartscan/`，2026-10-21 整体搬入 `analysis/cv/`。
 #:
-#: ⚠️ CV 的**其余**部分仍在 `markets/StockCN/chartscan/` —— 那里是 A 股专有的
-#: （15min 网格、`10:30/11:30/14:00/15:00` 收盘时刻、`stock_*`/`index_*` 结果族）。
-#: 别以为「CV 都在 analysis/cv 下」。
+#: ⚠️ 落库用的行情库**不在本包内取**：所有写/读函数都接收 `db` 参数，
+#: 由 CLI / server / client 从 **Active Market** 的 `get_database()` 取实例后注入
+#: （「库名不外泄」）。模块级仍不 import torch/ultralytics —— 只在 `load_model()` /
+#: 出图时惰性导入。
+
+from .model import load_model, weights_path
+from .predict import (GQ_markup_ChartScaned, GQ_markup_daily_ChartScaned,
+                      GQ_predict_ChartScanAI, calc_ChartScanAI_reality,
+                      calc_ChartScaned_persistence)
+from .render import GQ_generate_chart_stock, calculate_i
+
+__all__ = [
+    'weights_path', 'load_model',
+    'GQ_generate_chart_stock', 'calculate_i',
+    'GQ_predict_ChartScanAI', 'calc_ChartScaned_persistence',
+    'calc_ChartScanAI_reality', 'GQ_markup_ChartScaned',
+    'GQ_markup_daily_ChartScaned',
+]

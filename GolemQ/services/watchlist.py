@@ -31,13 +31,13 @@
 `cli/watchdog_manager.py`（373 行）整份下沉到这里，CLI 那侧
 （`cli/commands/watchlist.py`）只留**参数校验 + 委托**。
 
-⚠️ 库句柄**由调用方传参**（用户：「要用参数传递，不能硬编码 GOLEMQ_STOCK_CN」）
+⚠️ 库句柄**由调用方传参**（用户：「要用参数传递，不能硬编码库句柄」）
 ============================================================================
 本模块**不连库、不拼库名** —— 三个 DB 函数都收 ``db`` 形参，由 CLI 侧经
-``get_active_market().GOLEMQ_STOCK_CN`` 取来传入（「库名不外泄」：市场库句柄只能
-在 `markets/StockCN/` 里被定义，别处一律**经市场对象取值**）。
+``get_active_market().get_database()`` 取来传入（「库名不外泄」：行情库的库名与
+句柄只允许出现在 `markets/StockCN/` 内，别处一律经市场对象的**中性访问口**取值）。
 
-落点从 `golemq` 改到 **`golemq_stock_cn`**（2026-10-18）：关注列表是**行情标的的
+落点从框架运维库 `golemq` 改到**行情库**（2026-10-18）：关注列表是**行情标的的
 名单**，与 `stock_list` / 分组表同属行情侧；`golemq` 只留框架运维（心跳/签到）。
 存量已从 `golemq` 搬过来。
 """
@@ -46,9 +46,9 @@ import re
 from typing import List
 from GolemQ.core.constants import DATASOURCE
 
-#: 关注列表的两个集合名（**落行情库** `golemq_stock_cn`，2026-10-18 起）。
+#: 关注列表的两个集合名（**落行情库**，2026-10-18 起）。
 #: ⚠️ 库句柄**不在这里取** —— 由调用方按参数传入（用户：「要用参数传递，
-#: 不能硬编码 GOLEMQ_STOCK_CN」）。集合名不是库名，可以写死。
+#: 不能硬编码库句柄」）。集合名不是库名，可以写死。
 WATCHLIST_COLLECTION = 'StockCN_watchdog_eneloop'
 ARCHIVE_COLLECTION = 'StockCN_watchdog_eneloop_archive'
 

@@ -27,7 +27,7 @@ class LTT:
     MAINSTREAM_LEADIN_BEFORE = 'MsLeadinBf'
     QUADRANT_TRIGGER_CREDIT = 'QuadTrgCred'
     QUADRANT_LEVERAGE_MACD_LEADIN_UB = 'QLevMACDLinUb'
-    # ── 以下 2026-10-11 随「四量图」搬运补（`analysis/quadrant.py` 要用）────────
+    # ── 以下 2026-10-11 随「四量图」搬运补（`analysis/quadrant_jit.py` 要用）────────
     # 真值**逐字**取自老树 `GolemQ_old/models/alias.py` 的 `LTT` 类 —— 全是 MongoDB
     # 实际存储名，改一个字母就是另一个字段（PITFALLS P1：只填真值，不许造）。
     QUADRANT_1 = 'Q1'
@@ -101,8 +101,31 @@ class LTT:
     BS_SELL_BEFORE_MAJOR = 'BSSelBfMaj'
 
 
+class PFL:
+    """组合评分（-9..9 rank）的字段名。
+
+    值逐字取自老树 `portfolio/base.py::PFL` —— 它们是 MongoDB 里的实际存储名
+    （`PITFALLS.md` P1：缺常量不许编）。2026-10-21 随 markup rank 搬运补。
+    """
+    STOCK_PORTFOLIO_RANK = 'rStkPflRnk'
+    STOCK_PORTFOLIO_RATIO = 'rStkPflRat'
+    STOCK_PORTFOLIO_RATIO_DUMMY = 'rStkPflRatDmy'
+    STOCK_PORTFOLIO_RANK_PRE = 'StkPflRnKPre'
+    STOCK_PORTFOLIO_RANK_DUMMY = 'rStkPflRnkDmy'
+    STOCK_PORTFOLIO_RANK_COMPOUNDED = 'rStkPflRnkCpd'
+    STOCK_PORTFOLIO_RANK_BEFORE = 'rStkPflRnkBf'
+    STOCK_PORTFOLIO_RANK_OVERRIDE = 'rStkPflRnkOvr'
+    STOCK_PORTFOLIO_RANK_TRACING = 'rStkPflRnkTrc'
+    STOCK_PORTFOLIO_RETURNS = 'rStkPflRet'
+    STOCK_PORTFOLIO_RANK_NEGATIVE = 'rStkPflRnkNeg'
+    STOCK_PORTFOLIO_RANK_METAPHASE = 'rStkPflRnkMeta'
+    STOCK_PORTFOLIO_RANK_METAPHASE_MAJOR = 'rStkPflRnkMetaMaj'
+    POSITION_LEVEL = 'PosLv'
+    POSITION_VALUE = 'PosVal'
+
+
 class TRD:
-    """交易信号字段名 —— **只补了四量图链用到的那两条**。
+    """交易信号字段名 —— **只补了四量图链 / markup rank 用到的几条**。
 
     ⚠️ 新树此前**没有这个类**（老树 `models/alias.py` 的 `TRD` 有 380+ 个常量）。
     2026-10-11 随四量图搬运只补了 `AROON_UPRISING_TIMING_LAG(_MINOR)`（`calc_four_quadrant_boost`
@@ -111,6 +134,13 @@ class TRD:
     """
     AROON_UPRISING_TIMING_LAG = 'AroUprsgLag'
     AROON_UPRISING_TIMING_LAG_MINOR = 'AroUprsgLagMin'
+    #: 2026-10-21 随 markup rank 补（老树 `models/alias.py` 真值）。
+    POLYNOMIAL9_CAST_BEFORE_COMPOUNDED = 'rPoly9CstBfCpd'
+    #: 2026-10-21 补：OmniPath / Universal clearance 用到的列名
+    #: （真值逐字取自老树 `models/alias.py::TRD`）。
+    OMNIPATH_UPRISING_I_COEF_CANDIDATE = 'OmniPathUpR1CoefCan'
+    OMNIPATH_UPRISING_I_COEF_UPRISING_TIMING_LAG = 'OmniPathUpR1CoefLag'
+    UNIVERSAL_CLEARANCE_ENERGY = 'UniClrEng'
 
 
 class ZEN:

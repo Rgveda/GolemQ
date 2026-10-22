@@ -69,6 +69,16 @@ class TestReindexByDate(unittest.TestCase):
 
 @unittest.skipUnless(HAS_PROPHET, 'prophet 未安装')
 class TestProphetBand(unittest.TestCase):
+
+    def test_cmdstanpy_logging_is_suppressed(self):
+        """`Chain [1] start processing` 不许刷屏，且退出后 logger 要还原。"""
+        import logging
+        before = logging.getLogger('cmdstanpy').level
+        with self.assertNoLogs('cmdstanpy', level='INFO'), \
+                self.assertNoLogs('prophet', level='INFO'):
+            prophet_band(self.ohlc)
+        self.assertEqual(logging.getLogger('cmdstanpy').level, before)
+
     @classmethod
     def setUpClass(cls):
         cls.ohlc = _ohlc(120)

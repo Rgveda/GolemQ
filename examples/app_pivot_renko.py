@@ -46,7 +46,6 @@ from czsc import CZSC
 from czsc.objects import Freq, RawBar
 
 from GolemQ import get_active_market
-from GolemQ.analysis import renko as RENKO
 from GolemQ.analysis import renko_jit as RENKO_JIT
 from GolemQ.analysis.pivot import (
     bi_confirm_map, bi_list_to_points, calc_pivots, classify_pivots,
@@ -66,8 +65,8 @@ MAX_BARS = 4096
 
 #: 走 jit 还是纯版 —— **指标卡上要如实标出来**（两者逐值相同，但速度差 ~6×）
 _HAS_JIT = RENKO_JIT.available()
-_renko_feats = (RENKO_JIT.renko_trend_cross_func_jit if _HAS_JIT
-                else RENKO.renko_trend_cross_func)
+# D59 起 `renko_jit` 是唯一实现；`renko_trend_cross_func` 是 jit 版的兼容别名。
+_renko_feats = RENKO_JIT.renko_trend_cross_func
 
 st.set_page_config(page_title="缠论中枢 × RENKO 叠加", layout="wide")
 st.title("📦🧱 缠论中枢 × RENKO 砖块界（叠加图）")

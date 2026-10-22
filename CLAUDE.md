@@ -292,7 +292,7 @@ python -m GolemQ.cli --fill-turnover --fill-turnover-start 2026-09-01 --fill-tur
 - **StockCN singleton**: `StockCN.__new__` enforces a single instance. Auto-instantiated on module import and registered into `GQMARKETS`.
 - **Configuration**: `GQ_Setting` reads/writes `~/.GolemQ/settings/config.ini`. Sections `DINGTALK`, `SERVERCHAN`, `XTQUANT` are stored in the INI file; other sections fall back to MongoDB.
 - **Single database**: 一律 MongoDB **8.3** —— 行情与参考数据在 `GOLEMQ_STOCK_CN`（`golemq_stock_cn`）、实时在 `GOLEMQ_STOCK_CN_REALTIME`、框架运维（心跳/签到/关注列表）在 `GOLEMQ`（`golemq`）。**QUANTAXIS 已全树剔除**（`DECISIONS.md` D12）。4.4 通道：2026-10-10 曾按 D33 整条删除，**同日发现前提有误**（元数据类集合从没搬过）后**按需恢复**，用途限定为一次性搬运（`core/migrate44.py` = 唯一入口，只读，运行时代码禁止 import）—— 见 `DECISIONS.md` 的 **D33 修正条**与 **D34**。
-- **库名不外泄**（硬规定）：A 股行情库名 `'golemq_stock_cn'` 与两个行情库句柄 `GOLEMQ_STOCK_CN` / `GOLEMQ_STOCK_CN_REALTIME` **只允许出现在 `markets/StockCN/` 之内**。别处一律经市场对象取值，不准自己连库、不准拼库名 —— 判错**不会报错**，只会静默读到另一个库/空集。
+- **库名不外泄**（硬规定）：A 股行情库名 `'golemq_stock_cn'` 与两个行情库句柄 `GOLEMQ_STOCK_CN` / `GOLEMQ_STOCK_CN_REALTIME` **只允许出现在 `markets/StockCN/` 之内**。别处一律经市场对象的中性访问口 `get_active_market().get_database()` 取实例，**不准引用句柄常量、不准自己连库、不准拼库名** —— 判错**不会报错**，只会静默读到另一个库/空集。
 - **Heartbeat/mutex**: `HeartbeatModule.mutex()` checks for conflicting running instances in MongoDB before starting, using a timeout-based lock. `HeartbeatMonitor` runs a daemon thread that detects stale modules and fires alerts.
 - **Data flow**: Free data sources (Tencent, Sina, EastMoney via `easyquotation/`) → `services/` feature extraction → MongoDB → `analysis/` / `pipeline/` consumption. XTQuant gateway provides live position/order data.
 

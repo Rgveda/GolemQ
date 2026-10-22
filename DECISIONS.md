@@ -90,5 +90,8 @@
 | `D57` | 消息推送分层：`agents.channels`（渠道）与 `supervisor.alerts`（告警） | 2026-10-20 | [decisions/D57.md](docs/decisions/D57.md) |
 | `D58` | Review CLI 参数语义：`--strategy review`（别名 `--review`）、全局 `--eval`、删除 `--daily` | 2026-10-20 | [decisions/D58.md](docs/decisions/D58.md) |
 | `D59` | `analysis/*_jit.py` 合并为唯一实现，删除非 jit 原版 | 2026-10-21 | [decisions/D59.md](docs/decisions/D59.md) |
+| `D60` | CV 链迁出市场包；行情库句柄改由 `get_database()` 中性暴露 | 2026-10-21 | [decisions/D60.md](docs/decisions/D60.md) |
+| `D61` | XGBoost 迁入 `analysis/xgboost/`：先落框架与特征缺口，不做特征生产/落库 | 2026-10-21 | [decisions/D61.md](docs/decisions/D61.md) |
+| `D62` | `calc_compact_features`（8.3 版）+ `--strategy compact`：先只读，不落库 | 2026-10-21 | [decisions/D62.md](docs/decisions/D62.md) |
 
 <!-- END GENERATED -->

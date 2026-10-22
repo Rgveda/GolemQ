@@ -9,7 +9,7 @@
 
 ⚠️ `ultralytics` 只在 **GolemAI** env 里（CV 要 torch，而 GolemQ env 是 NoMKL ⇒
 两边的 BLAS 冲突，故 CV 只能在 GolemAI env 跑）。所以本模块**模块级不 import 它** ——
-`load_model()` 里才 import，这样 `GolemQ/markets/StockCN/chartscan/` 在 GolemQ env 下
+`load_model()` 里才 import，这样 `GolemQ/analysis/cv/` 在 GolemQ env 下
 也 import 得动（只是调 `load_model` 会炸，那是预期的：在错的 env 里就是不该能跑 CV）。
 """
 from __future__ import annotations
@@ -27,13 +27,13 @@ _WEIGHTS_REL = os.path.join('datastore', 'models', 'weights', 'custom_yolov8.pt'
 
 
 def _repo_root() -> str:
-    """仓库根 = 本文件 `GolemQ/markets/StockCN/chartscan/model.py` 往上 **4** 层。
+    """仓库根 = 本文件 `GolemQ/analysis/cv/model.py` 往上 **3** 层。
 
     **不用 `os.getcwd()`** —— 老实现用了，于是脚本必须先 `CD` 到项目根，
     换个工作目录就静默找不到权重。
     """
     here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(here))))
+    return os.path.dirname(os.path.dirname(os.path.dirname(here)))
 
 
 def weights_path() -> str:
