@@ -1,6 +1,6 @@
 # GolemQ
 
-**A 股量化框架**：行情取数 → 复权 → 落库 → 回测 → 实时订阅，全部落在**一个 MongoDB 8.3** 上。
+**A 股量化框架**：以股票策略为主的手搓（大雾，实为Claude Code + Deepseek官模）量化系统，由45岁程序猿打造，行情取数 → 复权 → 落库 → 回测 → 实时订阅，基于 Python 3.12 + MongoDB 8.3。
 
 > ⚠️ **本项目正在重构中**：新树 `GolemQ/` 逐模块替换老树 `GolemQ_old/`（后者不入库）。
 > 进度与下一步见 [`HANDOFF.md`](HANDOFF.md)，遗留缺陷见 [`MIGRATION_STATUS.md`](MIGRATION_STATUS.md)。
