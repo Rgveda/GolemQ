@@ -234,11 +234,14 @@ def save_reality_feat(features: pd.DataFrame, family: str, market_type,
 #: **存的是「÷close」比值、读回要乘回 close** 的列（D49/D54 的双向约定）。
 #: `*Nor*` 是 0..1 的归一化强度，不是价格量纲，**不还原**。
 PRICE_RATIO_COLUMNS = (
-    'poly9MajR', 'poly9WekR',
-    'rTrePrcMajR', 'rTreSlopMajR',
-    'poly9_MAJ',
-    'PROPHET_LB', 'PROPHET_UB',
-    'PROPHET_LB_MAJ', 'PROPHET_UB_MAJ',
+    'poly9MajD', 'poly9WekD',
+    'rTrePrcMajD', 'rTreSlopMajD',
+    'prophetLbD', 'prophetUbD',
+    'prophetLbMajD', 'prophetUbMajD',
+    'poly9D', 'regtreePriceD',
+    'cost5PrzD', 'cost15PrzD', 'cost85PrzD', 'cost95PrzD',
+    'renkoSpriceD', 'renkoLpriceD',
+    'renkosBarLbD', 'renkosBarUbD', 'renkolBarLbD', 'renkolBarUbD',
 )
 
 
@@ -256,8 +259,11 @@ def restore_price_columns(df: pd.DataFrame, close, columns=PRICE_RATIO_COLUMNS):
         close = close['close']
     close = pd.Series(close).reindex(out.index)
     for col in columns:
-        if col in out.columns:
-            out[col] = pd.to_numeric(out[col], errors='coerce') * close
+        if col not in out.columns:
+            continue
+        # `_DUMMY` / `D` 是归一化落库名；乘回 close 后写成**无后缀 base 价格列**
+        base = col[:-6] if col.endswith('_DUMMY') else col[:-1]
+        out[base] = pd.to_numeric(out[col], errors='coerce') * close
     return out
 
 
@@ -412,7 +418,7 @@ def migrate_reality_feat_from44(families=('day', '60min', '15min'),
       标记路径就只写这一列。漏了它 ⇒ `calc_ChartScaned_persistence` 判不出
       「已扫过」⇒ 整段 1008 天全量重扫（2026-10-18 实测踩到，见下方查询处的说明）。
     * **不搬** 4.4 那张表里的**指标列**（`stock_reality_feat_day` 有 136 个：
-      `MA30` / `poly9MajR` / `ATR_LB` …）—— 与 D49「**指标全部重算**」一致，
+      `MA30` / `poly9MajD` / `ATR_LB` …）—— 与 D49「**指标全部重算**」一致，
       且避免把 10.4M × 136 的指标矩阵灌进来。
 
     逐码路由

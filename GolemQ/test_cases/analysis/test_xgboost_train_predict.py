@@ -80,10 +80,10 @@ class TestTrainPredictRoundtrip(unittest.TestCase):
         self.assertTrue(os.path.isfile(out['path_short']))
 
     def test_train_refuses_missing_feature_columns(self):
-        frame = _frame().drop(columns=['CCI_NORM'])
+        frame = _frame().drop(columns=['cciNorm'])
         with self.assertRaises(ValueError) as ctx:
             T.train_xgb_scan(frame, _labels())
-        self.assertIn('CCI_NORM', str(ctx.exception))
+        self.assertIn('cciNorm', str(ctx.exception))
 
     def test_predict_refuses_missing_feature_columns(self):
         with self.assertRaises(ValueError):

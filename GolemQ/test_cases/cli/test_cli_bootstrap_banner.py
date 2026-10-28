@@ -181,11 +181,37 @@ class TestHardGate(unittest.TestCase):
         self.assertFalse(ok)
 
     def test_a_warning_never_exits(self):
-        """黄点（线程环境 / 时区 / CUDA）**不拦** —— 它们可能是显式选择或不适用。"""
-        with unittest.mock.patch.dict(os.environ, {'OPENBLAS_NUM_THREADS': '4'}):
+        """黄点（线程环境 / 时区 / CUDA）**不拦** —— 它们可能是显式选择或不适用。
+
+        ⚠️ 必须把依赖包钉成全过：这条测的是「黄点不拦」，不是本机 pandas 版本。
+        不钉的话，环境里 pandas < 2.3 时它会因**红点**而退出（2026-10-23 实测）。
+        """
+        ok_pkgs = tuple((True, '{} {}'.format(name, want))
+                        for name, want in bootstrap.MIN_PACKAGES)
+        with unittest.mock.patch.object(bootstrap, 'check_packages',
+                                        return_value=ok_pkgs), \
+                unittest.mock.patch.dict(os.environ,
+                                         {'OPENBLAS_NUM_THREADS': '4'}):
             with contextlib.redirect_stdout(io.StringIO()):
                 ok = bootstrap.check_environment(verbose=False, strict=True)
         self.assertTrue(ok)
+
+    def test_dependency_details_mark_each_package_individually(self):
+        """`依赖包` 节点红 ≠ 每行都红 —— 只有不过的那些该打 ✗（2026-10-23 用户实报）。"""
+        pkgs = ((True, 'numpy 2.5.4（要求 >= 2.0）'),
+                (False, 'pandas 2.2.3（要求 >= 2.3）'),
+                (True, 'polars 2.0.0（要求 >= 1.24）'))
+        buf = io.StringIO()
+        with unittest.mock.patch.object(bootstrap, 'check_packages',
+                                        return_value=pkgs):
+            with contextlib.redirect_stdout(buf):
+                with self.assertRaises(SystemExit):
+                    bootstrap.check_environment(verbose=False, strict=True)
+        out = buf.getvalue()
+        self.assertIn('✓ 依赖包: numpy 2.5.4', out)
+        self.assertIn('✗ 依赖包: pandas 2.2.3', out)
+        self.assertIn('✓ 依赖包: polars 2.0.0', out)
+        self.assertNotIn('✗ 依赖包: numpy', out)
 
     def test_repair_commands_are_exactly_the_config_ones(self):
         """放行集合必须就是那四条修配置的命令 —— 多一条就绕过闸，少一条就修不回来。"""

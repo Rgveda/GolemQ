@@ -333,10 +333,16 @@ def calc_portfolio_rank(features: pd.DataFrame,
             if rank is not None:
                 features.loc[m9t_wek.index, PFL.STOCK_PORTFOLIO_RANK] = rank
 
+    # NaN → 0 再 cast：预热段 / 当日缺行本来就会留下 NaN；直接 np.astype 会刷
+    # `RuntimeWarning: invalid value encountered in cast`，而且 NaN 实际也是按 0
+    # 落进 int（Numpy 的行为）。先显式 nan_to_num 既保持结果又不再刷警告。
     metaphase = calc_portfolio_metaphase(
-        features[PFL.STOCK_PORTFOLIO_RANK_BEFORE].values.astype(np.int32),
-        features[FIELD.MACD_CROSS_SX_BEFORE].values.astype(np.int16),
-        features[FIELD.MACD_CROSS_SX_BEFORE_MAJOR].values.astype(np.int16))
+        np.nan_to_num(features[PFL.STOCK_PORTFOLIO_RANK_BEFORE].values,
+                      nan=0).astype(np.int32),
+        np.nan_to_num(features[FIELD.MACD_CROSS_SX_BEFORE].values,
+                      nan=0).astype(np.int16),
+        np.nan_to_num(features[FIELD.MACD_CROSS_SX_BEFORE_MAJOR].values,
+                      nan=0).astype(np.int16))
     features[PFL.STOCK_PORTFOLIO_RANK_METAPHASE] = metaphase[:, 0]
     features[PFL.STOCK_PORTFOLIO_RANK_METAPHASE_MAJOR] = metaphase[:, 1]
 

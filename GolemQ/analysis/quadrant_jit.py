@@ -5,8 +5,11 @@
 ================
 老树 `GolemQ_old/analysis/base.py` 的 `calc_four_quadrant_boost`（119-696，~580 行）
 是「四量图」的真身 —— ⚠️ **它不是画图，是特征计算**：Q1–Q4（四条均线结构打分）、
-`4QPwrln` 电力线（8 条 MA 的钝化计数 −3.8）、一串 quadrant timing-lag，以及
-`QuadSt` / `ChoBits` / `QuadCodex` 状态机。「四量图」这个词只活在老树 docstring 里。
+`4QPwrln` 电力线（8 条 MA 的钝化计数 −3.8）、一串 quadrant timing-lag。
+「四量图」这个词只活在老树 docstring 里。
+
+⚠️ 老树里的 `QuadSt` / `ChoBits` / `QuadCodex` 状态机**未搬**（2026-10-25，见
+`DECISIONS.md` D66）—— 新树没有任何消费方，详见下面「解耦动作」第 4 条。
 
 本模块另外搬了用户点名的 6 个下游指标（老树在别处算、新树一处都没有）：
 
@@ -38,6 +41,13 @@
    删掉 `import QUANTAXIS` 与 `from QUANTAXIS.QAUtil import DATABASE`。
 3. 删掉 `from GolemQ.fractal.v0 import kdj_cross_func` —— 实测该名在老树 `base.py`
    **只在 import 行出现、函数体从未调用**，新树也无 `fractal/` 包。
+4. **丢掉 `QuadSt` / `ChoBits` / `QuadCodex` 状态机**（老树 `base.py:461-671`）。
+   新树**零消费方**：三族 review 契约（`pipeline/review/contract.py`）里没有这三列，
+   全树也没有任何读取；老树唯一的消费方 `models/fourquad.py`（`Chobyte` /
+   `QChoEngMaj`）**未搬**。实测这条链占本函数约 **32%** 耗时（2,160 根 15min 窗口
+   约 13 ms/次），而 `--review` 对每个 60min 目标都调一次 ⇒ 纯浪费。
+   ⚠️ **对拍口径**：本函数现在比老树**少这 3 列**，`test_quadrant` 显式排除；
+   其余列仍逐值一致（已用 3 seeds × 2 annual × virtual_pressure_line 开关验证）。
 
 ⚠️ 老树的平行实现（**只搬了这一条**，见 `DECISIONS.md` D35「只搬一条」）
 - 四量图另有 polars 版（`GolemQ_old/models/polars.py:461`）与 notebook 版 —— **未搬**。
@@ -69,6 +79,7 @@ __all__ = [
     'sma',
     'ema',
     'llv',
+    'hhv',
     'kdj',
     'calc_four_quadrant_boost',
     'calc_quadrant_leverage_macd_timing_lag',
@@ -79,6 +90,7 @@ __all__ = [
     'calc_quadrant_zen_dash_count',
     'calc_quadrant_bs_trunk_timing_lag',
     'calc_mainstream_feats',
+    'calc_mainstream_leadout_feats',
     'calc_bs_before',
     'calc_pivot_timing_lag',
 ]
@@ -167,6 +179,15 @@ def llv(series, n):
     [3.0, 1.0, 1.0]
     """
     return series.rolling(window=n, min_periods=1).min()
+
+
+def hhv(series, n):
+    """滚动最高值（`min_periods=1`）—— :func:`llv` 的镜像。
+
+    >>> hhv(pd.Series([3.0, 1.0, 2.0]), 2).tolist()
+    [3.0, 3.0, 2.0]
+    """
+    return series.rolling(window=n, min_periods=1).max()
 
 
 def kdj(hight, low, close, fastk_period=9, slowk_matype=0, slowk_period=3, slowd_period=3):
@@ -437,218 +458,6 @@ def calc_four_quadrant_boost(
                   (features[LTT.QUADRANT_2].shift(1) < -0.000168) & \
                   (features[LTT.QUADRANT_3].shift(1) < -0.000168) & \
                   (features[LTT.QUADRANT_4].shift(1) < -0.000168)), 1, 0))
-    
-    fourQuad_autocodex_candidate=[]
-    codex_15 = ((features[LTT.QUADRANT_POWERLINE]+3.8)==8) | \
-                (((features[LTT.QUADRANT_POWERLINE].shift(1)+3.8)==7) & \
-                ((features[LTT.QUADRANT_POWERLINE]+3.8)==7)) | \
-                (((features[LTT.QUADRANT_POWERLINE].shift(1)+3.8)==8) & \
-                ((features[LTT.QUADRANT_POWERLINE]+3.8)==7)) | \
-                (((features[LTT.QUADRANT_POWERLINE].shift(1)+3.8) < 7) & \
-                ((features[LTT.QUADRANT_POWERLINE]+3.8)==7))
-    # 1101
-    codex_13 = (((features[LTT.QUADRANT_1] > 0.168) & \
-               (features[LTT.QUADRANT_2] > 0.168) & \
-               (features[LTT.QUADRANT_3] > 0.168) & \
-               (features[LTT.QUADRANT_4] > 0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE].shift(1)+3.8)==6)) | \
-               (((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) > 0.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) > 0.168)) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==6)) | \
-                (((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) < -1.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) < -1.168) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==7))
-    # 1110
-    codex_14 = (((features[LTT.QUADRANT_POWERLINE].shift(2)+3.8)==8) & \
-               ((features[LTT.QUADRANT_POWERLINE].shift(1)+3.8)==7) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==6)) | \
-               ((features[LTT.QUADRANT_1] > 0.168) & \
-               (features[LTT.QUADRANT_2] > 0.168) & \
-               (features[LTT.QUADRANT_3] > 0.168) & \
-               (features[LTT.QUADRANT_4] > 0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE].shift(2)+3.8)==8) & \
-               ((features[LTT.QUADRANT_POWERLINE].shift(1)+3.8)==8) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==6)) | \
-               (~codex_15 & \
-               ~codex_13 & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==7))
-    # 1011
-    codex_11 = ((((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) < -0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE].diff(1) < -0.168))) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==6)) | \
-               (((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) > 0.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) > 0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==5))
-    # 1100
-    codex_12 = ~codex_13 & \
-               ~codex_11 & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==6)
-    # 1001
-    codex_09 = (((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) < -0.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) < -0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==5)) | \
-               (((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) > 0.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) > 0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==4))
-    # 1010
-    codex_10 = ~codex_09 & \
-               ~codex_11 & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==5)
-    # 0111
-    codex_07 = (((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) > 0.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) > 0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==3)) | \
-               (((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) < -0.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) < -0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==4))
-    # 1000
-    codex_08 = ~codex_07 & \
-               ~codex_09 & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==4)    
-    # 0101
-    codex_05 = (((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) > 0.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) > 0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==2)) | \
-               (((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) < -0.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) < -0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==3))
-    # 0110
-    codex_06 = ~codex_07 & \
-               ~codex_09 & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==3)
-    # 0011
-    codex_03 = (((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) > 0.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) > 0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==1)) | \
-               (((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) < -0.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) < -0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==2))
-    # 0100
-    codex_04 = ~codex_05 & \
-               ~codex_03 & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==2)
-    # 0001
-    codex_01 = ((features[LTT.QUADRANT_1] <-0.168) & \
-               (features[LTT.QUADRANT_2] <-0.168) & \
-               (features[LTT.QUADRANT_3] <-0.168) & \
-               (features[LTT.QUADRANT_4] <-0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE].shift(1)+3.8)==1)) | \
-               ((features[LTT.QUADRANT_1] <-0.168) & \
-               (features[LTT.QUADRANT_2] <-0.168) & \
-               (features[LTT.QUADRANT_3] <-0.168) & \
-               (features[LTT.QUADRANT_4] <-0.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) < -0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==1)) | \
-               (((features[LTT.QUADRANT_1] + \
-                 features[LTT.QUADRANT_2] + \
-                 features[LTT.QUADRANT_3] + \
-                 features[LTT.QUADRANT_4]).diff(1) < -0.168) & \
-               (features[LTT.QUADRANT_POWERLINE].diff(1) < -0.168) & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==2))
-    # 0010
-    codex_02 = ~codex_01 & \
-               ~codex_03 & \
-               ((features[LTT.QUADRANT_POWERLINE]+3.8)==1)
-    fourQuad_autocodex_candidate.append(codex_15 | \
-                                        codex_13 | \
-                                        codex_11 | \
-                                        codex_09 | \
-                                        codex_07 | \
-                                        codex_05 | \
-                                        codex_03 | \
-                                        codex_01)       # 0001
-    fourQuad_autocodex_candidate.append(codex_15 | \
-                                        codex_14 | \
-                                        codex_11 | \
-                                        codex_10 | \
-                                        codex_07 | \
-                                        codex_06 | \
-                                        codex_03 | \
-                                        codex_02)       # 0010
-    fourQuad_autocodex_candidate.append(codex_15 | \
-                                        codex_14 | \
-                                        codex_13 | \
-                                        codex_12 | \
-                                        codex_07 | \
-                                        codex_06 | \
-                                        codex_05 | \
-                                        codex_04)       # 0100
-    fourQuad_autocodex_candidate.append(codex_15 | \
-                                        codex_14 | \
-                                        codex_13 | \
-                                        codex_12 | \
-                                        codex_11 | \
-                                        codex_10 | \
-                                        codex_09 | \
-                                        codex_08)       # 1000
-    fourQuad_autocodex_candidate.append(features[LTT.QUADRANT_4]>0.00168)
-    fourQuad_autocodex_candidate.append(features[LTT.QUADRANT_3]>0.00168)
-    fourQuad_autocodex_candidate.append(features[LTT.QUADRANT_2]>0.00168)
-    fourQuad_autocodex_candidate.append(features[LTT.QUADRANT_1]>0.00168)
-
-    #macd_autocodex_candidate.append(features[FLD.MA250_MAJOR]>features[FLD.MA250])
-
-    features = features.reindex(columns=list(set([
-        *features.columns,
-        *[LTT.QUADRANT_STATUS,
-          LTT.CHOBITS,
-          LTT.QUADRANT_CODEX]])))
-    features[LTT.QUADRANT_STATUS]=0
-    for i in range(0, len(fourQuad_autocodex_candidate)):
-        fourQuad_autocodex = fourQuad_autocodex_candidate[i]
-        if (i==0):
-            features[LTT.QUADRANT_STATUS] = np.where(fourQuad_autocodex > 0, 1, 0)
-        else:
-            features[LTT.QUADRANT_STATUS] = np.where(fourQuad_autocodex > 0, 
-                                                     2 ** i + features[LTT.QUADRANT_STATUS], 
-                                                     features[LTT.QUADRANT_STATUS])
-    features[LTT.CHOBITS] = ['{:02X}'.format(int(i)) if not np.isnan(i) else np.nan for i in features[LTT.QUADRANT_STATUS].values]
-    fourQuad_Previous = pd.DataFrame(
-        np.where(features[LTT.CHOBITS] != features[LTT.CHOBITS].shift(1),
-                 features[LTT.CHOBITS].shift(1), np.nan))
-    fourQuad_Previous_2 = pd.DataFrame(
-        np.where(fourQuad_Previous.ffill() != fourQuad_Previous.ffill().shift(1),
-                 fourQuad_Previous.ffill().shift(1), np.nan))
-    fourQuad_Previous_3 = pd.DataFrame(
-        np.where(fourQuad_Previous_2.ffill() != fourQuad_Previous_2.ffill().shift(1),
-                 fourQuad_Previous_2.ffill().shift(1), np.nan))
-    features[LTT.QUADRANT_CODEX] = np.squeeze(fourQuad_Previous_3.ffill().bfill().values) + np.squeeze(fourQuad_Previous_2.ffill().bfill().values) + np.squeeze(fourQuad_Previous.ffill().bfill().values) + features[LTT.CHOBITS].ffill().bfill().values
     
     checklist_float32_columns=[FLD.ATR_UB_WEEKLY,
                                 STE.CVaR_BOWL_CANDIDATE,
@@ -938,20 +747,8 @@ def calc_quadrant_bs_trunk_timing_lag(features: pd.DataFrame) -> pd.DataFrame:
     return features
 
 
-def calc_mainstream_feats(ohlc: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
-    """主力资金吸筹 —— 产出 `MsLeadinBf` / `MsLeadinx3Bf` / `MsLeadinx5Bf`。
-
-    逐字搬自老树 `analysis/base.py:2569-2687`（VAR1..VAR5 → Entry/Shakeout 链，
-    加 KDJ_J / MACD 两个判据）。
-
-    ⚠️ **一处刻意偏离**：老树在 `if LTT.BS_BUY_BEFORE not in features.columns:` 时
-    会调 `calc_bs_signals(...)`（星线检测链）**顺带产出 BS_* 列**。那条链不在本模块
-    范围（用户只点名 6 个 BS_* 的 *BEFORE* 包装），**故此处不调** ⇒ 本函数**不产 BS_* 列**。
-    `MsLeadinBf`/`x3`/`x5` 的计算**不读 BS_*** ⇒ 这一偏离对它们无影响。
-
-    ⚠️ **要求 `features` 里有 `MACD` 列**（`x3`/`x5` 的分支读它）—— 老树同此。
-    `KDJ_K/D/J` 与 `KDJ_TRD_LAG` 若缺则**本函数自己补**（走 `talib.STOCH`）。
-    """
+def _ensure_kdj(ohlc: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
+    """缺 `KDJ_K/D/J` 时补齐（老树在 `calc_mainstream_feats` 内联的同一段）。"""
     if (FLD.KDJ_TREND_TIMING_LAG not in features.columns):
         features = features.reindex(
             columns=list(set([
@@ -967,38 +764,102 @@ def calc_mainstream_feats(ohlc: pd.DataFrame, features: pd.DataFrame) -> pd.Data
                 (features[FLD.KDJ_J] > features[FLD.KDJ_K]), 1, -1
             )
         )
+    return features
 
-    """计算主力吸筹指标"""
+
+def _mainstream_pressure(ohlc: pd.DataFrame, side: str = 'low'):
+    """VAR1..VAR5 的**同一套算术**；`side='low'` 吸筹、`'high'` 派发（镜像）。
+
+    - 吸筹：`LOW` / `LLV(LOW,33)` / 向**下**偏离（`LOW-VAR1`）；
+    - 派发：`HIGH` / `HHV(HIGH,33)` / 向**上**偏离（`VAR1-HIGH`）。
+
+    返回 `(var5, rising, falling)`：后两者按 VAR5 环比切段 ——
+    吸筹口径是「进场 / 洗盘」，派发口径是「派发 / 反抽」。
+    """
+    if side not in ('low', 'high'):
+        raise ValueError("side 只能是 'low' / 'high'：%r" % (side,))
+    base = ohlc[AKA.LOW] if side == 'low' else ohlc[AKA.HIGH]
+
     # VAR1:=REF((LOW+OPEN+CLOSE+HIGH)/4,1);
     var1 = ((ohlc[AKA.LOW] + ohlc[AKA.OPEN] + ohlc[AKA.CLOSE] + ohlc[AKA.HIGH]) / 4).shift(1)
 
-    # VAR2:=SMA(ABS(LOW-VAR1),13,1)/SMA(MAX(LOW-VAR1,0),10,1);
-    abs_diff = np.abs(ohlc[AKA.LOW] - var1)
-    max_diff = np.maximum(ohlc[AKA.LOW] - var1, 0)
-
+    # VAR2:=SMA(ABS(base-VAR1),13,1)/SMA(MAX(偏离方向,0),10,1);
+    diff = (base - var1) if side == 'low' else (var1 - base)
+    abs_diff = np.abs(base - var1)
+    max_diff = np.maximum(diff, 0)
     sma_abs = sma(abs_diff, 13, 1)
     sma_max = sma(max_diff, 10, 1)
-
-    # 避免除零
-    var2 = sma_abs / np.where(sma_max == 0, 1, sma_max)
+    var2 = sma_abs / np.where(sma_max == 0, 1, sma_max)   # 避免除零
 
     # VAR3:=EMA(VAR2,10);
     var3 = ema(var2, 10)
 
-    # VAR4:=LLV(LOW,33);
-    var4 = llv(ohlc[AKA.LOW], 33)
+    # VAR4:=LLV(LOW,33) / HHV(HIGH,33);
+    if side == 'low':
+        var4 = llv(base, 33)
+        condition = base <= var4
+    else:
+        var4 = hhv(base, 33)
+        condition = base >= var4
 
-    # VAR5:=EMA(IF(LOW<=VAR4,VAR3,0),3);
-    condition = ohlc[AKA.LOW] <= var4
-    var5_input = np.where(condition, var3, 0)
-    var5 = ema(pd.Series(var5_input, index=ohlc.index), 3)
+    # VAR5:=EMA(IF(创新低/新高,VAR3,0),3);
+    var5 = ema(pd.Series(np.where(condition, var3, 0), index=ohlc.index), 3)
+    prev = var5.shift(1)
+    # 进场/洗盘（吸筹）或 派发/反抽（派发）
+    return var5, np.where(var5 > prev, var5, 0), np.where(var5 < prev, var5, 0)
 
-    # 主力进场:IF(VAR5>REF(VAR5,1),VAR5,0)
-    var5_prev = var5.shift(1)
-    main_force_entry = np.where(var5 > var5_prev, var5, 0)
 
-    # 洗盘:IF(VAR5<REF(VAR5,1),VAR5,0)
-    shakeout = np.where(var5 < var5_prev, var5, 0)
+def _mainstream_before(ohlc: pd.DataFrame, features: pd.DataFrame,
+                       primary, secondary, *, rising: bool,
+                       mult=None, first=None):
+    """`Timeline_duration` 包装：`BEFORE`（`mult=None`）与 `x3`/`x5`（`mult=3/5`）。
+
+    `rising=True` 吸筹（KDJ/MACD 向上、`primary` 为上升段、`secondary` 为洗盘）；
+    `rising=False` 派发（全部镜像）。
+    """
+    close = ohlc[AKA.CLOSE]
+    j = features[FLD.KDJ_J].diff(1)
+    macd = features[FLD.MACD].diff(1)
+    turn = (j > 1e-3) if rising else (j < -1e-3)
+    macd_turn = (macd > 1e-9) if rising else (macd < -1e-9)
+    if mult is None:
+        cond = turn & (
+            (primary.shift(2) > close.shift(2) * 0.618) &
+            (secondary.shift(1) > 0.618) &
+            (secondary > 0.168))
+    else:
+        cond = turn & (
+            ((primary.shift(2) > close.shift(2) * mult) &
+             (secondary.shift(1) > 0.618) &
+             (secondary > 0.168)) |
+            ((primary.shift(1) > close.shift(1) * mult) &
+             (secondary > close * 0.382) &
+             (secondary > 0.168) & macd_turn) |
+            ((primary.shift(2) > close.shift(2) * first) &
+             (primary.shift(1) > close.shift(1) * mult) &
+             (secondary > close * 0.382) &
+             (secondary > 0.168) & macd_turn))
+    return Timeline_duration(np.where(cond, 1, 0))
+
+
+def calc_mainstream_feats(ohlc: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
+    """主力资金吸筹 —— 产出 `MsLeadinBf` / `MsLeadinx3Bf` / `MsLeadinx5Bf`。
+
+    逐字搬自老树 `analysis/base.py:2569-2687`（VAR1..VAR5 → Entry/Shakeout 链，
+    加 KDJ_J / MACD 两个判据）。
+
+    ⚠️ **一处刻意偏离**：老树在 `if LTT.BS_BUY_BEFORE not in features.columns:` 时
+    会调 `calc_bs_signals(...)`（星线检测链）**顺带产出 BS_* 列**。那条链不在本模块
+    范围（用户只点名 6 个 BS_* 的 *BEFORE* 包装），**故此处不调** ⇒ 本函数**不产 BS_* 列**。
+    `MsLeadinBf`/`x3`/`x5` 的计算**不读 BS_*** ⇒ 这一偏离对它们无影响。
+
+    ⚠️ **要求 `features` 里有 `MACD` 列**（`x3`/`x5` 的分支读它）—— 老树同此。
+    `KDJ_K/D/J` 与 `KDJ_TRD_LAG` 若缺则**本函数自己补**（走 `talib.STOCH`）。
+    """
+    features = _ensure_kdj(ohlc, features)
+
+    """计算主力吸筹指标"""
+    var5, entry, shakeout = _mainstream_pressure(ohlc, 'low')
     features = features.reindex(
         columns=list(set([
             *features.columns,
@@ -1009,47 +870,72 @@ def calc_mainstream_feats(ohlc: pd.DataFrame, features: pd.DataFrame) -> pd.Data
               LTT.MAINSTREAM_LEADINx3_BEFORE,
               LTT.MAINSTREAM_LEADINx5_BEFORE]])))
     features[LTT.MAINSTREAM_LEADIN_VAR5] = var5
-    features[LTT.MAINSTREAM_LEADIN_ENTRY] = main_force_entry
+    features[LTT.MAINSTREAM_LEADIN_ENTRY] = entry
     features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] = shakeout
-    features[LTT.MAINSTREAM_LEADIN_BEFORE] = Timeline_duration(
-        np.where(
-            (features[FLD.KDJ_J].diff(1) > 1e-3) & \
-            ((features[LTT.MAINSTREAM_LEADIN_ENTRY].shift(2) > ohlc[AKA.CLOSE].shift(2) * 0.618) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT].shift(1) > 0.618) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] > 0.168)), 1, 0
-        ))
-    features[LTT.MAINSTREAM_LEADINx3_BEFORE] = Timeline_duration(
-        np.where(
-            (features[FLD.KDJ_J].diff(1) > 1e-3) & \
-            (((features[LTT.MAINSTREAM_LEADIN_ENTRY].shift(2) > ohlc[AKA.CLOSE].shift(2) * 3) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT].shift(1) > 0.618) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] > 0.168)) | \
-            ((features[LTT.MAINSTREAM_LEADIN_ENTRY].shift(1) > ohlc[AKA.CLOSE].shift(1) * 3) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] > ohlc[AKA.CLOSE] * 0.382) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] > 0.168) & \
-            (features[FLD.MACD].diff(1) > 1e-9)) | \
-            ((features[LTT.MAINSTREAM_LEADIN_ENTRY].shift(2) > ohlc[AKA.CLOSE].shift(2) * 0.618) & \
-            (features[LTT.MAINSTREAM_LEADIN_ENTRY].shift(1) > ohlc[AKA.CLOSE].shift(1) * 3) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] > ohlc[AKA.CLOSE] * 0.382) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] > 0.168) & \
-            (features[FLD.MACD].diff(1) > 1e-9))), 1, 0
-        ))
-    features[LTT.MAINSTREAM_LEADINx5_BEFORE] = Timeline_duration(
-        np.where(
-            (features[FLD.KDJ_J].diff(1) > 1e-3) & \
-            (((features[LTT.MAINSTREAM_LEADIN_ENTRY].shift(2) > 5 * ohlc[AKA.CLOSE].shift(2)) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT].shift(1) > 0.618) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] > 0.168)) | \
-            ((features[LTT.MAINSTREAM_LEADIN_ENTRY].shift(1) > 5 * ohlc[AKA.CLOSE].shift(1)) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] > 0.382 * ohlc[AKA.CLOSE]) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] > 0.168) & \
-            (features[FLD.MACD].diff(1) > 1e-9)) | \
-            ((features[LTT.MAINSTREAM_LEADIN_ENTRY].shift(2) > 0.832 * ohlc[AKA.CLOSE].shift(2)) & \
-            (features[LTT.MAINSTREAM_LEADIN_ENTRY].shift(1) > 5 * ohlc[AKA.CLOSE].shift(1)) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] > 0.382 * ohlc[AKA.CLOSE]) & \
-            (features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] > 0.168) & \
-            (features[FLD.MACD].diff(1) > 1e-9))), 1, 0
-        ))
+    features[LTT.MAINSTREAM_LEADIN_BEFORE] = _mainstream_before(
+        ohlc, features, features[LTT.MAINSTREAM_LEADIN_ENTRY],
+        features[LTT.MAINSTREAM_LEADIN_SHAKEOUT], rising=True)
+    features[LTT.MAINSTREAM_LEADINx3_BEFORE] = _mainstream_before(
+        ohlc, features, features[LTT.MAINSTREAM_LEADIN_ENTRY],
+        features[LTT.MAINSTREAM_LEADIN_SHAKEOUT], rising=True,
+        mult=3, first=0.618)
+    features[LTT.MAINSTREAM_LEADINx5_BEFORE] = _mainstream_before(
+        ohlc, features, features[LTT.MAINSTREAM_LEADIN_ENTRY],
+        features[LTT.MAINSTREAM_LEADIN_SHAKEOUT], rising=True,
+        mult=5, first=0.832)
+    return features
+
+
+def calc_mainstream_leadout_feats(ohlc: pd.DataFrame,
+                                  features: pd.DataFrame) -> pd.DataFrame:
+    """主力**派发/出货**（下跌指示）—— :func:`calc_mainstream_feats` 的镜像。
+
+    **新树自造**（老树没有这个指标）：把吸筹口径的
+    `LOW / LLV(LOW,33) / 向下偏离` 换成 `HIGH / HHV(HIGH,33) / 向上偏离`，
+    KDJ 与 MACD 判据同步反向；系数（0.618 / 0.382 / 0.168 / 3 / 5 / 0.832）
+    逐字镜像，便于与原指标并排比较。
+
+    产出 6 列（与 `MAINSTREAM_LEADIN_*` 一一对应）：
+
+    ==============================  ==================================
+    `MsLeadoutVar5`                 镜像 VAR5（高位抛压强度）
+    `MsLeadoutEntry`                派发：VAR5 环比**上升**的一段
+    `MsLeadoutSko`                  反抽：VAR5 环比**下降**的一段
+    `MsLeadoutBf` / `x3Bf` / `x5Bf` `Timeline_duration`（0 = 刚触发）
+    ==============================  ==================================
+
+    ⚠️ **接入 review 前先校准**：2026-10-27 用 16 码 × 60min 快测，
+    镜像 `x5` 触发后 5 根平均 **-0.055%**（原指标 +0.091%），方向对但 edge 弱；
+    且原公式的 `ENTRY > close*0.618` 是**绝对价位**量纲，高价股几乎不触发
+    （600519 全样本 0 次）。本函数只做算术，**不写库、不被管线调用**。
+    """
+    features = _ensure_kdj(ohlc, features)
+
+    # "计算主力派发指标"（VAR1..VAR5 的高位镜像）
+    var5, distrib, rebound = _mainstream_pressure(ohlc, 'high')
+    features = features.reindex(
+        columns=list(set([
+            *features.columns,
+            *[LTT.MAINSTREAM_LEADOUT_VAR5,
+              LTT.MAINSTREAM_LEADOUT_ENTRY,
+              LTT.MAINSTREAM_LEADOUT_SHAKEOUT,
+              LTT.MAINSTREAM_LEADOUT_BEFORE,
+              LTT.MAINSTREAM_LEADOUTx3_BEFORE,
+              LTT.MAINSTREAM_LEADOUTx5_BEFORE]])))
+    features[LTT.MAINSTREAM_LEADOUT_VAR5] = var5
+    features[LTT.MAINSTREAM_LEADOUT_ENTRY] = distrib
+    features[LTT.MAINSTREAM_LEADOUT_SHAKEOUT] = rebound
+    features[LTT.MAINSTREAM_LEADOUT_BEFORE] = _mainstream_before(
+        ohlc, features, features[LTT.MAINSTREAM_LEADOUT_ENTRY],
+        features[LTT.MAINSTREAM_LEADOUT_SHAKEOUT], rising=False)
+    features[LTT.MAINSTREAM_LEADOUTx3_BEFORE] = _mainstream_before(
+        ohlc, features, features[LTT.MAINSTREAM_LEADOUT_ENTRY],
+        features[LTT.MAINSTREAM_LEADOUT_SHAKEOUT], rising=False,
+        mult=3, first=0.618)
+    features[LTT.MAINSTREAM_LEADOUTx5_BEFORE] = _mainstream_before(
+        ohlc, features, features[LTT.MAINSTREAM_LEADOUT_ENTRY],
+        features[LTT.MAINSTREAM_LEADOUT_SHAKEOUT], rising=False,
+        mult=5, first=0.832)
     return features
 
 

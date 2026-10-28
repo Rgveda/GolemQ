@@ -239,7 +239,7 @@ each_day = sorted(kline.index.get_level_values(level=0).unique())
 
 | 项 | 状态 |
 |:--|:--|
-| ~~**日线未迁移**~~ **已作废**（2026-10-08） | 先前那条是**错的**：`stock_day` **17,893,343** 行、`index_day` 4,564,152 行、`etf_day` 3,220,050 行 —— 日线**迁全了**。当时据以判断的计数来自时序集合上不可靠的 `$collStats count`，见 `PITFALLS.md` P15。⚠️ **实测真有洞的是 ETF**：`etf_day` 抽查 1,689 只里 **739 只有缺日**（`--save-coverage` 可复现）|
+| ~~**日线未迁移**~~ **已作废**（2026-10-08） | 先前那条是**错的**：`stock_day` **17,893,343** 行、`index_day` 4,564,152 行、`etf_day` 3,220,050 行 —— 日线**迁全了**。当时据以判断的计数来自时序集合上不可靠的 `$collStats count`，见 `PITFALLS.md` P15。⚠️ **实测真有洞的是 ETF**：`etf_day` 抽查 1,689 只里 **739 只有缺日**（`python -m GolemQ.cli.internal --save-coverage` 可复现）|
 | **指数集合数据不全** | ~~先前的说法~~ 实测 `index_day` 有 8,733 个 code、`index_1min` 亦然（2026-10-08）。⚠️ 但**指数分钟与 pytdx 不同源**：`vol` 比值 14–18 非常数、`close` 精度也不同 → `--save tdx` 里指数分钟**按 pytdx 原值写**（`INDEX_MIN_VOL_SCALE`），边界处会与存量跳变 |
 | **概念 K 线仍未实现** | 真实版本只在 `GolemQ_old/fetch/concept.py:865`（读 4.4）。⚠️ 2026-10-10 补记：原先那个空壳 `GolemQ/fetch/concept.py` **已随 `fetch/` 整包删除**，现在该方法是 `markets/StockCN/__init__.py` 里一个直接抛 `NotImplementedError` 的实现（`base_market.py` 的契约本就要求如此） |
 | ~~下游 stub 未解~~ | ✅ **2026-10-16 已了结**（`DECISIONS.md` **D50**）：整个 `GolemQ/features/` 包**已删除**。它一共 5 个函数、**零调用方**（老树的 20 个消费方都在 `models/`/`benchmark/`，那两层新树没有），其中 2 个新树**已有等价物**（`refdata.GQ_fetch_stock_reality_feat_day` / `metadata_save` 的写口，且是新树 D34 修正过的），3 个的**数据源在 8.3 根本不存在**（`stock_reality_features` / `stock_massive_models` / `stock_massvie_reviews` ← 老树那个集合名是拼错的）。<br>⚠️ 旧记录：`align_kline_timeline` **不是 stub 而是不存在**（调用方随 `services/persistence/` 删除）；`Timeline_duration` 反倒**回来了**，真实现在 `analysis/timing.py` |

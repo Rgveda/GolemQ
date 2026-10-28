@@ -279,6 +279,35 @@ def _db():
     return GOLEMQ_STOCK_CN
 
 
+#: 短路阈值：某日某列已覆盖 >= 90% 的 `stock_list` 就跳过再次抓取。
+#: ⚠️ **不能取 95%**：外部源的 universe 本来就小于 `stock_list` ——
+#: 千股千评实测 ~5200 行 / `stock_list` 5580 只（北交所、停牌、无评分的票没有），
+#: 93% 已是一次**完整**抓取；95% 会让每次重跑都判定「没跑完」而重抓。
+#: 用比例而不是「有一行就跳」—— 上一次半途失败留下的部分行不该把这次也挡掉。
+COVERAGE_SKIP_RATIO = 0.90
+
+
+def metadata_covered(field, day, codes=None, db=None) -> dict:
+    """某日某列在 `stock_reality_feat_day` 里**已写入的 code 集合**（只读）。
+
+    给外部快照抓取做短路判断：千股千评/牛股诊股一天只该抓一次，
+    重复跑 `--save` 时不该再走 20–40 分钟的逐只 HTTP。
+
+    ⚠️ 按 `date_stamp` 精确匹配（与写口 `day_stamp` 同一口径），不是字符串 `date`。
+    """
+    coll = (_db() if db is None else db)[REALITY_FEAT_DAY_COLL]
+    q = {'date_stamp': day_stamp(day), field: {'$exists': True, '$ne': None}}
+    if codes is not None:
+        cs = [str(c).strip()[:6] for c in codes if str(c).strip()]
+        if not cs:
+            return {'day': day_date(day), 'field': field, 'covered': 0,
+                    'codes': set()}
+        q['code'] = {'$in': cs}
+    have = set(coll.distinct('code', q))
+    return {'day': day_date(day), 'field': field,
+            'covered': len(have), 'codes': have}
+
+
 def turnover_rows(rows, src_field, dst_field, created_at=None) -> tuple:
     """某个源的源行 → `stock_reality_feat_day` 文档列表。
 

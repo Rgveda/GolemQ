@@ -22,15 +22,14 @@ import pandas as pd
 
 from GolemQ.analysis.pivot import causal_pivot_count
 from GolemQ.analysis.zen import calc_zen_timing_lag
-from GolemQ.core.constants import AKA, MARKET_TYPE
+from GolemQ.core.constants import AKA, FIELD as FLD, MARKET_TYPE
 from GolemQ.pipeline.base import BasePipeline, CodeResult
 from GolemQ.pipeline.review.pipeline import ReviewPipeline, ReviewOptions
 from GolemQ.pipeline.review.runtime import compute_runtime
-from GolemQ.pipeline.review.contract import (DAY_COLUMNS, HOUR_EXTRA_COLUMNS,
-                                             MINOR_COLUMNS, MINOR_15MIN_COLUMNS)
+from GolemQ.pipeline.review.contract import (DAY_COLUMNS, MINOR_COLUMNS,
+                                             MINOR_15MIN_COLUMNS)
 from GolemQ.pipeline.review.steps.daily import (daily_snapshot_step,
                                                 day_core_step)
-from GolemQ.pipeline.review.steps.hour_extra import hour_extra_step
 from GolemQ.pipeline.review.steps.minor import minor_signals_step
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, StepRunner,
                                    TIER_RUNTIME, slice_asof, target_times)
@@ -125,7 +124,7 @@ class TestRatioColumns(unittest.TestCase):
     """价格导出的列必须是 **close 相对量**，不能是绝对价位（复权断层）。"""
 
     def test_day_price_columns_are_ratios(self):
-        # >450 根才会算 RegTree（否则 rTrePrcMajR 是 NaN）
+        # >450 根才会算 RegTree（否则 rTrePrcMajD 是 NaN）
         day = _ohlc(600, freq='B', seed=31)
         as_of = day.index.get_level_values(0)[-1]
         ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
@@ -135,12 +134,46 @@ class TestRatioColumns(unittest.TestCase):
         day_core_step(ctx, [as_of])
         out = daily_snapshot_step(ctx, [as_of])
         close = float(day[AKA.CLOSE].iloc[-1])
-        for col in ('poly9MajR', 'poly9WekR', 'rTrePrcMajR'):
+        for col in ('poly9MajD', 'poly9WekD', 'rTrePrcMajD'):
             v = float(out.iloc[0][col])
             self.assertTrue(np.isfinite(v), col)
             self.assertLess(abs(v), 10.0,
                             f'{col}={v} 看起来是绝对价（close={close}），不是比值')
-        self.assertLess(abs(float(out.iloc[0]['rTreSlopMajR'])), 10.0)
+        self.assertLess(abs(float(out.iloc[0]['rTreSlopMajD'])), 10.0)
+
+    def test_renko_dummies_are_in_contract_and_restorable(self):
+        """价格列只能以 `*D` 进契约，且必须在还原表里 —— 三处共用一份定义。"""
+        from GolemQ.markets.StockCN.reality_save import PRICE_RATIO_COLUMNS
+        from GolemQ.pipeline.review.contract import RENKO_PRICE_DUMMIES
+        for base, dummy in RENKO_PRICE_DUMMIES:
+            self.assertIn(dummy, DAY_COLUMNS)
+            self.assertIn(dummy, PRICE_RATIO_COLUMNS)
+            self.assertNotIn(base, DAY_COLUMNS)
+
+    def test_day_renko_price_columns_are_ratios(self):
+        """Renko 的价格量纲列落 `*D` 比值；方向/时序列原样。D70/D72。"""
+        from GolemQ.analysis.renko_jit import available
+        if not available():
+            self.skipTest('renko numba 不可用')
+        day = _ohlc(600, freq='B', seed=31)
+        as_of = day.index.get_level_values(0)[-1]
+        ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
+                            frames={'day': day}, as_of=as_of)
+        ctx.targets['day'] = pd.DatetimeIndex([as_of])
+        ctx.targets['60min'] = pd.DatetimeIndex([as_of])
+        day_core_step(ctx, [as_of])
+        out = daily_snapshot_step(ctx, [as_of])
+        close = float(day[AKA.CLOSE].iloc[-1])
+        for col in ('renkoSpriceD', 'renkoLpriceD', 'renkosBarLbD',
+                    'renkosBarUbD', 'renkolBarLbD', 'renkolBarUbD'):
+            v = float(out.iloc[0][col])
+            self.assertTrue(np.isfinite(v), col)
+            self.assertLess(abs(v), 10.0,
+                            f'{col}={v} 看起来是绝对价（close={close}），不是比值')
+            self.assertNotIn(col[:-1], DAY_COLUMNS)   # 绝对价列不得进契约
+        for col in ('renkoSbar', 'renkoLbar', 'renkoBar', 'renkosBarLag',
+                    'renkoLbarLag', 'renkosBstLag', 'renkoLboostLag'):
+            self.assertIn(col, DAY_COLUMNS)
 
 
 class TestMinorStep(unittest.TestCase):
@@ -172,7 +205,7 @@ class TestZen(unittest.TestCase):
         T = df.index.get_level_values(0)[-3]
         full = calc_zen_timing_lag(df)
         cut = calc_zen_timing_lag(slice_asof(df, T))
-        for c in (FLD_ZEN_DASH := 'ZEN_D_LAG', 'ZEN_P_LAG'):
+        for c in (FLD.ZEN_DASH_TIMING_LAG, FLD.ZEN_PEAK_TIMING_LAG):
             self.assertEqual(float(full.loc[(T, '600519'), c]),
                              float(cut.loc[(T, '600519'), c]))
 
@@ -197,47 +230,50 @@ def _hour_frame(days=100, seed=41):
                          'amount': np.full(len(idx), 1e6)}, index=idx)
 
 
-class TestHourExtra(unittest.TestCase):
-    def test_columns_and_causality(self):
-        df = _hour_frame()
-        as_of = df.index.get_level_values(0)[-1]
-        ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
-                            frames={'60min': df}, as_of=as_of)
-        targets = target_times(df, as_of)
-        out = hour_extra_step(ctx, targets)
-        self.assertEqual(list(out.columns), list(HOUR_EXTRA_COLUMNS))
-        self.assertEqual(len(out), len(targets))
+class TestDayExtra(unittest.TestCase):
+    """D74：`se` / `ZenPivotCnt` 已移到日族，60min 不再产出。"""
 
-        cnt = out['ZenPivotCnt'].to_numpy()
+    def _ctx(self, day, hour60, as_of):
+        return ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
+                             frames={'day': day, '60min': hour60},
+                             as_of=as_of)
+
+    def test_columns_and_causality(self):
+        day = _ohlc(200, freq='B', seed=31, start='2025-01-02')
+        hour60 = _hour_frame(days=300)
+        last_day = day.index.get_level_values(0)[-1]
+        as_of = last_day + pd.Timedelta(hours=15)   # 15:00 收盘后
+        targets = target_times(day, last_day)[-20:]
+        ctx = self._ctx(day, hour60, as_of)
+        ctx.targets['day'] = targets
+        ctx.targets['60min'] = targets
+        day_core_step(ctx, targets)
+        out = daily_snapshot_step(ctx, targets)
+        self.assertIn(AKA.SAMPLE_ENTROPY, DAY_COLUMNS)
+        self.assertIn('ZenPivotCnt', DAY_COLUMNS)
+        self.assertTrue(np.isfinite(out[AKA.SAMPLE_ENTROPY]).any())
+        cnt = out['ZenPivotCnt'].to_numpy(dtype=float)
         self.assertTrue((cnt >= 0).all())
         self.assertTrue((np.diff(cnt) >= 0).all(), '中枢计数必须单调不减')
 
-        # 15:00 的 SE 有值；盘中 bar 沿用上一个 15:00 的值
-        times = pd.DatetimeIndex(targets).time
-        se = out['SE'].to_numpy()
-        self.assertTrue(np.isfinite(se[times == pd.Timestamp('15:00').time()]).any())
-        prev = np.nan
-        for t, v in zip(times, se):
-            if t == pd.Timestamp('15:00').time():
-                prev = v
-            else:
-                if np.isfinite(prev):
-                    self.assertEqual(v, prev)
-
     def test_prefix_stability(self):
-        df = _hour_frame()
-        T = df.index.get_level_values(0)[-1]
-        full = hour_extra_step(
-            ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
-                          frames={'60min': df}, as_of=T),
-            target_times(df, T))
-        cut_df = slice_asof(df, T)
-        cut = hour_extra_step(
-            ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
-                          frames={'60min': cut_df}, as_of=T),
-            target_times(cut_df, T))
+        day = _ohlc(200, freq='B', seed=31, start='2025-01-02')
+        hour60 = _hour_frame(days=300)
+        T = day.index.get_level_values(0)[-1]
+        full = self._run(day, hour60, T)
+        cut = self._run(slice_asof(day, T),
+                        slice_asof(hour60, T + pd.Timedelta(hours=15)), T)
         pd.testing.assert_frame_equal(full.tail(1), cut.tail(1),
                                       check_dtype=False)
+
+    def _run(self, day, hour60, T):
+        targets = target_times(day, T)[-1:]
+        as_of = T + pd.Timedelta(hours=15)
+        ctx = self._ctx(day, hour60, as_of)
+        ctx.targets['day'] = targets
+        ctx.targets['60min'] = targets
+        day_core_step(ctx, targets)
+        return daily_snapshot_step(ctx, targets)
 
 
 class TestCausalPivotCount(unittest.TestCase):
@@ -268,7 +304,7 @@ class TestColdstart(unittest.TestCase):
         self.assertEqual(list(full.columns), list(COLDSTART_COLUMNS))
         self.assertEqual(len(full), len(targets))
         # `garP` 若算出来，必须是**比值带**（~1），不能是绝对价位（D49）
-        _gar = full.iloc[-1].get('garP')
+        _gar = full.iloc[-1].get('garPD')
         if isinstance(_gar, (list, tuple)):
             _vals = [v for pair in _gar for v in pair]
             self.assertTrue(all(abs(v) < 20 for v in _vals),
@@ -298,8 +334,8 @@ class TestColdstart(unittest.TestCase):
         }
         out = coldstart_step(
             ctx, pd.DatetimeIndex(['2025-01-03 10:30', '2025-01-03 15:00']))
-        self.assertEqual(float(out.iloc[0]['STAGE']), 1.0, '盘中必须用上一交易日')
-        self.assertEqual(float(out.iloc[1]['STAGE']), 2.0, '15:00 用当日收盘')
+        self.assertEqual(float(out.iloc[0][AKA.STAGE]), 1.0, '盘中必须用上一交易日')
+        self.assertEqual(float(out.iloc[1][AKA.STAGE]), 2.0, '15:00 用当日收盘')
 
 
 class TestRouting(unittest.TestCase):
@@ -462,13 +498,19 @@ class TestRestorePrice(unittest.TestCase):
         from GolemQ.markets.StockCN.reality_save import restore_price_columns
         idx = pd.MultiIndex.from_tuples(
             [(pd.Timestamp('2026-01-05'), '600519')], names=['ts', 'code'])
-        df = pd.DataFrame({'poly9MajR': [1.01], 'rTreSlopMajR': [0.002],
-                           'poly9NorMajR': [0.3]}, index=idx)
+        df = pd.DataFrame({'poly9MajD': [1.01], 'rTreSlopMajD': [0.002],
+                           'poly9NorMajR': [0.3],
+                           'renkoSpriceD': [0.99], 'renkosBarUbD': [1.02]},
+                          index=idx)
         close = pd.Series([100.0], index=idx)
         out = restore_price_columns(df, close)
-        self.assertAlmostEqual(out['poly9MajR'].iloc[0], 101.0)
-        self.assertAlmostEqual(out['rTreSlopMajR'].iloc[0], 0.2)
+        # D 列保留归一化值；无后缀 base 列 = D * close
+        self.assertAlmostEqual(out['poly9MajD'].iloc[0], 1.01)
+        self.assertAlmostEqual(out['poly9Maj'].iloc[0], 101.0)
+        self.assertAlmostEqual(out['rTreSlopMaj'].iloc[0], 0.2)
         self.assertAlmostEqual(out['poly9NorMajR'].iloc[0], 0.3)   # 归一化列不动
+        self.assertAlmostEqual(out['renkoSprice'].iloc[0], 99.0)
+        self.assertAlmostEqual(out['renkosBarUb'].iloc[0], 102.0)
 
 
 class TestRuntimeNoWrites(unittest.TestCase):
@@ -497,12 +539,13 @@ class TestCLI(unittest.TestCase):
     def test_parse_review(self):
         from GolemQ.cli.__main__ import build_parser
         from GolemQ.cli.commands import pick
-        p = build_parser()
-        a = p.parse_args(['--review', '--pct-of-cores', '32',
-                          '--eval', 'fast'])
+        a = build_parser().parse_args(['--review', '--pct-of-cores', '32',
+                                       '--eval', 'fast'])
         self.assertEqual(pick(a).name, 'review-daily')
         self.assertAlmostEqual(a.pct_of_cores, 32.0)
-        b = p.parse_args(['--review-runtime', '--runtime-code', '600519'])
+        # runtime 是内部命令：只在 internal parser 里注册。
+        b = build_parser(internal=True).parse_args(
+            ['--review-runtime', '--runtime-code', '600519'])
         self.assertEqual(pick(b).name, 'review-runtime')
 
 

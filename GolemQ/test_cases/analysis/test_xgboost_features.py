@@ -43,7 +43,7 @@ class TestFeatureContract(unittest.TestCase):
             frozenset({'ZW_COEF_SN', 'ZW_COEF', 'DESINTY_CHAIN_LAG',
                        'MPWR3_MTR', 'MASS_TRD_JX_BF', 'MASS_SEMI_TRD_JX_BF',
                        'ZEN_PEAK_RET_GAR', 'ZEN_PEAK_RET_GAR_MAJOR',
-                       'MA90_CLR_RET_GAR', 'moneyflowIn', 'MONEYFLOW_IN_BF',
+                       'ma90ClrRetGar', 'moneyflowIn', 'MONEYFLOW_IN_BF',
                        'moneyflowVolume', 'moneyflowPct', 'MTM_FLOW_LAG'}))
 
     def test_replacements_are_produced_columns(self):
@@ -69,7 +69,7 @@ class TestFeatureContract(unittest.TestCase):
             F.validate_features(pd.DataFrame({'RSI': [1.0]}))
         msg = str(ctx.exception)
         self.assertIn('缺 40 列', msg)
-        self.assertIn('CCI_NORM', msg)
+        self.assertIn('cciNorm', msg)
 
     def test_validate_features_passes_with_full_contract(self):
         frame = pd.DataFrame({c: [0.0] for c in F.feature_names()})
@@ -80,12 +80,12 @@ class TestFeatureContract(unittest.TestCase):
         # 契约按存储名去重，只保留一个 legacy 键。
         self.assertEqual(F.LEGACY_TO_CANONICAL['MTM_NORM'], 'mtmNorm')
         self.assertEqual(F.LEGACY_TO_CANONICAL['MTM_NORM_MAJ'], 'mtmNormMaj')
-        self.assertEqual(F.LEGACY_TO_CANONICAL['MTM_NORM_WEK'], 'MTM_NORM_WEK')
+        self.assertEqual(F.LEGACY_TO_CANONICAL['MTM_NORM_WEK'], 'mtmNormWek')
 
     def test_feature_names_order_is_legacy_order(self):
         names = F.feature_names(include_deprecated=True)
-        self.assertEqual(names[0], 'CCI_NORM')
-        self.assertEqual(names[-1], 'MTMMA_NORM_MAJ')
+        self.assertEqual(names[0], 'cciNorm')
+        self.assertEqual(names[-1], 'mtmmaNormMaj')
 
 
 if __name__ == '__main__':

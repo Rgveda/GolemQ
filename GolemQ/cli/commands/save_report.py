@@ -31,16 +31,16 @@ def run_coverage(args) -> None:
     )
     # ⚠️ `--save-frequencies` / `--save-targets` / `--save-no-adj` 由 `save.py` 注册
     # （它们是 `--save` 家族的共用开关），这里只读不注册。
-    cov_freqs = ([x.strip() for x in args.save_frequencies.split(',') if x.strip()]
-                 if args.save_frequencies else ('day',))
+    cov_freqs = ([x.strip() for x in getattr(args, 'save_frequencies', '').split(',') if x.strip()]
+                 if getattr(args, 'save_frequencies', '') else ('day',))
     if any(f != 'day' for f in cov_freqs):
         print('[coverage] 含分钟线核对，代价高一个量级（每个 code 要 distinct 一遍）——'
               ' 可以再用 --save-frequencies 缩小范围')
-    cov_targets = ([x.strip() for x in args.save_targets.split(',') if x.strip()]
-                   if args.save_targets else None)
+    cov_targets = ([x.strip() for x in getattr(args, 'save_targets', None).split(',') if x.strip()]
+                   if getattr(args, 'save_targets', None) else None)
     print(format_kline_status(kline_status(
         targets=cov_targets, frequencies=cov_freqs,
-        with_adj=(not args.save_no_adj) and (cov_targets is None or 'stock' in cov_targets),
+        with_adj=(not getattr(args, 'save_no_adj', False)) and (cov_targets is None or 'stock' in cov_targets),
         verbose=args.verbose)))
     if '1min' in cov_freqs:
         print(roots_check('stock_1min', verbose=False))
@@ -53,6 +53,8 @@ def run_status(args) -> None:            # noqa: ARG001 约定签名
 
 
 SAVE_COVERAGE = Command('save-coverage', ('save_coverage',),
-                        add_coverage_arguments, run_coverage)
+                        add_coverage_arguments, run_coverage,
+                        internal_only=True)
 SAVE_STATUS = Command('save-status', ('save_status',),
-                      add_status_arguments, run_status)
+                      add_status_arguments, run_status,
+                      internal_only=True)

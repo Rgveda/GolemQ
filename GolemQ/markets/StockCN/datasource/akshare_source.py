@@ -55,7 +55,7 @@ from GolemQ.datasource.base import (
 ETF_COLUMN_MAP = {
     '代码': 'code',
     '名称': 'name',
-    '昨收': 'last_close',
+    '昨收': 'lastClose',
     '成交量': 'volume',
     '成交额': 'amount',
     '换手率': 'turnover_rate',

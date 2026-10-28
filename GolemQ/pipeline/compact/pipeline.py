@@ -11,6 +11,7 @@ from typing import Iterable, Optional
 import pandas as pd
 
 from GolemQ.analysis.compact import COMPACT_COLUMNS, calc_compact_features
+from GolemQ.markets.StockCN.date_utils import GQ_util_get_last_day
 from GolemQ.models.alias import PFL
 from GolemQ.pipeline.base import BasePipeline, CodeResult
 
@@ -36,37 +37,73 @@ class CompactPipeline(BasePipeline):
         from GolemQ.markets.StockCN.symbol import is_stock_cn
         return is_stock_cn(str(code))[1]
 
-    def _fetch_frames(self, code: str, as_of: pd.Timestamp):
-        """读 60min（必需）+ day（可选），一律走 Active Market。"""
+    @staticmethod
+    def _fetch_frames(code: str, as_of: pd.Timestamp):
+        """读 60min（必需）+ day（可选），一律走 Active Market。
+
+        :returns: ``(m60, day, display_name)`` —— 无 60min 数据时 ``day`` 为 None。
+        """
         from GolemQ import get_active_market
         market = get_active_market()
         end = str(as_of.date())
         min_start = str((as_of - pd.Timedelta(days=MIN_LOOKBACK_DAYS)).date())
         day_start = str((as_of - pd.Timedelta(days=DAY_LOOKBACK_DAYS)).date())
 
-        res60, _ = market.get_kline_price_min(
+        res60, display_name = market.get_kline_price_min(
             code, start=min_start, end=end + ' 23:59:59',
             frequency='60min', realtime=False, verbose=False)
         m60 = None if res60 is None else getattr(res60, 'data', None)
         if m60 is None or len(m60) == 0:
-            return m60, None
+            return m60, None, display_name
 
         resd, _ = market.get_kline_price_v3(
             code, start=day_start, end=end, realtime=False, verbose=False)
         day = None if resd is None else getattr(resd, 'data', None)
         if day is not None and len(day) == 0:
             day = None
-        return m60, day
+        return m60, day, display_name
+
+    @staticmethod
+    def calc_features(code: str, offset: str = '', verbose: bool = False,
+                      ret_meta: bool = False):
+        """单码 compact 特征的**研究入口**（Jupyter / 脚本）。
+
+        范式同老树 cookbook 的
+        ``calc_stock_poolcoef_analysis(symbol, offset=..., ret_meta=True)`` ——
+        取数与计算一次完成，返回整段历史，由调用方自取 ``.tail(n)``：
+
+            features = CompactPipeline.calc_features('600519')
+            ohlc, features, display_name = CompactPipeline.calc_features(
+                '600519', offset='2026-10-20', ret_meta=True)
+
+        ⚠️ **只读**：不落库、不写 watermark、不做实时合并。默认取最近交易日。
+
+        :param code: 股票代码。
+        :param offset: 截止日期 ``'YYYY-MM-DD'``；空串 ⇒ 最近交易日。
+        :param verbose: 打印计算明细。
+        :param ret_meta: True ⇒ 返回 ``(ohlc, features, display_name)``。
+        :returns: 特征 DataFrame；``ret_meta=True`` 时为三元组。
+            无 60min 数据时返回 ``None`` / ``(None, None, None)``。
+        """
+        as_of = (pd.Timestamp(offset) if offset
+                 else pd.Timestamp(GQ_util_get_last_day()))
+        m60, day, display_name = CompactPipeline._fetch_frames(code, as_of)
+        if m60 is None or len(m60) == 0:
+            return (None, None, None) if ret_meta else None
+        features = calc_compact_features(m60, ohlc_day=day, include_rank=True,
+                                         verbose=verbose)
+        if ret_meta:
+            return m60, features, display_name
+        return features
 
     def run_code(self, code: str, as_of=None, **kwargs) -> CodeResult:
         market_type = self.market_type_of(code)
         if as_of is None:
-            from GolemQ.markets.StockCN.date_utils import GQ_util_get_last_day
             as_of = pd.Timestamp(GQ_util_get_last_day())
         else:
             as_of = pd.Timestamp(as_of)
 
-        m60, day = self._fetch_frames(code, as_of)
+        m60, day, _ = self._fetch_frames(code, as_of)
         if m60 is None or len(m60) == 0:
             return CodeResult(code=code, status='no_data',
                               error='no 60min data', market_type=market_type)

@@ -1,6 +1,6 @@
 ﻿# ChartScan 一键启动 —— Windows Terminal 里开 1 个服务端标签页 + 4 个客户端标签页。
 #
-#   powershell -ExecutionPolicy Bypass -File Y:\Projects\GolemQ\chartscan.ps1
+#   powershell -ExecutionPolicy Bypass -File <repo>\chartscan.ps1
 #
 # ⚠️ 两个曾经踩过的坑（2026-10-17 实测）：
 #

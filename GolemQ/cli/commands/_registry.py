@@ -90,6 +90,10 @@ class Command:
     needs_db: bool = True
     #: 命中判据，逐个 flag 调。默认 `bool` = 真值判据（等价老链 `elif args.X:`）。
     is_set: Callable = bool
+    #: ``True`` = 整条命令**只在 internal 入口**注册（`python -m GolemQ.cli.internal`）。
+    #: 用户入口 `build_parser()` 会跳过它的 `add_arguments` —— `--help` 里看不到，
+    #: 直接敲也会是 argparse 的 unrecognized。
+    internal_only: bool = False
 
     def matches(self, args) -> bool:
         return any(self.is_set(getattr(args, f, None)) for f in self.flags)

@@ -38,11 +38,15 @@ from GolemQ.cli.commands._registry import Command
 #: 走 `mark('turnover', DONE)`，不额外打印，与真实成功路径同形）。
 _NO_TURNOVER = unittest.mock.patch(
     'GolemQ.markets.StockCN.metadata_save.refresh_turnover', return_value={})
-#: 同一段的**第二件事**：`run_save` 的「元数据」段现在还抓**资金流**（同花顺，走**真网络
-#: HTTP**）。用例测的是复权闸/banner，与它无关 ⇒ 一并 patch
-#: （返回 `{'written': 1}` ⇒ `mf_ok=True` ⇒ banner 点白，与真实成功路径同形）。
+#: 同一段的**第二件事**：`run_save` 的「元数据」段现在还抓**资金流**（同花顺）与
+#: **千股千评**（东财），两者都走**真网络 HTTP**。用例测的是复权闸/banner，
+#: 与它们无关 ⇒ 一并 patch（返回 `{'written': 1}` ⇒ banner 点白，同真实成功路径）。
 _NO_MONEYFLOW = unittest.mock.patch(
-    'GolemQ.markets.StockCN.moneyflow_save.save_moneyflow', return_value={'written': 1})
+    'GolemQ.markets.StockCN.crawler.moneyflow.save_moneyflow', return_value={'written': 1})
+#: 同一段的**第四件事**：牛股诊股（同花顺**逐只** HTTP，全市场 20–40 分钟）——
+#: 用例若不 patch，一条 `--save tdx` 用例就会真抓 5000 只。
+_NO_DIAGNOSIS = unittest.mock.patch(
+    'GolemQ.markets.StockCN.crawler.diagnosis.save_diagnosis', return_value={'written': 1})
 
 
 class TestCommandRegistry(unittest.TestCase):
@@ -57,8 +61,11 @@ class TestCommandRegistry(unittest.TestCase):
     def test_every_flag_is_a_real_argparse_dest(self):
         """`FLAGS` 里的名字必须是 parser 真会产出的属性 —— 打错一个字母
         就是**静默永不命中**（命令打了没反应，也不报错）。"""
-        args = build_parser().parse_args([])
+        public = build_parser().parse_args([])
+        internal = build_parser(internal=True).parse_args([])
         for cmd in COMMANDS:
+            # 内部命令只在 internal parser 里有属性 —— 用对应的 parser 查。
+            args = internal if cmd.internal_only else public
             for flag in cmd.flags:
                 with self.subTest(command=cmd.name, flag=flag):
                     self.assertTrue(hasattr(args, flag),
@@ -73,6 +80,44 @@ class TestCommandRegistry(unittest.TestCase):
         """⚠️ **顺序即语义**：两个开关同时给时，老链选 coverage。"""
         names = [c.name for c in COMMANDS]
         self.assertLess(names.index('save-coverage'), names.index('save'))
+
+
+class TestInternalFlags(unittest.TestCase):
+    """测试/调试旗子**不许出现在用户入口**（用户 2026-10-23 定）。"""
+
+    def test_public_parser_hides_internal_flags(self):
+        from GolemQ.cli.__main__ import build_parser
+        from GolemQ.cli.commands._internal import INTERNAL_DESTS
+
+        public = {a.dest for a in build_parser()._actions}
+        internal = {a.dest for a in build_parser(internal=True)._actions}
+        self.assertFalse(public & set(INTERNAL_DESTS),
+                         '用户 parser 里出现了内部旗子：{}'.format(public & set(INTERNAL_DESTS)))
+        self.assertTrue(set(INTERNAL_DESTS) <= internal,
+                        'internal parser 缺内部旗子：{}'.format(
+                            set(INTERNAL_DESTS) - internal))
+
+    def test_internal_only_commands_are_absent_from_public(self):
+        """整条内部命令（coverage/status/metadata-align/runtime/migrate-*）都不许露面。"""
+        public = {a.dest for a in build_parser()._actions}
+        internal = {a.dest for a in build_parser(internal=True)._actions}
+        for cmd in COMMANDS:
+            if not cmd.internal_only:
+                continue
+            for flag in cmd.flags:
+                with self.subTest(command=cmd.name, flag=flag):
+                    self.assertNotIn(flag, public,
+                                     '{} 是内部命令，用户 parser 不该有 {}'.format(
+                                         cmd.name, flag))
+                    self.assertIn(flag, internal,
+                                  'internal parser 缺 {} 的 {}'.format(cmd.name, flag))
+
+    def test_public_parser_rejects_review_limit(self):
+        """用户入口连「接受但隐藏」都不做 —— 直接 unrecognized。"""
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf), self.assertRaises(SystemExit):
+            build_parser().parse_args(['--review', '--eval', 'fast',
+                                       '--review-limit', '5'])
 
 
 class TestMatchSemantics(unittest.TestCase):
@@ -277,7 +322,9 @@ class TestXdxrRefreshGate(unittest.TestCase):
     """
 
     def _drive(self, argv, *, gate_open):
-        args = build_parser().parse_args(argv)
+        # `--save-codes` 是内部旗子 —— 本类驱动的正是「限定 code 不许开闸」，
+        # 所以必须用 internal parser（用户入口不注册它）。
+        args = build_parser(internal=True).parse_args(argv)
         calls = {'xdxr': [], 'marked': [], 'out': ''}
         from GolemQ.markets.StockCN import kline_save as ks
         from GolemQ.markets.StockCN import refdata_save as rs
@@ -291,6 +338,7 @@ class TestXdxrRefreshGate(unittest.TestCase):
         with contextlib.redirect_stdout(buf), \
                 _NO_TURNOVER, \
                 _NO_MONEYFLOW, \
+                _NO_DIAGNOSIS, \
                 unittest.mock.patch.object(rs, 'save_refdata', return_value={}), \
                 unittest.mock.patch.object(ks, 'save_kline_tdx',
                                            return_value={'kline': {}, 'universe': {}}), \
@@ -362,7 +410,8 @@ class TestAdjNodeMarking(unittest.TestCase):
 
     def _marks(self, events_changed, *, no_adj=False, gate=False):
         """跑一次 `run_save`，记下每个节点的 `mark` 序列。"""
-        args = build_parser().parse_args(['--save', 'pytdx'] + (['--save-no-adj'] if no_adj else []))
+        args = build_parser(internal=True).parse_args(
+              ['--save', 'pytdx'] + (['--save-no-adj'] if no_adj else []))
         marked = []
         from GolemQ.core import presentation
         from GolemQ.markets.StockCN import kline_save as ks
@@ -378,6 +427,7 @@ class TestAdjNodeMarking(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), \
                 _NO_TURNOVER, \
                 _NO_MONEYFLOW, \
+                _NO_DIAGNOSIS, \
                 unittest.mock.patch.object(presentation, 'Banner', _Spy), \
                 unittest.mock.patch.object(rs, 'save_refdata', return_value={}), \
                 unittest.mock.patch.object(ks, 'save_kline_tdx',
@@ -454,6 +504,7 @@ class TestSaveStageStartDoneLines(unittest.TestCase):
         with contextlib.redirect_stdout(buf), \
                 _NO_TURNOVER, \
                 _NO_MONEYFLOW, \
+                _NO_DIAGNOSIS, \
                 unittest.mock.patch.object(presentation, 'ansi_enabled', return_value=False), \
                 unittest.mock.patch.object(rs, 'save_refdata', **kw), \
                 unittest.mock.patch.object(ks, 'save_kline_tdx',
@@ -533,8 +584,11 @@ class TestMetadataLogLabel(unittest.TestCase):
                     'GolemQ.markets.StockCN.metadata_save.refresh_turnover',
                     return_value=turnover), \
                 unittest.mock.patch(
-                    'GolemQ.markets.StockCN.moneyflow_save.save_moneyflow',
+                    'GolemQ.markets.StockCN.crawler.moneyflow.save_moneyflow',
                     return_value=moneyflow), \
+                unittest.mock.patch(
+                    'GolemQ.markets.StockCN.crawler.diagnosis.save_diagnosis',
+                    return_value={'written': 1}), \
                 unittest.mock.patch.object(rs, 'save_refdata', return_value={}), \
                 unittest.mock.patch.object(ks, 'save_kline_tdx',
                                            return_value={'kline': {}, 'universe': {}}), \
@@ -561,6 +615,12 @@ class TestMetadataLogLabel(unittest.TestCase):
                         moneyflow={'written': 0, 'error': 'boom'})
         self.assertIn('[reality_feat_day] 资金流本次未落库', out)
         self.assertNotIn('[metadata_day]', out)
+
+    def test_metadata_banner_lists_four_sources(self):
+        """用户 2026-10-22：元数据行要含千股千评与牛股诊股，不只是 turnover/moneyflow。"""
+        out = self._run(turnover={}, moneyflow={'written': 1})
+        for name in ('turnover', 'moneyflow', 'eastmoney', 'diagnosis'):
+            self.assertIn(name, out)
 
 
 class TestFillTurnoverCli(unittest.TestCase):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""`markets/StockCN/moneyflow_save.py` —— 两个源的行构造与单位换算。
+"""`markets/StockCN/crawler/moneyflow.py` —— 两个源的行构造与单位换算。
 
 为什么这份用例值得存在
 ======================
@@ -28,7 +28,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from GolemQ.core.constants import FIELD as FLD
-from GolemQ.markets.StockCN import moneyflow_save as M
+from GolemQ.markets.StockCN.crawler import moneyflow as M
 
 
 class TestScalarParsers(unittest.TestCase):
@@ -78,6 +78,35 @@ def _ths_frame():
         '净额': ['6.04亿', '-2.10亿', '2098.28万'],
         '成交额': ['44.53亿', '11.52亿', '7.23亿'],
     })
+
+
+class TestShortCircuit(unittest.TestCase):
+    """同一交易日已覆盖 >=90% 时不再抓取/落库（用户 2026-10-22 要求）。"""
+
+    def test_skips_when_day_covered(self):
+        with patch.object(M, 'last_trade_day', return_value='2026-10-09'), \
+                patch.object(M, '_stock_universe_size', return_value=5000), \
+                patch.object(M, 'metadata_covered', return_value={'covered': 5000}), \
+                patch.object(M, 'fetch_eastmoney_comment') as fetch:
+            out = M.save_moneyflow(source='eastmoney', verbose=False)
+        fetch.assert_not_called()
+        self.assertTrue(out['skipped'])
+        self.assertEqual(out['written'], 0)
+
+    def test_partial_coverage_still_fetches(self):
+        """上一次半途失败只写了 100 只 —— 不到阈值，必须继续抓（不能留洞）。"""
+        with patch.object(M, 'last_trade_day', return_value='2026-10-09'), \
+                patch.object(M, '_stock_universe_size', return_value=5000), \
+                patch.object(M, 'metadata_covered', return_value={'covered': 100}), \
+                patch.object(M, 'fetch_eastmoney_comment',
+                             return_value=_em_frame()) as fetch, \
+                patch.object(M, '_db', return_value=object()), \
+                patch('GolemQ.markets.StockCN.reality_save.save_reality_feat',
+                      return_value={'written': 3, 'upserted': 3, 'modified': 0}):
+            out = M.save_moneyflow(source='eastmoney', verbose=False)
+        fetch.assert_called_once()
+        self.assertFalse(out['skipped'])
+        self.assertEqual(out['written'], 3)
 
 
 class TestEastmoneyRows(unittest.TestCase):
@@ -165,6 +194,15 @@ class TestSaveFrame(unittest.TestCase):
     `frame.loc[:, keep]` 出现重复列 ⇒ `set_index(['date','code'])`
     报 `Length mismatch: Expected axis has N elements, new values have 2`。
     """
+
+    def setUp(self):
+        # 本类用 `source='ths'`，本不走短路闸；但模块导入面保持 hermetic：
+        # 万一将来 ths 也接闸，测试不能突然去读真库。
+        for target, ret in (('metadata_covered', {'covered': 0}),
+                            ('_stock_universe_size', 0)):
+            p = patch.object(M, target, return_value=ret)
+            p.start()
+            self.addCleanup(p.stop)
 
     def test_frame_has_unique_index_and_columns(self):
         with patch.object(M, 'fetch_ths_fundflow', return_value=_ths_frame()), \

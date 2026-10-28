@@ -1,5 +1,5 @@
 # coding:utf-8
-"""`--metadata-align` —— `stock_reality_feat_day` 对 K 线的**覆盖率报告**（只读）。
+"""`--metadata-align` —— `stock_reality_feat_day` 对 K 线的**覆盖率报告**（只读；internal 命令）。
 
 旧树是 `cli/__main__.py:426` 的 `--stock-min-aligned` 分支（调
 `markets/StockCN/align.py::stock_min_aligned`）。⚠️ **不是照搬** ——
@@ -76,4 +76,5 @@ METADATA_ALIGN = Command(
     flags=('metadata_align',),
     add_arguments=add_metadata_align_arguments,
     run=run_metadata_align,
+    internal_only=True,
 )

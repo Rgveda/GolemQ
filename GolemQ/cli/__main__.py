@@ -56,8 +56,14 @@ from GolemQ.cli.commands._registry import bind_parser
 copyright_infos = bootstrap.copyright_infos
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """建 parser：全局开关 + 每条命令自己的参数。"""
+def build_parser(internal: bool = False) -> argparse.ArgumentParser:
+    """建 parser：全局开关 + 每条命令自己的参数。
+
+    :param internal: ``True`` 时额外注册**仅测试/调试用**的旗子
+        （`cli/commands/_internal.py`）。用户入口（``main()``）恒为 ``False``；
+        内部入口是 ``python -m GolemQ.cli.internal``。
+        ⚠️ 测试要小样本请直接调 `run_*(args)` / pipeline 函数，**别为此加旗子**。
+    """
     parser = argparse.ArgumentParser(
         description="GolemQ 命令行工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -104,14 +110,23 @@ def build_parser() -> argparse.ArgumentParser:
                         help="起始日期 YYYY-MM-DD（由命令自行解释）。")
 
     for cmd in COMMANDS:
+        # 整条命令只在 internal 入口出现（`--save-coverage` / `--migrate-*` /
+        # `--metadata-align` / `--review-runtime` 等）。用户入口连参数都不注册。
+        if cmd.internal_only and not internal:
+            continue
         cmd.add_arguments(parser)
+
+    if internal:
+        # **仅内部入口**：测试/调试旗子（`--review-limit` / `--migrate-limit`）。
+        from GolemQ.cli.commands._internal import add_internal_arguments
+        add_internal_arguments(parser)
 
     # 钉住 —— 给 `usage_error()` 用（它要打与 argparse 同形的 usage 行）
     bind_parser(parser)
     return parser
 
 
-def main() -> None:
+def main(internal: bool = False) -> None:
     """主函数：处理命令行参数"""
     # ① **身份块**（产品名 + 本次运行的时刻戳 + 版权行 + 空行）：**在 `parse_args()`
     #    之前** —— 所以 `--help` 与用法错误上也看得见。
@@ -121,7 +136,7 @@ def main() -> None:
     #    （环境自检 / 数据源 / 参考数据 / K线 / 复权）跨它们对齐成一列。
     bootstrap.print_identity()
 
-    parser = build_parser()
+    parser = build_parser(internal=internal)
     args = parser.parse_args()
 
     # 先认得是哪条命令 —— 自检的**严格度**取决于它：`--setup` / `--mongodb-init`

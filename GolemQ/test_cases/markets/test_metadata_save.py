@@ -33,8 +33,8 @@ import unittest
 from GolemQ.datasource.writer import upsert_fields
 from GolemQ.markets.StockCN.metadata_save import (
     MAX_TURNOVER_RATIO, REALITY_FEAT_DAY_COLL, SOURCES, TURNOVER_BS, TURNOVER_DC,
-    UNIQUE_KEYS, _date_range, day_date, day_stamp, fill_turnover, metadata_day_doc,
-    turnover_from_volume, turnover_rows,
+    UNIQUE_KEYS, _date_range, day_date, day_stamp, fill_turnover,
+    metadata_covered, metadata_day_doc, turnover_from_volume, turnover_rows,
 )
 
 
@@ -347,6 +347,40 @@ class TestFillTurnover(unittest.TestCase):
     def test_no_codes_is_a_usage_error(self):
         with self.assertRaises(ValueError):
             fill_turnover([])
+
+
+class TestMetadataCovered(unittest.TestCase):
+    """短路判断的读口：按 `date_stamp` 精确取已覆盖的 code。"""
+
+    class _Coll:
+        def __init__(self):
+            self.query = None
+        def distinct(self, field, query):
+            self.query = query
+            return ['600519', '000001']
+
+    def test_counts_distinct_codes_for_the_stamp(self):
+        coll = self._Coll()
+        out = metadata_covered('TechScr', '2026-10-09',
+                               db={REALITY_FEAT_DAY_COLL: coll})
+        self.assertEqual(out['covered'], 2)
+        self.assertEqual(out['codes'], {'600519', '000001'})
+        self.assertEqual(out['day'], '2026-10-09')
+        self.assertEqual(coll.query['date_stamp'], day_stamp('2026-10-09'))
+        self.assertEqual(coll.query['TechScr'], {'$exists': True, '$ne': None})
+
+    def test_subset_adds_code_filter(self):
+        coll = self._Coll()
+        metadata_covered('TechScr', '2026-10-09', codes=['600519.SH'],
+                         db={REALITY_FEAT_DAY_COLL: coll})
+        self.assertEqual(coll.query['code'], {'$in': ['600519']})
+
+    def test_empty_codes_short_circuits_without_query(self):
+        coll = self._Coll()
+        out = metadata_covered('TechScr', '2026-10-09', codes=[],
+                               db={REALITY_FEAT_DAY_COLL: coll})
+        self.assertEqual(out['covered'], 0)
+        self.assertIsNone(coll.query)
 
 
 if __name__ == '__main__':

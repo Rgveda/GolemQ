@@ -430,8 +430,13 @@ class TestDayBaselineTodayFallback(unittest.TestCase):
     def _run(self, responses, start=None, end=None):
         from GolemQ.analysis.cv import predict
         fake = _FakeMarket(responses)
+        # ⚠️ `_merge_realtime` 会读**真实**实时库（`realtime_YYYY-MM-DD`）——
+        # 盘中一旦那天的集合存在，用例的 `len(data)` 就随库里的数据变化
+        # （2026-10-22 实测：单日用例拿到 2 行）。这里是取数回退的用例，
+        # 不测实时合并，钉成 no-op 才与库状态无关。
         with mock.patch('GolemQ.core.market_registry.get_active_market',
                         return_value=fake), \
+                mock.patch('GolemQ.markets.StockCN.kline83._merge_realtime'), \
                 mock.patch.object(predict, '_last_day', return_value=self.TODAY):
             data, name = predict._fetch('600519', 'day',
                                         start or self.TODAY, end or self.TODAY, 'qfq')

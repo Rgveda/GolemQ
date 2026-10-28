@@ -60,7 +60,7 @@ from .commands._registry import EXIT_FAILURE
 #: pandas / numpy / pymongo（2026-10-09 实测 `sys.modules`），所以「pandas 没装 →
 #: 自检自己先崩、红点变堆栈」这条路**走不到**。版本不达（如 pandas 2.2.3 < 2.3）
 #: 才是真实场景 —— 那时 pandas 在、导入照样成功，红点报得出来。
-from GolemQ.core.presentation import FAIL, OK, PENDING, WARN
+from GolemQ.core.presentation import FAIL, OK, PENDING, WARN, status_line
 
 #: 版权行 —— `cli/__main__.py` 每次运行都打（转出到这里，别处不要再抄一份）。
 copyright_infos = ("Copyright (c) 2018-2026 azai/Rgveda/GolemQ(uant)"
@@ -420,7 +420,7 @@ def check_cpu():
     """``(状态, 说明)``：厂商 · 物理核/逻辑线程 · 有无超线程 · 是否混合大小核。
 
     **为什么值得看**：本项目所有并发数都是**硬编码**的（`kline_save.DEFAULT_JOBS=4`、
-    `tdx_hosts.PROBE_WORKERS=16`、`--save-jobs` 默认 4），**没有一处**读 CPU 数
+    `tdx_hosts.PROBE_WORKERS=16`、internal 入口的 `--save-jobs` 默认 4），**没有一处**读 CPU 数
     （2026-10-09 全树核实：`cpu_count` 零命中）。所以这条**不承重**，它的价值在于
     一旦将来要按核数调 `jobs`，屏上先有一份可信的拓扑 —— 尤其**混合大小核**机器，
     按「逻辑核数」开线程会开到 12 颗 E-core 上去。
@@ -804,6 +804,7 @@ def check_environment(verbose=False, strict=False):
     from GolemQ.core.presentation import ansi_enabled, stamp_done
     from GolemQ.core.presentation import Banner
 
+    color = ansi_enabled()
     packages = check_packages()
     results = run_checks(packages=packages)
     notes = _notes()
@@ -820,22 +821,37 @@ def check_environment(verbose=False, strict=False):
     for node, state, lines in results:
         banner.mark(node, state)
         if verbose:
-            for line in lines:
-                banner.echo('{}: {}'.format(node, line))
+            if node == '依赖包':
+                # ⚠️ **逐包**打勾 —— 节点红只表示「至少一个不过」，
+                # 不能把整段都标 ✗（用户 2026-10-23 实报：只有 pandas 不过）。
+                for ok_pkg, line in packages:
+                    banner.echo(status_line(
+                        ok_pkg, '{}: {}'.format(node, line), color))
+            else:
+                for line in lines:
+                    banner.echo('{}: {}'.format(node, line))
     for label, detail, _bad in notes:
         if verbose:
             banner.echo('{}: {}'.format(label, detail))
     banner.close()          # ← 之后才允许 print（光标已在 banner 区域之下）
     # 收尾行**必须在 close() 之后** —— banner 活着时 print 会打乱它的行数记账（P22）。
     # 灰色只在真 TTY 上（非 TTY 里掺转义码是本项目颜色规则的第一条禁忌）。
-    print(stamp_done('bootstrap', color=ansi_enabled()), flush=True)
+    print(stamp_done('bootstrap', color=color), flush=True)
 
     failed = [node for node, state, _ in results
               if state == FAIL and node in ENV_GATE_NODES]
     if failed:
-        # 非 verbose 下屏上只有一个红点，必须把「为什么」补出来（不然等于没说）
+        # 非 verbose 下屏上只有一个红点，必须把「为什么」补出来（不然等于没说）。
+        # ⚠️ 依赖包**逐行**按各自的 ok 打勾 —— 只有 pandas 不过时，
+        # numpy/polars 等必须是 ✓，不能整段标 ✗（2026-10-23 用户实报）。
         for node, state, lines in results:
-            if node in failed:
+            if node not in failed:
+                continue
+            if node == '依赖包':
+                for ok_pkg, line in packages:
+                    print(status_line(
+                        ok_pkg, '{}: {}'.format(node, line), color), flush=True)
+            else:
                 for line in lines:
                     print('✗ {}: {}'.format(node, line), flush=True)
         if strict:

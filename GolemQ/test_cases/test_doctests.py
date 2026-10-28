@@ -104,7 +104,10 @@ DOCTEST_MODULES = (
     # 资金流/千股千评的行构造与单位换算：`to_code`（int 陷阱）、
     # `parse_cn_amount`（`'3.72亿'`）、`parse_pct`（`'20.02%'`）、
     # `metadata_day_doc_multi`（多列文档）都是纯函数。
-    'GolemQ.markets.StockCN.moneyflow_save',
+    'GolemQ.markets.StockCN.crawler.moneyflow',
+    # 牛叉诊股的**页面解析** `parse_diagnosis`：纯字符串 → 数值字典，不碰网络
+    # （`fetch_diagnosis` 的 requests 在函数内）。
+    'GolemQ.markets.StockCN.crawler.diagnosis',
     # 元数据对 K 线的对齐：`align_metadata_frame` 是纯 pandas，无 DB。
     'GolemQ.markets.StockCN.metadata_align',
     # RENKO 的 jit 版：`bricks_directions` 与 `evaluate_renko_jit` 是纯 numpy in/out。

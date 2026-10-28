@@ -4,7 +4,7 @@
 用户 2026-10-19 定：只合模型层实际读取、纯 K 线可算的部分，**不接**东财/同花顺/
 massive；且**不再单独写 `*_coldstart_reviews`** —— 冷启动列合并进
 `*_reality_feat_60min`（同一张 60min 快照表，避免两套真相）。
-`STAGE / BOOTSTRAP / m9t / m9tLag` 由 `hour_legacy` step 提供。
+`STAGE / BOOTSTRAP / m9t` 由 `_coldstart_row`（日线 `_core_daily`）产出。
 
 ⚠️ 与老树的两处**刻意差异**：
 
@@ -76,7 +76,7 @@ def _core_daily(day: pd.DataFrame, feats: pd.DataFrame = None) -> pd.DataFrame:
     if FLD.HMA10 not in feats.columns:
         feats[FLD.HMA10] = TA_HMA(typical.to_numpy(), 10)
 
-    # `EP_STG_BF` 的两个前置（老树 `fractal/vXII.py:658-660`）：
+    # `epStgBf` 的两个前置（老树 `fractal/vXII.py:658-660`）：
     #   DEA_O_LAG          = DEA 的金叉/死叉时序
     #   MACD_JX_BF         = DIF 上穿 DEA 后的 bar 数（CROSS + Timeline_duration）
     dif, dea, _macd = calc_macd_qa(close)
@@ -109,7 +109,7 @@ def _core_daily(day: pd.DataFrame, feats: pd.DataFrame = None) -> pd.DataFrame:
             for c in (FLD.POLYNOMIAL9_MAJOR, FLD.POLYNOMIAL9_NORM_MAJOR):
                 feats[c] = np.nan
 
-    # `EP_STG_BF`（老树 `features/reviews.py:670`）：GAR 净空 < 0.927 且
+    # `epStgBf`（老树 `features/reviews.py:670`）：GAR 净空 < 0.927 且
     # DEA 时序 < MACD 金叉时序 ⇒ 端点阶段计数。
     _clear = pd.to_numeric(feats.get(FLD.GARIDENT_PRICE_CLEARANCE,
                                      pd.Series(np.nan, index=feats.index)),
@@ -180,24 +180,24 @@ def _coldstart_row(day: pd.DataFrame, feats: pd.DataFrame = None) -> dict:
         if _anchor_close is not None and not pd.isna(_anchor_close):
             _gar_ratio = garident_bands_to_ratio(_bands, float(_anchor_close))
     return {
-        'STAGE': last.get(AKA.STAGE, np.nan),
-        'BST_STG_BF': last.get(FLD.BOOTSTRAP_STAGE_BEFORE, np.nan),
-        'EP_STG_BF': last.get(FLD.ENDPOINT_STAGE_BEFORE, np.nan),
-        'garP': _gar_ratio,
+        AKA.STAGE: last.get(AKA.STAGE, np.nan),
+        FLD.BOOTSTRAP_STAGE_BEFORE: last.get(FLD.BOOTSTRAP_STAGE_BEFORE, np.nan),
+        FLD.ENDPOINT_STAGE_BEFORE: last.get(FLD.ENDPOINT_STAGE_BEFORE, np.nan),
+        FLD.GARIDENT_PRICE_DUMMY: _gar_ratio,
         'garPCount': last.get(FLD.GARIDENT_PRICE_COUNT, np.nan),
         'garPClr': last.get(FLD.GARIDENT_PRICE_CLEARANCE, np.nan),
         'garPAnchor': _anchor,
         'garSLag': last.get(FLD.GARIDENT_STAGE_TIMING_LAG, np.nan),
         'm9t': last.get(FLD.MAGIC_NINE_TURNS, np.nan),
         'm9tMaj': last.get(FLD.MAGIC_NINE_TURNS_MAJOR, np.nan),
-        'poly9_MAJ': _poly9_ratio,
-        'poly9pwr3_MAJ': last.get(FLD.POLYNOMIAL9_NORM_MAJOR, np.nan),
-        'PROPHET_LB': last.get(FLD.FBPROPHET_LB, np.nan),
-        'PROPHET_UB': last.get(FLD.FBPROPHET_UB, np.nan),
-        'PROPHET_CLR_NORM': last.get(FLD.FBPROPHET_CLEARANCE_NORM, np.nan),
-        'PROPHET_LB_MAJ': last.get(FLD.FBPROPHET_LB_MAJOR, np.nan),
-        'PROPHET_UB_MAJ': last.get(FLD.FBPROPHET_UB_MAJOR, np.nan),
-        'PROPHET_CLR_NORM_MAJ': last.get(FLD.FBPROPHET_CLEARANCE_NORM_MAJOR, np.nan),
+        FLD.POLYNOMIAL9_MAJOR: _poly9_ratio,
+        FLD.POLYNOMIAL9_NORM_MAJOR: last.get(FLD.POLYNOMIAL9_NORM_MAJOR, np.nan),
+        FLD.FBPROPHET_LB_DUMMY: last.get(FLD.FBPROPHET_LB, np.nan),
+        FLD.FBPROPHET_UB_DUMMY: last.get(FLD.FBPROPHET_UB, np.nan),
+        FLD.FBPROPHET_CLEARANCE_NORM: last.get(FLD.FBPROPHET_CLEARANCE_NORM, np.nan),
+        FLD.FBPROPHET_LB_MAJOR_DUMMY: last.get(FLD.FBPROPHET_LB_MAJOR, np.nan),
+        FLD.FBPROPHET_UB_MAJOR_DUMMY: last.get(FLD.FBPROPHET_UB_MAJOR, np.nan),
+        FLD.FBPROPHET_CLEARANCE_NORM_MAJOR: last.get(FLD.FBPROPHET_CLEARANCE_NORM_MAJOR, np.nan),
     }
 
 

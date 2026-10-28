@@ -20,7 +20,8 @@ import tokenize
 import unittest
 from pathlib import Path
 
-from GolemQ.core.constants import EPOCH_DIVISOR, epoch_divisor
+from GolemQ.core.constants import (EPOCH_DIVISOR, EPOCH_UNIT_TO_SECONDS,
+                                   epoch_divisor)
 
 
 class TestTheConstantItself(unittest.TestCase):
@@ -50,20 +51,25 @@ class TestPerDtypeLookup(unittest.TestCase):
                 self.assertEqual(epoch_divisor(dtype), want)
 
     def test_tz_aware_dtype(self):
+        """tz-aware 的系数**按它自己的 unit** 查 —— pandas 2.3 是 ns、3.x 是 us。"""
         import pandas as pd
         dtype = pd.DatetimeIndex(['2026-01-05']).tz_localize('Asia/Shanghai').dtype
-        self.assertEqual(epoch_divisor(dtype), 10 ** 6)
+        self.assertEqual(epoch_divisor(dtype), EPOCH_UNIT_TO_SECONDS[dtype.unit])
 
-    def test_second_resolution_input_is_handled(self):
-        """⚠️ 就是这条当初红的：`pd.to_datetime(date 对象)` 给 `datetime64[s]`。
+    def test_date_object_input_is_handled(self):
+        """⚠️ 就是这条当初红的：`pd.to_datetime(date 对象)` 的精度**随 pandas 版本变**
+        （2.x → ns / 3.x → s 或 us）。
 
-        拿 "pandas 默认精度" 的 1e6 去除它 ⇒ `date_stamp` 变成 `1767`（实测）。
+        测试不能钉死某个 dtype —— 钉的是**生产口径**：除数按实际 dtype 查，
+        换算出来的秒值必须始终是 `1767542400`。
         """
         from datetime import date
+        import numpy as np
         import pandas as pd
         from GolemQ.markets.StockCN.kline83 import epoch_seconds
         idx = pd.to_datetime(pd.Index([date(2026, 1, 5)]))
-        self.assertEqual(str(idx.dtype), 'datetime64[s]')
+        unit = np.datetime_data(idx.dtype)[0]
+        self.assertEqual(epoch_divisor(idx.dtype), EPOCH_UNIT_TO_SECONDS[unit])
         s = pd.Series(idx).dt.tz_localize('Asia/Shanghai')
         self.assertEqual(int(epoch_seconds(s).iloc[0]), 1767542400)
 

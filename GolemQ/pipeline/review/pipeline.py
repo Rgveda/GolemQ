@@ -83,9 +83,11 @@ class ReviewPipeline(BasePipeline):
         fam = set(families)
         req = set()
         if fam & {'day'}:
-            req.add('day')
+            # 日族的 `ZenPivotCnt` 是 60min 中枢在 15:00 的取值（D74）；
+            # 日频 `se` 仍只用日线。60min 帧缺失时该列留 NaN。
+            req |= {'day', '60min'}
         if fam & {'60min'}:
-            # 60min 里的 `hour_legacy`（STAGE/BST/M9T）要从日线采样。
+            # 60min 里的 coldstart 列（STAGE/BST/M9T）要从日线采样。
             req |= {'60min', '15min', 'day'}
         if fam & {'15min'}:
             # 15min 族由 `zen_snapshots`（60min 对齐）取样，故也要 60min。
@@ -113,7 +115,14 @@ class ReviewPipeline(BasePipeline):
         for freq, key in (('60min', '60min'), ('15min', '15min')):
             if key not in want:
                 continue
-            freq_start = REVIEW_ANCHOR_15MIN if key == '15min' else min_start
+            if key == '15min':
+                freq_start = REVIEW_ANCHOR_15MIN
+            elif 'day' in want:
+                # 日族 `ZenPivotCnt` 要**全历史** 60min（D74）；只跑 60min 族时
+                # 各 step 最多用 2160 根，900 天足够。
+                freq_start = REVIEW_ANCHOR_DAY
+            else:
+                freq_start = min_start
             res, _ = market.get_kline_price_min(
                 code, start=freq_start, end=str(as_of.date()) + ' 23:59:59',
                 frequency=freq, realtime=False, verbose=False)

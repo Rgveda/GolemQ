@@ -93,5 +93,20 @@
 | `D60` | CV 链迁出市场包；行情库句柄改由 `get_database()` 中性暴露 | 2026-10-21 | [decisions/D60.md](docs/decisions/D60.md) |
 | `D61` | XGBoost 迁入 `analysis/xgboost/`：先落框架与特征缺口，不做特征生产/落库 | 2026-10-21 | [decisions/D61.md](docs/decisions/D61.md) |
 | `D62` | `calc_compact_features`（8.3 版）+ `--strategy compact`：先只读，不落库 | 2026-10-21 | [decisions/D62.md](docs/decisions/D62.md) |
+| `D63` | `--save tdx` 元数据段加入千股千评与牛股诊股 | 2026-10-22 | [decisions/D63.md](docs/decisions/D63.md) |
+| `D64` | 用户 CLI 与内部/调试入口分离 | 2026-10-24 | [decisions/D64.md](docs/decisions/D64.md) |
+| `D65` | review/coldstart 输出列统一为伪驼峰缩写（含存量原地改名） | 2026-10-24 | [decisions/D65.md](docs/decisions/D65.md) |
+| `D66` | 删除四量图的 `QuadSt` / `ChoBits` / `QuadCodex` 状态机（review 不再计算） | 2026-10-25 | [decisions/D66.md](docs/decisions/D66.md) |
+| `D67` | 删除 review 的 M9T lag 列（`m9tLag` / `m9tLagD` 都不再落库） | 2026-10-27 | [decisions/D67.md](docs/decisions/D67.md) |
+| `D68` | notebook 只读 review 已落库的 `ZenPivotCnt` / `se`，不得重算 | 2026-10-27 | [decisions/D68.md](docs/decisions/D68.md) |
+| `D69` | review 新增契约列不会自动回填旧行；用 `tools/backfill_hour_extra.py` 补 | 2026-10-27 | [decisions/D69.md](docs/decisions/D69.md) |
+| `D70` | 归一化价格列统一 `D` / `_DUMMY` 后缀；attach `* close` 还原无后缀价格 | 2026-10-27 | [decisions/D70.md](docs/decisions/D70.md) |
+| `D71` | review 日族加入 Renko S/L 时序（按日频率）；以及本次覆盖度检查 | 2026-10-27 | [decisions/D71.md](docs/decisions/D71.md) |
+| `D72` | review 日族保存 Renko 全族 14 列；价格量纲列落 `D` 比值 | 2026-10-27 | [decisions/D72.md](docs/decisions/D72.md) |
+| `D73` | 主力派发（LEADOUT）指标：主力吸筹 6 列的镜像，用于下跌指示 | 2026-10-27 | [decisions/D73.md](docs/decisions/D73.md) |
+| `D74` | `se` / `ZenPivotCnt` 从 60min 契约移到日族（日频） | 2026-10-28 | [decisions/D74.md](docs/decisions/D74.md) |
+| `D75` | 4.4 旧 review 特征表不搬（未归一化 / 复权锚已冻结，无参考意义） | 2026-10-28 | [decisions/D75.md](docs/decisions/D75.md) |
+| `D76` | `BOTTOM_PRICE` / `ROOF_PRICE` 是**绝对价**，不归一化、不落库 | 2026-10-28 | [decisions/D76.md](docs/decisions/D76.md) |
+| `D77` | 列名统一为伪驼峰：39 个老值改名 + 28 个保留 | 2026-10-28 | [decisions/D77.md](docs/decisions/D77.md) |
 
 <!-- END GENERATED -->

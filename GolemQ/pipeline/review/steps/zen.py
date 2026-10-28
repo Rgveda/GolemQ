@@ -21,12 +21,9 @@ import pandas as pd
 
 from GolemQ.analysis.zen import calc_zen_timing_lag
 from GolemQ.core.constants import FIELD as FLD
-from GolemQ.pipeline.review.contract import (HOUR_EXTRA_COLUMNS,
-                                             HOUR_ZEN_COLUMNS,
+from GolemQ.pipeline.review.contract import (HOUR_ZEN_COLUMNS,
                                              MINOR_15MIN_COLUMNS,
                                              MINOR_COLUMNS)
-from GolemQ.pipeline.review.steps.hour_extra import (_pivot_counts,
-                                                     _sample_entropy_by_day)
 from GolemQ.pipeline.review.steps.minor import minor_features
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_DAILY,
                                    slice_asof)
@@ -35,8 +32,8 @@ from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_DAILY,
 WINDOW60 = 2160
 WINDOW15 = 2160
 
-#: 本 step 的 60min 输出：4 个 zen + 17 个 minor + 2 个 hour_extra。
-ZEN_COLUMNS = HOUR_ZEN_COLUMNS + MINOR_COLUMNS + HOUR_EXTRA_COLUMNS
+#: 本 step 的 60min 输出：4 个 zen + 17 个 minor（`se`/`ZenPivotCnt` 已移日族，D74）。
+ZEN_COLUMNS = HOUR_ZEN_COLUMNS + MINOR_COLUMNS
 _NAN_MINOR = np.full(len(MINOR_COLUMNS), np.nan)
 
 
@@ -56,10 +53,6 @@ def zen_snapshots_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.Data
     minute_rows = {}
     src60 = ctx.frame('60min')
     src15 = ctx.frame('15min')
-    # `hour_extra` 也并进这一趟：SE 按 15:00 预计算，pivot 计数一次算到 targets。
-    ohlc60 = slice_asof(src60, ctx.as_of)
-    se_days, se_vals = _sample_entropy_by_day(ohlc60)
-    piv_counts = _pivot_counts(ohlc60, targets, ctx.code)
     for _i, T in enumerate(targets):
         T = pd.Timestamp(T)
         d60, p60 = _zen_last(slice_asof(src60, T, WINDOW60))
@@ -80,12 +73,7 @@ def zen_snapshots_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.Data
                 d15 = r.get('zDLagMinR', np.nan)
                 p15 = r.get('zPLagMinR', np.nan)
                 minor_vals = np.array([r.get(c, np.nan) for c in MINOR_COLUMNS])
-        se = np.nan
-        if len(se_days):
-            pos = int(se_days.searchsorted(T, side='right')) - 1
-            if pos >= 0:
-                se = se_vals[pos]
-        rows.append([d60, p60, d15, p15, *minor_vals, se, piv_counts[_i]])
+        rows.append([d60, p60, d15, p15, *minor_vals])
         idx.append((T, ctx.code))
 
     # 15min 族：把每个 60min 目标所在小时的 4 根 15min 结果缓存，供

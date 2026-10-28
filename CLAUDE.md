@@ -15,6 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 4 | [`RESTRUCTURE_PLAN.md`](RESTRUCTURE_PLAN.md) | 两层模型、Active Market、portfolio 方案 |
 | 5 | [`MIGRATION_STATUS.md`](MIGRATION_STATUS.md) | 重构遗留缺陷清单（含修复顺序建议）|
 | 6 | [`API_INDEX.md`](API_INDEX.md) | **导航索引**（模块 / 名称 + 一行摘要，由 `tools/gen_api_index.py` 生成）。找东西先查它，比逐个 `Read` 源文件省一个数量级 |
+| 7 | [`docs/data_inventory.md`](docs/data_inventory.md) | **数据暗线**：三个库、频率阶梯（1min 是母数据）、`*_removed`、实时滚动库、4.4 遗留与坑。**说「数据不够 / 没搬全」之前先读它** |
 | — | [`docs/worklog/`](docs/worklog/) | **历史**（每轮做了什么、为什么）。**不是指南、只增不改** —— 按需 `grep`，**别通读** |
 
 **改代码前先查 `PITFALLS.md` 与 `GLOSSARY.md`。**
@@ -247,8 +248,6 @@ python -m GolemQ.cli --eneloop-list
 python -m GolemQ.cli --save tdx                # 参考数据(stock_list/stock_info/stock_block/etf_list) + K线 + xdxr/adj
 python -m GolemQ.cli --save pytdx              # 同上，完全等价（适配器的真名就是 pytdx）
 python -m GolemQ.cli --save qmt                # 只做参考数据(qmt 源)；K线跳过。⚠️ QMT 源当前恒不可用
-python -m GolemQ.cli --save tdx --save-dry-run # 只取数不写库，与库内重叠窗口逐字段对拍
-python -m GolemQ.cli --save-coverage           # 只读：K线覆盖缺口报告（不写库）
 
 # CLI - ChartScan（CV 图形识别；**自动切换 conda env 到 GolemAI**，见 D51）
 python -m GolemQ.cli --server ChartScan --port 5555        # ZeroMQ REP 服务端（载 YOLOv8）
@@ -261,8 +260,17 @@ python -m GolemQ.cli --scan ChartScan --eval fast --port 5555  # 客户端：按
 # CLI - 换手率补齐（写 stock_reality_feat_day；不连 4.4、不抓外网）
 # `analysis/ChipDistribution_jit.py` 缺换手率会直接抛 ⇒ 用这条补回来（DECISIONS.md D44）
 python -m GolemQ.cli --fill-turnover                        # 默认全市场、最近 7 个自然日
-python -m GolemQ.cli --fill-turnover --fill-turnover-codes 600519,000001
-python -m GolemQ.cli --fill-turnover --fill-turnover-start 2026-09-01 --fill-turnover-end 2026-10-13
+
+# CLI - 内部/调试入口（普通用户不使用；`--help` 里没有这些旗子，见 D64）
+# 具体故障由 AI 智能体/测试排查，不面向用户。
+python -m GolemQ.cli.internal --save-coverage
+python -m GolemQ.cli.internal --save-status
+python -m GolemQ.cli.internal --save tdx --save-codes 600519 --save-dry-run
+python -m GolemQ.cli.internal --review --eval fast --review-limit 5 --dry-run
+python -m GolemQ.cli.internal --migrate-turnover --migrate-since 2026-01-01
+python -m GolemQ.cli.internal --migrate-reality-feat --migrate-limit 1000
+python -m GolemQ.cli.internal --metadata-align --metadata-align-codes 600519
+python -m GolemQ.cli.internal --fill-turnover --fill-turnover-codes 600519,000001
 ```
 
 ## Architecture
@@ -302,6 +310,7 @@ python -m GolemQ.cli --fill-turnover --fill-turnover-start 2026-09-01 --fill-tur
 - **Naming**: Use `snake_case` for all function, variable, and file names.
 - **CLI functions**: CLI command handlers in `cli/` do ONLY parameter validation and then delegate to `pipeline/` functions. No business logic in the CLI layer.
 - **新增 CLI 命令**: 写到 `cli/commands/<name>.py`（只暴露 `FLAGS` / `add_arguments` / `run`），再到 `cli/commands/__init__.py` 的**有序列表里按正确位置**加一行 —— **顺序即分发顺序**（`DECISIONS.md` D17）。**别**在 `cli/__main__.py` 里加分支：它现在只负责建 parser、分发、打 help。
+- **CLI 参数只为用户存在**：**测试/调试专用**的旗子（如 `--review-limit` / `--migrate-limit` / `--save-codes` / `--save-dry-run`）注册在 `cli/commands/_internal.py`，只由 `python -m GolemQ.cli.internal` 暴露；用户入口 `python -m GolemQ.cli` 不注册、`--help` 里也看不到。测试要小样本请**直接调 `run_*(args)` 或 pipeline 函数**，不要为了测试方便给用户 parser 加旗子（2026-10-23 用户明确）。
 - **File size**: Each `services/` file must not exceed 300 lines. Split larger files into focused sub-modules.
 
 ### External Dependencies

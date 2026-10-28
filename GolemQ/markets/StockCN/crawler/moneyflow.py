@@ -52,14 +52,16 @@ CLI 的输出里会写明这一点。
 """
 from __future__ import annotations
 
+import math
 import time
 
 import pandas as pd
 
 from GolemQ.core.constants import FIELD as FLD
 
-from .metadata_save import (REALITY_FEAT_DAY_COLL, _db, day_date, day_stamp,
-                            metadata_day_doc_multi)
+from ..metadata_save import (COVERAGE_SKIP_RATIO, REALITY_FEAT_DAY_COLL, _db,
+                             day_date, day_stamp, metadata_covered,
+                             metadata_day_doc_multi)
 
 __all__ = ['save_moneyflow', 'rows_eastmoney', 'rows_ths', 'parse_cn_amount',
            'parse_pct', 'to_code', 'last_trade_day', 'MONEYFLOW_SOURCES']
@@ -148,8 +150,15 @@ def last_trade_day() -> str:
 
     ⚠️ 用日历，**不能用 `today()`**：见模块 docstring 第 2 条实测。
     """
-    from .date_utils import GQ_util_get_last_day
+    from ..date_utils import GQ_util_get_last_day
     return str(GQ_util_get_last_day())[:10]
+
+
+def _stock_universe_size() -> int:
+    """`stock_list` 的代码数 —— 短路判断的分母。读不到就返回 0（不短路）。"""
+    from ..refdata import GQ_fetch_stock_list
+    df = GQ_fetch_stock_list()
+    return 0 if df is None else len(df)
 
 
 # --------------------------------------------------------------------------- #
@@ -261,19 +270,34 @@ def save_moneyflow(source: str = 'eastmoney', created_at=None, verbose=True,
     if source not in MONEYFLOW_SOURCES:
         raise ValueError('未知源 {!r}；可用 {}'.format(source, MONEYFLOW_SOURCES))
 
+    out = {'source': source, 'day': None, 'read': 0, 'written': 0,
+           'upserted': 0, 'modified': 0, 'skipped': False,
+           'dry_run': bool(dry_run)}
+
     if source == 'eastmoney':
+        # 短路：同一交易日已覆盖 >=90% 的 stock_list，就不再抓/写。
+        # 千股千评是**当日快照**，重复跑没有新信息；上一次半途失败留下的
+        # 部分行达不到阈值，仍会重抓补齐（不是「有一行就跳」）。
+        day = last_trade_day()
+        expected = _stock_universe_size()
+        cov = metadata_covered(FLD.TOTAL_SCORE, day)
+        threshold = max(1, math.ceil(COVERAGE_SKIP_RATIO * expected))
+        if not dry_run and expected and cov['covered'] >= threshold:
+            out.update(day=day, skipped=True)
+            say('[moneyflow] eastmoney 短路：{} 已覆盖 {}/{} 只，跳过抓取'
+                .format(day, cov['covered'], expected))
+            return out
         raw = fetch_eastmoney_comment()
         docs = rows_eastmoney(raw, created_at=created_at)
         payload = EM_PAYLOAD
-        day = docs[0]['date'] if docs else None
+        day = docs[0]['date'] if docs else day
     else:
         day = last_trade_day()
         raw = fetch_ths_fundflow()
         docs = rows_ths(raw, day, created_at=created_at)
         payload = THS_PAYLOAD
 
-    out = {'source': source, 'day': day, 'read': len(raw), 'written': len(docs),
-           'upserted': 0, 'modified': 0, 'dry_run': bool(dry_run)}
+    out.update(day=day, read=len(raw), written=len(docs))
     if dry_run:
         say('[moneyflow] {} 干跑：读 {} 行 / 可写 {} 行（交易日 {}）（【没有写库】）'
             .format(source, out['read'], out['written'], day))
@@ -283,7 +307,7 @@ def save_moneyflow(source: str = 'eastmoney', created_at=None, verbose=True,
         return out
 
     from GolemQ.core.constants import MARKET_TYPE
-    from .reality_save import save_reality_feat
+    from ..reality_save import save_reality_feat
 
     # 统一入口（D55）：只把**本模块 payload 白名单**里的列交给 save_reality_feat，
     # 别的列不会被写、更不会被清。

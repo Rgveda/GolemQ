@@ -1,5 +1,7 @@
 # coding: utf-8
-"""`--strategy review`（别名 `--review`）/ `--review-runtime` —— 统一因果 review 管线。
+"""`--strategy review`（别名 `--review`）—— 统一因果 review 管线。
+
+`--review-runtime` 是 **internal 命令**（`python -m GolemQ.cli.internal`）。
 
 与老树的对应
 ============
@@ -35,15 +37,13 @@ def add_review_daily_arguments(parser) -> None:
     parser.add_argument('--families', default='day,60min,15min',
                         help='要写的族，逗号分隔（day,60min,15min）。'
                              '冷启动列已并入 60min。')
-    parser.add_argument('--review-limit', dest='review_limit', type=int, default=0,
-                        help='只跑前 N 只（调试/分批）。')
+    # NOTE: `--review-limit` 是**内部/调试**旗子，只在
+    # `python -m GolemQ.cli.internal` 里注册（见 `commands/_internal.py`）。
     # NOTE: `--force` / `--from` 是**全局修饰符**（`cli/__main__.py`），
     # 这里不再注册 `--review-force` / `--review-from`。
-    parser.add_argument('--dry-run', action='store_true', default=False,
-                        help='只算不写（不写行、不写水位）。')
     parser.add_argument('--offset', default='', help='截止日期 YYYY-MM-DD。')
-    parser.add_argument('--recheck-days', dest='recheck_days', type=int, default=0,
-                        help='水位前溯 N 天，修补迟到/回填的源行。')
+    # NOTE: `--dry-run` / `--recheck-days` 是内部/调试旗子，
+    # 只在 `python -m GolemQ.cli.internal` 里注册（见 `commands/_internal.py`）。
 
 
 def add_review_runtime_arguments(parser) -> None:
@@ -122,9 +122,10 @@ def run_review_daily(args) -> int:
         results, stats = run_review(
             eval_range=eval_range, codes=codes,
             pct_of_cores=pct_of_cores, families=families,
-            force=args.force, dry_run=args.dry_run, verbose=args.verbose,
+            force=args.force, dry_run=getattr(args, 'dry_run', False), verbose=args.verbose,
             offset=args.offset, from_date=args.from_date,
-            recheck_days=args.recheck_days, limit=args.review_limit)
+            recheck_days=getattr(args, 'recheck_days', 0),
+            limit=getattr(args, 'review_limit', 0))
     except KeyboardInterrupt:
         # 128 + SIGINT 的惯例退出码；worker 的终止由 `BasePipeline` 的
         # `with Parallel(...)` 负责（见该处注释）。
@@ -175,4 +176,5 @@ REVIEW_RUNTIME = Command(
     flags=('review_runtime',),
     add_arguments=add_review_runtime_arguments,
     run=run_review_runtime,
+    internal_only=True,
 )

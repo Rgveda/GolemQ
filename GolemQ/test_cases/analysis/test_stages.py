@@ -160,9 +160,13 @@ class TestGaridentStagesMatchesOld(unittest.TestCase):
         old = _with_seed(13, lambda: _OLD.calc_garident_stages(ck_o, feats_o))
         new = _with_seed(13, lambda: NEW.calc_garident_stages(ck_n, feats_n))
 
+        # 老树常量表里 `AKA.STAGE='STAGE'`，新树已改为伪驼峰 `stage` ——
+        # 对拍时按老树那一侧的实际列名取。
+        old_names = {'stage': 'STAGE'}
         for col in self.NUMERIC_COLS:
             with self.subTest(column=col):
-                o = pd.to_numeric(old[col], errors='coerce').to_numpy(dtype=float)
+                o = pd.to_numeric(old[old_names.get(col, col)],
+                                  errors='coerce').to_numpy(dtype=float)
                 n = pd.to_numeric(new[col], errors='coerce').to_numpy(dtype=float)
                 self.assertEqual(len(n), len(o))
                 self.assertTrue(np.array_equal(n, o, equal_nan=True),

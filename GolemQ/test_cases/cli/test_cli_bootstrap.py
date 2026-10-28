@@ -20,6 +20,7 @@ except ImportError:
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 
 import unittest
+import unittest.mock
 
 from GolemQ.cli import bootstrap
 from GolemQ.cli.commands import COMMANDS, pick
@@ -86,8 +87,13 @@ class TestEnvironmentChecks(unittest.TestCase):
         口径变化（2026-10-09）：自检改挂 banner 后，「不通过」不再用 `⚠️` 文字表达，
         而是**红/黄点**。所以这里改成断言「没有明细行」（明细一律以节点名开头）。
         """
+        # 把依赖包钉成全过：这条测的是「非 verbose 不铺明细」，不是本机 pandas 版本。
+        ok_pkgs = tuple((True, '{} {}'.format(name, want))
+                        for name, want in bootstrap.MIN_PACKAGES)
         buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
+        with unittest.mock.patch.object(bootstrap, 'check_packages',
+                                        return_value=ok_pkgs), \
+                contextlib.redirect_stdout(buf):
             bootstrap.check_environment(verbose=False)
         out = buf.getvalue()
         self.assertNotIn('✓', out)                       # 老口径的勾也没了

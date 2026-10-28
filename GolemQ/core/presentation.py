@@ -306,6 +306,24 @@ def stamp(text, when=None):
     return '{}: {}'.format(stamp_text(when), text)
 
 
+def status_line(ok, text, color=False):
+    """行首加 ``✓`` / ``✗``（TTY 下绿/红）—— 明细行**逐项**打勾用。
+
+    为什么需要它：banner 的节点只有一个点（「依赖包」整项红），而明细里
+    可能只有 pandas 一项不过。把整段都打 ``✗`` 是**谎报**（用户 2026-10-23 实报）。
+    非 TTY 不带转义码，只留符号 —— 与 :data:`_PLAIN_MARKS` 同一条规矩。
+
+    >>> status_line(True, 'numpy 2.5.4')
+    '✓ numpy 2.5.4'
+    >>> status_line(False, 'pandas 2.2.3')
+    '✗ pandas 2.2.3'
+    """
+    mark = '✓' if ok else '✗'
+    if color:
+        mark = (_ANSI_GREEN if ok else _ANSI_RED) + mark + _ANSI_RESET
+    return '{} {}'.format(mark, text)
+
+
 def dim(text, color=False):
     """**压暗**一行（`color=True` 时）。用 :data:`_ANSI_GRAY`，非 TTY 原样返回。
 

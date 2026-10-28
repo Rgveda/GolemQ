@@ -11,14 +11,21 @@ from GolemQ.analysis.indicators import TA_HMA
 from GolemQ.analysis.magic_nine_jit import calc_magic_nine_turns_np_vXs_jit
 from GolemQ.analysis.poly9 import calc_polynomial9_vXIs
 from GolemQ.analysis.quadrant_jit import mapower_np_vXIIs
+from GolemQ.analysis.renko_jit import (available as renko_available,
+                                       renko_trend_cross_func_jit)
 from GolemQ.analysis.regtree_jit import calc_regtree_fractal_vXIs
 from GolemQ.analysis.timing import calc_event_timing_lag
 from GolemQ.analysis.timeseries import weekly_ohlc
 from GolemQ.analysis.zen import calc_zen_timing_lag
 from GolemQ.core.constants import AKA, FEATURES as FTR, FIELD as FLD
+from GolemQ.models.alias import ZEN
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_DAILY,
                                    slice_asof)
-from GolemQ.pipeline.review.contract import DAY_COLUMNS
+from GolemQ.pipeline.review.contract import (DAY_COLUMNS,
+                                             RENKO_DAY_COLUMNS,
+                                             RENKO_PRICE_DUMMIES)
+from GolemQ.pipeline.review.steps.day_extra import (pivot_counts,
+                                                    sample_entropy_daily)
 
 
 def _last(series, default=np.nan):
@@ -102,9 +109,20 @@ def _week_start(t) -> pd.Timestamp:
     return t - pd.Timedelta(days=t.weekday())
 
 
+def _renko_last(renko, col, T, code):
+    if renko is None or col not in renko.columns:
+        return np.nan
+    try:
+        return renko.loc[(pd.Timestamp(T).normalize(), code), col]
+    except KeyError:
+        return np.nan
+
+
 def _day_row(day: pd.DataFrame, feats: pd.DataFrame,
-             wk_raw: pd.DataFrame, wk_feats: pd.DataFrame) -> dict:
-    """从已算好的 day / week 特征抽一行（14 列）。"""
+             wk_raw: pd.DataFrame, wk_feats: pd.DataFrame,
+             renko: pd.DataFrame = None,
+             se: float = np.nan, pivot_cnt: float = np.nan) -> dict:
+    """从已算好的 day / week 特征抽一行（含 Renko + 日频 `se`/`ZenPivotCnt`）。"""
     close = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
     poly9_ratio = (feats[FLD.POLYNOMIAL9] / close.to_numpy()
                    if FLD.POLYNOMIAL9 in feats.columns else pd.Series(np.nan, index=feats.index))
@@ -117,7 +135,7 @@ def _day_row(day: pd.DataFrame, feats: pd.DataFrame,
         poly9_week_ratio = wk_feats[FLD.POLYNOMIAL9] / wk_close
     else:
         poly9_week_ratio = pd.Series(dtype=float)
-    return {
+    row = {
         FTR.ZEN_DASH_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.ZEN_DASH_TIMING_LAG]),
         FTR.ZEN_PEAK_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.ZEN_PEAK_TIMING_LAG]),
         FTR.ZEN_DASH_TIMING_LAG_WEEKLY_REAL: _last(
@@ -137,6 +155,13 @@ def _day_row(day: pd.DataFrame, feats: pd.DataFrame,
         FTR.REGTREE_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.REGTREE_TIMING_LAG]),
         FTR.REGTREE_SLOPE_MAJOR_REAL: _last(regtree_slope_ratio),
     }
+    _t = day.index.get_level_values(0)[-1]
+    _code = day.index.get_level_values(1)[0]
+    for _col in RENKO_DAY_COLUMNS:
+        row[_col] = _renko_last(renko, _col, _t, _code)
+    row[AKA.SAMPLE_ENTROPY] = se
+    row[ZEN.PIVOT_COUNT] = pivot_cnt
+    return row
 
 
 def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
@@ -144,19 +169,65 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
 
     周线按**上一个已完成周**缓存：同一周内的日目标共用一份周线特征。
     `daily_snapshot` / `coldstart` 只从缓存取样。
+
+    ⚠️ **盘中 60min 目标需要上一可用交易日的 coldstart 行**：delta 跑一天时
+    `day_targets` 只有当天，若只给当天算 cold 行，`coldstart_step` 盘中
+    找不到 `< 当日` 的缓存 ⇒ 所有 coldstart 列盘中 NaN。这里把上一交易日
+    也纳入 `need_dates`（只算 cold 行，不算 day 行）。
     """
     day_all = ctx.frame('day')
     day_targets = ctx.targets.get('day', pd.DatetimeIndex([]))
-    cold_dates = {pd.Timestamp(t).normalize()
-                  for t in ctx.targets.get('60min', pd.DatetimeIndex([]))}
-    if len(day_targets) == 0:
+    day_target_set = {pd.Timestamp(t).normalize() for t in day_targets}
+    t60 = ctx.targets.get('60min', pd.DatetimeIndex([]))
+    cold_dates = {pd.Timestamp(t).normalize() for t in t60}
+
+    # 盘中目标（< 15:00）还要上一可用交易日；15:00 只用当日行。
+    day_dates = pd.DatetimeIndex([])
+    if day_all is not None and len(day_all):
+        day_dates = pd.DatetimeIndex(pd.to_datetime(
+            day_all.index.get_level_values(0))).normalize().unique().sort_values()
+    prev_dates = set()
+    if len(day_dates):
+        for t in t60:
+            t = pd.Timestamp(t)
+            if t.time() >= pd.Timestamp('15:00').time():
+                continue
+            pos = day_dates.searchsorted(t.normalize(), side='left') - 1
+            if pos >= 0:
+                prev_dates.add(day_dates[pos])
+
+    need_dates = sorted(day_target_set | cold_dates | prev_dates)
+    if not need_dates:
         return None
 
     from ..coldstart import _coldstart_row     # 延迟导入避免循环
 
     day_rows, cold_rows = {}, {}
     wk_cache = {}
-    for T in day_targets:
+    renko_all = None
+    # 只有要写日行时才需要 Renko（盘中只补 coldstart 时省掉这一趟）
+    if day_target_set and renko_available() and day_all is not None and len(day_all):
+        try:
+            renko_all = renko_trend_cross_func_jit(day_all)
+            _close = pd.to_numeric(day_all[AKA.CLOSE], errors='coerce')
+            for _base, _dummy in RENKO_PRICE_DUMMIES:
+                if _base in renko_all.columns:
+                    renko_all[_dummy] = renko_all[_base] / _close
+        except Exception:        # noqa: BLE001 Renko 失败不该毁掉 review
+            renko_all = None
+
+    # 日频 `se` + 15:00 取样的 `ZenPivotCnt`（D74）—— 只给要写的日行算。
+    se_by_day, piv_by_day = {}, {}
+    if day_target_set and day_all is not None and len(day_all):
+        _days = sorted(day_target_set)
+        _se = sample_entropy_daily(day_all, _days)
+        _cut = pd.DatetimeIndex([pd.Timestamp(t) + pd.Timedelta(hours=15)
+                                 for t in _days])
+        _piv = pivot_counts(slice_asof(ctx.frame('60min'), ctx.as_of),
+                            _cut, ctx.code)
+        se_by_day = dict(zip(_days, _se))
+        piv_by_day = dict(zip(_days, _piv))
+    for T in need_dates:
         T = pd.Timestamp(T)
         day = slice_asof(day_all, T, 832)
         if len(day) < 30:
@@ -180,9 +251,13 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
             wk_cache[wkey] = (wk_raw, wk_feats)
         wk_raw, wk_feats = wk_cache[wkey]
 
-        day_rows[T] = _day_row(day, feats, wk_raw, wk_feats)
-        if T.normalize() in cold_dates:
-            cold_rows[T.normalize()] = _coldstart_row(day, feats=feats)
+        if T in day_target_set:
+            day_rows[T] = _day_row(day, feats, wk_raw, wk_feats,
+                                   renko=renko_all,
+                                   se=se_by_day.get(T, np.nan),
+                                   pivot_cnt=piv_by_day.get(T, np.nan))
+        if T in cold_dates or T in prev_dates:
+            cold_rows[T] = _coldstart_row(day, feats=feats)
 
     if day_rows:
         idx = pd.MultiIndex.from_tuples(

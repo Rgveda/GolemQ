@@ -1384,6 +1384,16 @@ def calc_stock_chip_distribution_jit(
                             AKA.COST5_PRICE,]].tail(60))        
             print(annual, features[AKA.PROFIT])
 
+    # 成本价是绝对价格；同时输出归一化 DUMMY（cost / close），attach 时 * close 还原
+    if AKA.CLOSE in features.columns:
+        _close = pd.to_numeric(features[AKA.CLOSE], errors='coerce')
+        for _base, _dummy in (
+                (AKA.COST5_PRICE, AKA.COST5_PRICE_DUMMY),
+                (AKA.COST15_PRICE, AKA.COST15_PRICE_DUMMY),
+                (AKA.COST85_PRICE, AKA.COST85_PRICE_DUMMY),
+                (AKA.COST95_PRICE, AKA.COST95_PRICE_DUMMY)):
+            if _base in features.columns:
+                features[_dummy] = (_close * 0 + features[_base] / _close).astype(np.float32)
     return features
 
 

@@ -228,6 +228,9 @@ def _base_frame(ohlc: pd.DataFrame, annual: int) -> pd.DataFrame:
     # ---- Poly9 ----
     f = calc_polynomial9_vXIs(ohlc, features=f, annual=annual)
     f = calc_polynomial9_norm_vXIs(f, annual=annual)
+    # 归一化 Poly9（abs / close）；attach 时 * close 恢复无后缀 `poly9`
+    f[FIELD.POLYNOMIAL9_DUMMY] = (
+        f[FIELD.POLYNOMIAL9] / close).astype(np.float32)
     # 单帧的 major 版本：先占位，day 帧会在 `_derive_major` 覆盖。
     f[FIELD.POLYNOMIAL9_TIMING_LAG_MAJOR] = calc_event_timing_lag(
         np.where(f[FIELD.POLYNOMIAL9].diff(4) > 0, 1, -1)).astype(np.int16)
@@ -284,14 +287,28 @@ def _weekly_derived(ohlc_day: pd.DataFrame) -> pd.DataFrame:
         atr_stop).astype(np.int16)
     out[FIELD.ATR_SuperTrend_TIMING_LAG_WEEKLY] = calc_event_timing_lag(
         atr_super).astype(np.int16)
-    out[FIELD.ATR_Stopline_PRICE_WEEKLY] = stop_line.astype(np.float16).round(3)
+    # ⚠️ **先 round 再转 float16**。反过来（老树 `features/base.py:3613` 的写法）
+    # `astype(float16).round(3)` 会让 numpy 在 round 内部做 ×1000 —— float16 上限
+    # 65504 ⇒ 价格 > 65.5 直接**溢出成 inf**（同时刷 RuntimeWarning）。
+    # round 在 float64 上做，再降精度；存储值不变（float16 本来就只到 ~10⁻³ 精度）。
+    out[FIELD.ATR_Stopline_PRICE_WEEKLY] = stop_line.round(3).astype(np.float16)
     return out
 
 
 def _map_causal(day_values: pd.Series, target_index: pd.MultiIndex) -> pd.Series:
     """把日线值因果映射到 60min 索引。
 
-    盘中 bar（< 15:00）用**上一交易日**的值；15:00 bar 才用当日值。
+    盘中 bar（< 15:00）用**上一可用交易日**的值；15:00 bar 只用**当日**的行。
+
+    ⚠️ 盘中不能写死「前一个自然日」—— 周一的前一天是周日、节假日也没有行，
+    那样会让**所有周一/节后首日盘中的日派生列变成 NaN**（2026-10-26 实测：
+    `CCI_NORM` / `RSI` / `MAPOWER30_MAJOR` / `STOCK_SCORE_M15_NORM` 全空）。
+    这里改成在日线索引里找「严格早于目标日期的最后一行」，周日/节假日自然跳过。
+
+    ⚠️ **仍然不对值做 ffill**：reality 的 day 表是「每天一行」；某天没有值
+    （review 停更 / 该列本来就稀疏）就应保留 NaN。用 `method='ffill'` 会把
+    最后一个 NaN 或旧值一路带到未来 —— 用户 2026-10-24 明确：不要随便填充，
+    ChartScan 是事件型稀疏数据，M9T 也只是 >20% 的稀疏序列。
     """
     if day_values is None or len(day_values) == 0:
         return pd.Series(np.nan, index=target_index)
@@ -301,12 +318,20 @@ def _map_causal(day_values: pd.Series, target_index: pd.MultiIndex) -> pd.Series
         else day_values.index)).normalize()
     day_values = day_values[~day_values.index.duplicated(keep='last')].sort_index()
     ts = pd.DatetimeIndex(pd.to_datetime(target_index.get_level_values(0)))
-    use_today = ts >= ts.normalize() + pd.Timedelta(hours=15)
-    lookup_dates = pd.DatetimeIndex(
-        np.where(use_today, ts.normalize(), ts.normalize() - pd.Timedelta(days=1)))
-    mapped = day_values.reindex(lookup_dates, method='ffill')
-    mapped.index = target_index
-    return mapped
+    target_dates = ts.normalize()
+    use_today = ts >= target_dates + pd.Timedelta(hours=15)
+
+    idx = day_values.index
+    vals = day_values.to_numpy()
+    # 盘中：严格早于目标日的最后一个**可用日**（跳过周末/节假日）
+    pos_prev = idx.searchsorted(target_dates, side='left') - 1
+    # 15:00：只认当日；当日缺行 → -1（保持 NaN，不拿上一交易日顶替）
+    exact = idx.searchsorted(target_dates, side='left')
+    exact_safe = np.clip(exact, 0, len(idx) - 1)
+    exact_ok = (exact < len(idx)) & (idx[exact_safe] == target_dates)
+    pos = np.where(use_today, np.where(exact_ok, exact_safe, -1), pos_prev)
+    mapped = np.where(pos >= 0, vals[np.clip(pos, 0, None)], np.nan)
+    return pd.Series(mapped, index=target_index, name=day_values.name)
 
 
 def _derive_major(ohlc_day: pd.DataFrame, target_index: pd.MultiIndex) -> pd.DataFrame:

@@ -624,6 +624,10 @@ cli/__main__.py  顶层 → supervisor/scheduler.py:15 顶层
 **该怎么办**：`new_api()` **记住上次成功的那台**（别每次从表头试）；排障时
 「TCP 通」与「协议层应答」**分开测**。详见 `DECISIONS.md` D21。
 
+**新机部署 / 排障**：先跑 `python tools/check_blas_commit.py --workers 4`
+（打印守卫前后各自的 commit、joblib worker 是否继承）；完整检查清单见
+[`docs/deploy/BLAS_THREADS.md`](docs/deploy/BLAS_THREADS.md)。
+
 ---
 
 ### P22. `tqdm` **进度条**活着时**谁也不许写 stdout** —— 不报错，只打花屏
@@ -1510,3 +1514,30 @@ numpy/polynomial/chebyshev.py:1676: RankWarning: The fit may be poorly condition
 
 **验证**：`test_fbprophet.TestProphetBand.test_cmdstanpy_logging_is_suppressed`
 （`assertNoLogs` + level 还原）、`test_poly9.TestContract.test_rank_warning_is_silenced`。
+
+### P45. `float16` 上先 `round(3)` 再存 —— 价格 >65.5 会**溢出成 inf**
+
+**位置**：`analysis/compact.py::_weekly_derived` 的
+`ATR_Stopline_PRICE_WEEKLY`（老树 `features/base.py:3613` 同款写法）。
+
+**看起来像**：只是降精度后四舍五入，警告一句 `RuntimeWarning: overflow
+encountered in multiply` 而已。
+
+**实际**：numpy 的 `ndarray.round(decimals=3)` 内部会 **×1000**；`float16` 的
+上限是 **65504**，所以价格一旦 **>65.5**，乘法就溢出成 `inf` —— 不是"四舍
+五入结果略差"，是整列变成无穷大。老树同样写法，**静默产出 inf**。
+
+```python
+np.float16(1314.02).round(3)   # inf（同时刷 overflow 警告）
+1314.02.round(3).astype(np.float16)   # 1314.0 ✅
+```
+
+**怎么办**：**先在 float64 上 round，再降精度**：
+
+```python
+out[FIELD.ATR_Stopline_PRICE_WEEKLY] = stop_line.round(3).astype(np.float16)
+```
+
+**验证**：`test_xgboost_compact.TestCalcCompactFeatures
+.test_weekly_atr_price_does_not_overflow_float16`（用 ~200 元日线复现，
+断言 `isfinite` 且确实覆盖 >65.5 区间）。

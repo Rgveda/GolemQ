@@ -91,6 +91,53 @@ class TestCausalMap(unittest.TestCase):
         got = C._map_causal(day, target).tolist()
         self.assertEqual(got, [1.0, 2.0, 2.0])
 
+    def test_missing_day_stays_nan(self):
+        """某天没有值就是 NaN —— 不做 ffill（用户 2026-10-24 明确）。"""
+        day = pd.Series(
+            [1.0, np.nan, np.nan],
+            index=pd.MultiIndex.from_arrays(
+                [pd.to_datetime(['2026-01-05', '2026-01-06', '2026-01-07']),
+                 ['600519'] * 3], names=['ts', 'code']))
+        target = pd.MultiIndex.from_arrays(
+            [pd.to_datetime(['2026-01-06 10:00', '2026-01-07 10:00',
+                             '2026-01-07 15:00']),
+             ['600519'] * 3], names=['ts', 'code'])
+        got = C._map_causal(day, target)
+        self.assertEqual(got.iloc[0], 1.0)      # 盘中用上一交易日 10-05
+        self.assertTrue(np.isnan(got.iloc[1]))  # 10-07 盘中 -> 10-06（NaN）
+        self.assertTrue(np.isnan(got.iloc[2]))  # 10-07 15:00 -> 10-07（NaN）
+
+    def test_weekend_intraday_uses_last_available_day(self):
+        """周一/节后首日盘中用上一**可用**交易日，而不是「前一个自然日」。
+
+        2026-10-26 实测：按自然日回退会落到周日（day 表没有行），于是
+        `CCI_NORM` / `RSI` / `MAPOWER30_MAJOR` 在周一盘中全变 NaN。
+        """
+        day = pd.Series(
+            [1.0, 2.0],
+            index=pd.MultiIndex.from_arrays(
+                [pd.to_datetime(['2026-01-09', '2026-01-12']),   # 周五 / 周一
+                 ['600519'] * 2], names=['ts', 'code']))
+        target = pd.MultiIndex.from_arrays(
+            [pd.to_datetime(['2026-01-12 10:00', '2026-01-12 15:00']),
+             ['600519'] * 2], names=['ts', 'code'])
+        got = C._map_causal(day, target).tolist()
+        self.assertEqual(got, [1.0, 2.0])       # 盘中用周五；15:00 用周一
+
+    def test_1500_missing_today_stays_nan(self):
+        """15:00 只认当日行：当日缺行仍是 NaN，不拿上一交易日顶替。"""
+        day = pd.Series(
+            [1.0],
+            index=pd.MultiIndex.from_arrays(
+                [pd.to_datetime(['2026-01-09']), ['600519']],
+                names=['ts', 'code']))
+        target = pd.MultiIndex.from_arrays(
+            [pd.to_datetime(['2026-01-12 10:00', '2026-01-12 15:00']),
+             ['600519'] * 2], names=['ts', 'code'])
+        got = C._map_causal(day, target)
+        self.assertEqual(got.iloc[0], 1.0)      # 盘中用周五
+        self.assertTrue(np.isnan(got.iloc[1]))  # 15:00 当日缺行 → NaN
+
 
 class TestCalcCompactFeatures(unittest.TestCase):
 
@@ -120,6 +167,23 @@ class TestCalcCompactFeatures(unittest.TestCase):
                     FIELD.POLYNOMIAL9_NORM_MAJOR):
             self.assertIn(col, out.columns)
             self.assertTrue(out[col].notna().any(), col)
+
+    def test_weekly_atr_price_does_not_overflow_float16(self):
+        """⚠️ 老树 `astype(float16).round(3)` 对价格 >65.5 会溢出成 inf。
+
+        numpy 的 `round(3)` 内部要 ×1000（float16 上限 65504），所以必须
+        **先在 float64 上 round、再降精度**。这里用 ~200 元的日线复现。
+        """
+        day = _day()
+        for col in (AKA.OPEN, AKA.HIGH, AKA.LOW, AKA.CLOSE):
+            day[col] = day[col] * 20
+        weekly = C._weekly_derived(day)
+        col = FIELD.ATR_Stopline_PRICE_WEEKLY
+        vals = weekly[col].dropna()
+        self.assertTrue(len(vals) > 0, '周线 ATR stopline 没有产出')
+        self.assertTrue((vals > 65.5).any(), '用例价格没有覆盖溢出区间')
+        self.assertTrue(np.isfinite(vals).all(),
+                        'float16 round 溢出成了 inf：{}'.format(vals[~np.isfinite(vals)]))
 
     def test_rank_columns_are_emitted(self):
         out = C.calc_compact_features(_min60(), include_rank=True)
@@ -200,6 +264,44 @@ class TestCompactPipeline(unittest.TestCase):
         self.assertEqual(results[0].status, 'ok')
         self.assertEqual(results[0].result['rows'], len(m60))
         self.assertEqual(results[0].result['missing'], [])
+
+    def test_calc_features_study_entry(self):
+        """Jupyter 研究入口：静态方法直接返回特征 DataFrame（或三元组）。"""
+        from GolemQ.pipeline.compact import CompactPipeline
+        m60, day = _min60(), _day()
+        fake = mock.Mock()
+        fake.get_kline_price_min.return_value = (
+            types.SimpleNamespace(data=m60), '贵州茅台')
+        fake.get_kline_price_v3.return_value = (
+            types.SimpleNamespace(data=day), '贵州茅台')
+        with mock.patch('GolemQ.get_active_market', return_value=fake):
+            feat = CompactPipeline.calc_features(
+                '600519', offset='2026-10-21')
+            ohlc, feat_meta, name = CompactPipeline.calc_features(
+                '600519', offset='2026-10-21', ret_meta=True)
+
+        self.assertIsInstance(feat, pd.DataFrame)
+        self.assertEqual(len(feat), len(m60))
+        self.assertTrue(feat.index.equals(m60.index))
+        for col in (FIELD.CCI_NORM, FIELD.MAPOWER30_MAJOR,
+                    PFL.STOCK_PORTFOLIO_RANK):
+            self.assertIn(col, feat.columns)
+        # ret_meta 三元组：OHLC / 特征 / 名称，与老树 cookbook 同序
+        self.assertTrue(ohlc.index.equals(m60.index))
+        self.assertTrue(feat_meta.index.equals(feat.index))
+        self.assertEqual(name, '贵州茅台')
+
+    def test_calc_features_no_data(self):
+        from GolemQ.pipeline.compact import CompactPipeline
+        fake = mock.Mock()
+        fake.get_kline_price_min.return_value = (None, '600519')
+        with mock.patch('GolemQ.get_active_market', return_value=fake):
+            self.assertIsNone(CompactPipeline.calc_features(
+                '600519', offset='2026-10-21'))
+            self.assertEqual(
+                CompactPipeline.calc_features(
+                    '600519', offset='2026-10-21', ret_meta=True),
+                (None, None, None))
 
 
 class TestCompactCli(unittest.TestCase):

@@ -153,6 +153,7 @@ Poly9 家族的编排层 —— 把 rolling_poly9_v2 / mapower 串成指标列�
 | f | `sma(series, n, m)` | SMA 指标 —— 逐字搬自老树 analysis/base.py:2519（含其递归定义与 NaN 处理）。 `[dt]` |
 | f | `ema(series, n)` | EMA（ewm(span=n, adjust=False)）—— 逐字搬自老树 base.py:2540。 `[dt]` |
 | f | `llv(series, n)` | 滚动最低值（min_periods=1）—— 逐字搬自老树 base.py:2545。 `[dt]` |
+| f | `hhv(series, n)` | 滚动最高值（min_periods=1）—— :func:llv 的镜像。 `[dt]` |
 | f | `kdj(hight, low, close, fastk_period, slowk_matype, slowk_period, slowd_period)` | KDJ → np.c_[K, D, J] —— 逐字搬自老树 base.py:2550（走 talib.STOCH）。 |
 | f | `calc_four_quadrant_boost(code, features, ohlc_data, annual, market_type)` | 最牛四量图， |
 | f | `calc_quadrant_leverage_macd_timing_lag(features)` | QLevMACDLagD —— 四象限杠杆能量 × MACD 的合成 timing-lag。 |
@@ -163,12 +164,20 @@ Poly9 家族的编排层 —— 把 rolling_poly9_v2 / mapower 串成指标列�
 | f | `calc_quadrant_zen_dash_count(features)` | 4QuadZenDCnt —— 一条 calc_energy（老树 analysis/mainstream.py:180-188）。 |
 | f | `calc_quadrant_bs_trunk_timing_lag(features)` | QuadBsTuk / QuadBsTukLag —— 买卖星线结构与 MACD lag 的合成。 |
 | f | `calc_mainstream_feats(ohlc, features)` | 主力资金吸筹 —— 产出 MsLeadinBf / MsLeadinx3Bf / MsLeadinx5Bf。 |
+| f | `calc_mainstream_leadout_feats(ohlc, features)` | 主力派发/出货（下跌指示）—— :func:calc_mainstream_feats 的镜像。 |
 | f | `calc_bs_before(features)` | 8 个 BS*Bf* —— 买卖/星线信号的「距上一次」计数（Timeline_duration）。 |
 | f | `calc_pivot_timing_lag(features)` | ZenPivotLag —— 距出中枢（ZenPivotZD 变 NaN）以来的 lag。 |
 | f | `available()` | numba 在不在。 |
 | f | `quadrant_jit_status()` | 排障用：numba 版本 + jit 是否真的开了（DISABLE_JIT 环境变量会关掉它）。 |
 | f | `inv_nums(series)` | 逆序对数 —— numba.jit 接口（显式 int16(float32[:])）。 |
 | f | `mapower_np_vXIIs(price, range_list)` | MA 切片的 mapower 归一化 —— numba.jit 接口（显式 float32[:](float32[:], int16[:])）。 |
+
+### `reality_attach`
+把 review / coldstart / ChartScan 的时间线附加到 60min 特征帧（只读）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `attach_reality_feats(features, code)` | 把 review / coldstart / ChartScan 时间线附加到 60min 特征帧。 |
 
 ### `regtree_jit`
 回归树（CART）与 regtree 拟合线 —— 从旧树 analysis/regtree.py 搬运。
@@ -236,6 +245,7 @@ Garident STAGE —— 用 K-Means 把收盘价聚成「支撑/压力带」，再
 | f | `calc_garident_price(closep, random_state)` | 收盘价序列 → 排好序的「支撑/压力带」列表 [[上沿, 下沿], ...]。 |
 | f | `garident_bands_to_ratio(bands, anchor_close)` | 带（绝对价位）→ 相对锚 bar close 的比值带。 `[dt]` |
 | f | `garident_bands_from_ratio(ratio_bands, anchor_close)` | 比值带 → 绝对价位带（乘锚 bar 的 close）。 `[dt]` |
+| f | `garident_bottom_roof(bands)` | GARIDENT_PRICE 带列表 → (BOTTOM_PRICE, ROOF_PRICE) 两条绝对价。 `[dt]` |
 | f | `calc_garident_stage(curr_closep, curr_garident_prices)` | 当前收盘价落在第几条带里 → STAGE。 |
 | f | `calc_garident_stages(checkpoints, features, verbose, echo, random_state)` | 在 checkpoints 逐行定带，把 AKA.STAGE 及其伴随列写进 features。 |
 
@@ -416,8 +426,8 @@ GolemQ 命令行入口 —— 只剩「建 parser → 分发 → help」。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
-| f | `build_parser()` | 建 parser：全局开关 + 每条命令自己的参数。 |
-| f | `main()` | 主函数：处理命令行参数 |
+| f | `build_parser(internal)` | 建 parser：全局开关 + 每条命令自己的参数。 |
+| f | `main(internal)` | 主函数：处理命令行参数 |
 
 ### `bootstrap`
 CLI 环境自检 —— 版权页 + 机器 / 配置 / 服务三道闸。
@@ -445,6 +455,11 @@ CLI 环境自检 —— 版权页 + 机器 / 配置 / 服务三道闸。
 | f | `check_environment(verbose, strict)` | 本地段自检：画 banner + 报异常。返回「硬拦项是否全过」。 |
 | f | `require_mongodb(verbose)` | 服务段自检：MongoDB 连接 + 8.3 版本。不过就退出 :data:EXIT_FAILURE。 |
 
+### `internal`
+内部/调试入口 —— 用户入口不暴露的旗子只在这里。
+
+*(无公开成员)*
+
 ### `tools`
 
 | | 名称 | 摘要 |
@@ -453,6 +468,13 @@ CLI 环境自检 —— 版权页 + 机器 / 配置 / 服务三道闸。
 | f | `purge_mongodb_database(verbose)` | 清理MongoDB数据库 - 通过各个市场实例的清理方法 |
 
 ## GolemQ.cli.commands
+
+### `_internal`
+仅内部/调试用的 CLI 参数 —— 不注册到用户入口。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `add_internal_arguments(parser)` | 把内部旗子注册到 parser —— 只由 build_parser(internal=True) 调用。 |
 
 ### `_registry`
 CLI 命令注册表 —— 机制层，不认识任何具体命令。
@@ -507,7 +529,7 @@ ChartScan（CV 图形识别）的两条 CLI 入口 —— --scan / --server。
 | f | `run_stop(args)` |  |
 
 ### `metadata_align`
---metadata-align —— stock_reality_feat_day 对 K 线的覆盖率报告（只读）。
+--metadata-align —— stock_reality_feat_day 对 K 线的覆盖率报告（只读；internal 命令）。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -534,7 +556,7 @@ ChartScan（CV 图形识别）的两条 CLI 入口 —— --scan / --server。
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `add_moneyflow_arguments(parser)` |  |
-| f | `run_moneyflow(args)` | --moneyflow 的处理体：只做参数校验，干活在 moneyflow_save。 |
+| f | `run_moneyflow(args)` | --moneyflow 的处理体：只做参数校验，干活在 crawler.moneyflow。 |
 
 ### `purge`
 --purge-l1 / --purge：清理 MongoDB 数据库。破坏性，故有确认闸。
@@ -545,7 +567,7 @@ ChartScan（CV 图形识别）的两条 CLI 入口 —— --scan / --server。
 | f | `run_purge(args)` |  |
 
 ### `review`
---strategy review（别名 --review）/ --review-runtime —— 统一因果 review 管线。
+--strategy review（别名 --review）—— 统一因果 review 管线。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
@@ -725,6 +747,7 @@ GolemQ Constants Module
 | f | `aligned_row(label, body, width)` | 阶段名 + 值 的一行，与 :func:render_pipeline_banner 的阶段列同宽。 `[dt]` |
 | f | `stamp_text(when)` | 裸的时刻戳：[2026-10-09 15:34:43]。 `[dt]` |
 | f | `stamp(text, when)` | 给静态头行盖时刻戳：[2026-10-09 15:34:43]: source: pytdx。 `[dt]` |
+| f | `status_line(ok, text, color)` | 行首加 ✓ / ✗（TTY 下绿/红）—— 明细行逐项打勾用。 `[dt]` |
 | f | `dim(text, color)` | 压暗一行（color=True 时）。用 :data:_ANSI_GRAY，非 TTY 原样返回。 |
 | f | `stamp_done(caption, when, color)` | 收尾行：[2026-10-10 00:33:22]: bootstrap done.（color=True 时压暗）。 `[dt]` |
 | f | `identity(app, contact, when, color)` | 身份块 —— 每次运行开头那一小块，末尾带一个空行。 |
@@ -1076,6 +1099,7 @@ stock_reality_feat_day —— 日频元数据的统一落点。
 | f | `day_date(date_str)` | 源端日期 → '%Y-%m-%d'。 `[dt]` |
 | f | `metadata_day_doc(code, day, field, rate, created_at)` | 一行元数据 → stock_reality_feat_day 文档（只带一列载荷）。 `[dt]` |
 | f | `metadata_day_doc_multi(code, day, fields, created_at)` | 一行多列元数据 → 文档。:func:metadata_day_doc 是它的单列特例。 `[dt]` |
+| f | `metadata_covered(field, day, codes, db)` | 某日某列在 stock_reality_feat_day 里已写入的 code 集合（只读）。 |
 | f | `turnover_rows(rows, src_field, dst_field, created_at)` | 某个源的源行 → stock_reality_feat_day 文档列表。 `[dt]` |
 | f | `save_turnover(since, until, batch, verbose, echo, created_at, dry_run)` | 把 4.4 两源的换手率搬进 8.3 stock_reality_feat_day（两列，各写各的）。 |
 | f | `refresh_turnover(days, verbose, echo)` | 增量刷新最近 days 个自然日的换手率（供 --save 调用）。 |
@@ -1083,21 +1107,6 @@ stock_reality_feat_day —— 日频元数据的统一落点。
 | f | `fill_turnover(codes, start, end, verbose, echo, created_at)` | 把「成交量 ÷ 流通股本」现算的换手率补进 stock_reality_feat_day。 |
 | f | `merge_metadata_into_feat(batch, limit, dry_run, verbose, echo)` | 把 :data:LEGACY_METADATA_DAY_COLL 的行原样搬进 :data:REALITY_FEAT_DAY_COLL。 |
 | f | `verify_metadata_merge(sample, verbose, echo)` | 只读核对：抽样比对源表与目标表在 (code, date_stamp) 上是否逐字段相同。 |
-
-### `moneyflow_save`
-资金流 / 千股千评 → stock_reality_feat_day（旧 CLI --moneyflow 的搬运）。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| f | `to_code(value)` | 任意形态的标的代码 → 6 位字符串。 `[dt]` |
-| f | `parse_cn_amount(text)` | 同花顺的带单位金额 → 浮点。 `[dt]` |
-| f | `parse_pct(text)` | '20.02%' → 0.2002（百分数 → 小数）。取不到返回 None。 `[dt]` |
-| f | `last_trade_day()` | 8.3 口径的最后交易日（'YYYY-MM-DD'）—— 同花顺的日期靠它。 |
-| f | `fetch_eastmoney_comment()` | 东财千股千评（ak.stock_comment_em）—— 实测 5200 行 / 11 次分页 / ~3s。 |
-| f | `fetch_ths_fundflow()` | 同花顺全市场当日资金流（ak.stock_fund_flow_individual('即时')）。 |
-| f | `rows_eastmoney(df, created_at)` | 千股千评帧 → stock_reality_feat_day 文档列表。 |
-| f | `rows_ths(df, day, created_at)` | 同花顺资金流帧 → stock_reality_feat_day 文档列表（day 由调用方给）。 |
-| f | `save_moneyflow(source, created_at, verbose, echo, dry_run)` | 取数 → 组行 → upsert_fields 落 stock_reality_feat_day。 |
 
 ### `quotes`
 
@@ -1187,6 +1196,33 @@ A 股参考集合的取数与落库编排 —— 对应 CLI 的 --save <SOURCE> 
 ### `utils`
 
 *(无公开成员)*
+
+## GolemQ.markets.StockCN.crawler
+
+### `diagnosis`
+同花顺「牛叉诊股」→ stock_reality_feat_day（--save tdx 的元数据段之一）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `parse_diagnosis(html_text)` | 牛叉诊股页 HTML → 数值字典；取不到任何评分时返回 None。纯函数。 `[dt]` |
+| f | `fetch_diagnosis(code, timeout)` | 抓单只股票 → :func:parse_diagnosis 的字典（附 code）。网络失败抛异常。 |
+| f | `rows_diagnosis(items, created_at)` | 解析结果 → stock_reality_feat_day 文档列表（(code, date) 唯一）。 |
+| f | `save_diagnosis(codes, delay, verbose, echo, dry_run, timeout)` | 逐只抓牛叉诊股 → stock_reality_feat_day。 |
+
+### `moneyflow`
+资金流 / 千股千评 → stock_reality_feat_day（旧 CLI --moneyflow 的搬运）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `to_code(value)` | 任意形态的标的代码 → 6 位字符串。 `[dt]` |
+| f | `parse_cn_amount(text)` | 同花顺的带单位金额 → 浮点。 `[dt]` |
+| f | `parse_pct(text)` | '20.02%' → 0.2002（百分数 → 小数）。取不到返回 None。 `[dt]` |
+| f | `last_trade_day()` | 8.3 口径的最后交易日（'YYYY-MM-DD'）—— 同花顺的日期靠它。 |
+| f | `fetch_eastmoney_comment()` | 东财千股千评（ak.stock_comment_em）—— 实测 5200 行 / 11 次分页 / ~3s。 |
+| f | `fetch_ths_fundflow()` | 同花顺全市场当日资金流（ak.stock_fund_flow_individual('即时')）。 |
+| f | `rows_eastmoney(df, created_at)` | 千股千评帧 → stock_reality_feat_day 文档列表。 |
+| f | `rows_ths(df, day, created_at)` | 同花顺资金流帧 → stock_reality_feat_day 文档列表（day 由调用方给）。 |
+| f | `save_moneyflow(source, created_at, verbose, echo, dry_run)` | 取数 → 组行 → upsert_fields 落 stock_reality_feat_day。 |
 
 ## GolemQ.markets.StockCN.datasource
 
@@ -1387,6 +1423,7 @@ CompactPipeline —— 从 8.3 读 60min + day，算 calc_compact_features。
 |:--|:--|:--|
 | C | `CompactPipeline` | 逐码 compact 管线（只读）。固定 60min + day + rank，无开关。 |
 | f | `CompactPipeline.market_type_of(code)` |  |
+| f | `CompactPipeline.calc_features(code, offset, verbose, ret_meta)` | 单码 compact 特征的研究入口（Jupyter / 脚本）。 |
 | f | `CompactPipeline.run_code(code, as_of)` |  |
 | f | `run_compact(eval_range, codes, pct_of_cores, offset, verbose)` | 解析 scope → 逐码算 compact → 返回 (results, stats)。不写库。 |
 
@@ -1444,13 +1481,13 @@ Runtime API：在内存里算 review 特征，零 DB 写。
 | f | `daily_snapshot_step(ctx, targets)` | 取样：day_core 已经算好，这里不再重算。 |
 | f | `build_daily_steps()` |  |
 
-### `hour_extra`
-60min 额外两列：样本熵 SE + 因果中枢计数 ZenPivotCnt。
+### `day_extra`
+日族额外两列：日频样本熵 se + 15:00 取样的 ZenPivotCnt（D74）。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
-| f | `hour_extra_step(ctx, targets)` |  |
-| f | `build_hour_extra_steps()` |  |
+| f | `sample_entropy_daily(day, dates)` | 每个目标日的日收盘样本熵（round(..., 3)）；不足 2 个点 / antropy 缺失 ⇒ NaN。 |
+| f | `pivot_counts(ohlc, cutoffs, code)` | 截至每个 cutoffs 时刻已确认的中枢个数（int32）；失败返回 NaN。 |
 
 ### `minor`
 15min minor 信号 —— 老树 calc_zen_wavelet_reality_minor 的完整 19 列。
@@ -1879,6 +1916,11 @@ analysis/quadrant_jit.py（四量图 + 6 指标）的正确性测试。
 | f | `TestFormulaWiring.test_pivot_timing_lag()` |  |
 | f | `TestFormulaWiring.test_bs_before()` |  |
 | f | `TestFormulaWiring.test_quadrant_bs_trunk_timing_lag_matches_its_condition()` |  |
+| C | `TestMainstreamLeadout` | calc_mainstream_leadout_feats —— 吸筹的镜像（D73，新树自造）。 |
+| f | `TestMainstreamLeadout.test_six_columns_and_non_empty()` |  |
+| f | `TestMainstreamLeadout.test_entry_and_shakeout_are_disjoint()` |  |
+| f | `TestMainstreamLeadout.test_causal_prefix_invariance()` | 只喂前 300 根与喂全 400 根，前 300 行逐值相同（不看未来）。 |
+| f | `TestMainstreamLeadout.test_mirror_is_not_the_original()` | HIGH 侧 ≠ LOW 侧 —— 否则「镜像」只是复制了一份吸筹。 |
 | C | `TestDecoupled` | 用户 2026-10-11：「尽可能解耦，越少增加引用和管线越好」。 |
 | f | `TestDecoupled.test_module_source_has_no_quantaxis_or_db()` | 按 AST 查，不按文本 —— docstring 里故意写着这些名字（解释丢掉了什么）。 |
 | f | `TestDecoupled.test_import_does_not_pull_quantaxis()` |  |
@@ -1930,6 +1972,19 @@ analysis/quadrant_coef.py —— 上升系数（QUprICoefD）的解耦编排。
 | C | `TestMacdQA` |  |
 | f | `TestMacdQA.test_matches_quantaxis_formula()` |  |
 | f | `TestMacdQA.test_hist_is_double_the_talib_convention()` |  |
+
+### `test_reality_attach`
+analysis/reality_attach.py 的附加口径测试（mock DB，不连库）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestAttachRealityFeats` |  |
+| f | `TestAttachRealityFeats.test_coldstart_uses_previous_available_day()` |  |
+| f | `TestAttachRealityFeats.test_review_m9t_lag_columns_are_not_in_contract()` |  |
+| f | `TestAttachRealityFeats.test_day_extra_is_attached_from_review()` |  |
+| f | `TestAttachRealityFeats.test_garident_bands_restored_by_anchor_close()` |  |
+| f | `TestAttachRealityFeats.test_chartscan_is_exact_join_not_ffill()` |  |
+| f | `TestAttachRealityFeats.test_prophet_gap_is_ffilled()` |  |
 
 ### `test_regtree_jit`
 analysis/regtree_jit.py —— jit 版与 regtree.py 的对拍。
@@ -2087,9 +2142,13 @@ analysis/compact.py + pipeline/compact 的用例（合成数据，不读库）�
 |:--|:--|:--|
 | C | `TestCausalMap` |  |
 | f | `TestCausalMap.test_intraday_uses_previous_day_1500_uses_today()` |  |
+| f | `TestCausalMap.test_missing_day_stays_nan()` | 某天没有值就是 NaN —— 不做 ffill（用户 2026-10-24 明确）。 |
+| f | `TestCausalMap.test_weekend_intraday_uses_last_available_day()` | 周一/节后首日盘中用上一可用交易日，而不是「前一个自然日」。 |
+| f | `TestCausalMap.test_1500_missing_today_stays_nan()` | 15:00 只认当日行：当日缺行仍是 NaN，不拿上一交易日顶替。 |
 | C | `TestCalcCompactFeatures` |  |
 | f | `TestCalcCompactFeatures.test_single_frame_has_full_contract()` |  |
 | f | `TestCalcCompactFeatures.test_day_mode_maps_day_values_causally()` |  |
+| f | `TestCalcCompactFeatures.test_weekly_atr_price_does_not_overflow_float16()` | ⚠️ 老树 astype(float16).round(3) 对价格 >65.5 会溢出成 inf。 |
 | f | `TestCalcCompactFeatures.test_rank_columns_are_emitted()` |  |
 | f | `TestCalcCompactFeatures.test_does_not_mutate_input()` |  |
 | f | `TestCalcCompactFeatures.test_missing_ohlc_raises()` |  |
@@ -2100,6 +2159,8 @@ analysis/compact.py + pipeline/compact 的用例（合成数据，不读库）�
 | f | `TestPeakPoint.test_peak_columns_are_produced()` |  |
 | C | `TestCompactPipeline` |  |
 | f | `TestCompactPipeline.test_run_compact_with_codes()` |  |
+| f | `TestCompactPipeline.test_calc_features_study_entry()` | Jupyter 研究入口：静态方法直接返回特征 DataFrame（或三元组）。 |
+| f | `TestCompactPipeline.test_calc_features_no_data()` |  |
 | C | `TestCompactCli` |  |
 | f | `TestCompactCli.test_registered()` |  |
 | f | `TestCompactCli.test_defaults_to_fast_without_eval()` | 用户 2026-10-21：只需要 --strategy compact，不给 --eval 默认 fast。 |
@@ -2255,6 +2316,7 @@ cli/bootstrap.py —— 环境自检的口径。
 | f | `TestHardGate.test_failing_python_exits_when_strict()` |  |
 | f | `TestHardGate.test_same_failure_does_not_exit_when_not_strict()` |  |
 | f | `TestHardGate.test_a_warning_never_exits()` | 黄点（线程环境 / 时区 / CUDA）不拦 —— 它们可能是显式选择或不适用。 |
+| f | `TestHardGate.test_dependency_details_mark_each_package_individually()` | 依赖包 节点红 ≠ 每行都红 —— 只有不过的那些该打 ✗（2026-10-23 用户实报）。 |
 | f | `TestHardGate.test_repair_commands_are_exactly_the_config_ones()` | 放行集合必须就是那四条修配置的命令 —— 多一条就绕过闸，少一条就修不回来。 |
 | C | `TestNothingPrintsWhileTheBannerIsAlive` | PITFALLS.md P22：banner 活跃期间一个 print 都不许有。 |
 | f | `TestNothingPrintsWhileTheBannerIsAlive.test_no_print_when_everything_is_fine()` |  |
@@ -2308,6 +2370,10 @@ cli/commands/ 的注册表契约。
 | f | `TestCommandRegistry.test_every_flag_is_a_real_argparse_dest()` | FLAGS 里的名字必须是 parser 真会产出的属性 —— 打错一个字母 |
 | f | `TestCommandRegistry.test_command_names_are_unique()` |  |
 | f | `TestCommandRegistry.test_save_coverage_is_dispatched_before_save()` | ⚠️ 顺序即语义：两个开关同时给时，老链选 coverage。 |
+| C | `TestInternalFlags` | 测试/调试旗子不许出现在用户入口（用户 2026-10-23 定）。 |
+| f | `TestInternalFlags.test_public_parser_hides_internal_flags()` |  |
+| f | `TestInternalFlags.test_internal_only_commands_are_absent_from_public()` | 整条内部命令（coverage/status/metadata-align/runtime/migrate-*）都不许露面。 |
+| f | `TestInternalFlags.test_public_parser_rejects_review_limit()` | 用户入口连「接受但隐藏」都不做 —— 直接 unrecognized。 |
 | C | `TestMatchSemantics` | matches 的判据是真值 —— 等价老链的 elif args.X:。 |
 | f | `TestMatchSemantics.test_default_is_truthiness()` |  |
 | f | `TestMatchSemantics.test_none_does_not_match()` |  |
@@ -2345,6 +2411,7 @@ cli/commands/ 的注册表契约。
 | C | `TestMetadataLogLabel` | 落库目标改名后，日志标签也必须跟着改。 |
 | f | `TestMetadataLogLabel.test_turnover_skip_uses_reality_feat_day()` |  |
 | f | `TestMetadataLogLabel.test_moneyflow_failure_uses_reality_feat_day()` |  |
+| f | `TestMetadataLogLabel.test_metadata_banner_lists_four_sources()` | 用户 2026-10-22：元数据行要含千股千评与牛股诊股，不只是 turnover/moneyflow。 |
 | C | `TestFillTurnoverCli` | --fill-turnover：CLI 只做参数校验 + 委托（DECISIONS.md D44）。 |
 | f | `TestFillTurnoverCli.test_defaults_are_the_last_seven_days()` | 不给边界 ⇒ 与 --save-turnover-days 同口径：今天往前 7 个自然日。 |
 | f | `TestFillTurnoverCli.test_codes_are_split_on_commas()` |  |
@@ -2402,8 +2469,8 @@ EPOCH_DIVISOR —— datetime → 秒的唯一换算系数（DECISIONS.md D52）
 | f | `TestTheConstantItself.test_divisor_is_positive_int()` |  |
 | C | `TestPerDtypeLookup` | 系数按 dtype 查，不是一个全局标量 —— 这条是本次的核心教训。 |
 | f | `TestPerDtypeLookup.test_all_units()` |  |
-| f | `TestPerDtypeLookup.test_tz_aware_dtype()` |  |
-| f | `TestPerDtypeLookup.test_second_resolution_input_is_handled()` | ⚠️ 就是这条当初红的：pd.to_datetime(date 对象) 给 datetime64[s]。 |
+| f | `TestPerDtypeLookup.test_tz_aware_dtype()` | tz-aware 的系数按它自己的 unit 查 —— pandas 2.3 是 ns、3.x 是 us。 |
+| f | `TestPerDtypeLookup.test_date_object_input_is_handled()` | ⚠️ 就是这条当初红的：pd.to_datetime(date 对象) 的精度随 pandas 版本变 |
 | C | `TestEpochSecondsUsesIt` |  |
 | f | `TestEpochSecondsUsesIt.test_known_anchor()` | 北京 15:00 → 07:00Z = 1767596400（与 4.4 存量实测同值）。 |
 | f | `TestEpochSecondsUsesIt.test_accepts_datetimeindex()` |  |
@@ -2544,6 +2611,58 @@ core/presentation.py 的状态 banner —— 纯渲染、显示宽度、光标�
 | f | `test_messenger_integration()` | 测试消息通知集成 |
 
 ## GolemQ.test_cases.markets
+
+### `test_crawler_diagnosis`
+markets/StockCN/crawler/diagnosis.py —— 牛叉诊股页解析与落库形状。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestParseDiagnosis` |  |
+| f | `TestParseDiagnosis.test_extracts_overall_and_five_scores()` |  |
+| f | `TestParseDiagnosis.test_empty_or_unrelated_page_returns_none()` |  |
+| f | `TestParseDiagnosis.test_partial_page_still_keeps_dimensions()` | 没有综合诊断、只有维度评分时也收（单维页面/改版兜底）。 |
+| C | `TestRowsDiagnosis` |  |
+| f | `TestRowsDiagnosis.test_maps_to_reality_feat_columns()` |  |
+| f | `TestRowsDiagnosis.test_skips_item_without_code_or_day()` |  |
+| C | `TestShortCircuit` | 同一交易日已覆盖 >=90% 时不再逐只抓（用户 2026-10-22 要求）。 |
+| f | `TestShortCircuit.test_skips_when_day_covered()` |  |
+| f | `TestShortCircuit.test_partial_coverage_still_fetches()` |  |
+| C | `TestSaveDiagnosis` |  |
+| f | `TestSaveDiagnosis.setUp()` |  |
+| f | `TestSaveDiagnosis.test_writes_only_own_payload_columns()` |  |
+| f | `TestSaveDiagnosis.test_dry_run_does_not_write()` |  |
+| f | `TestSaveDiagnosis.test_progress_lines_only_under_verbose()` | 文字进度锚点只在 --verbose 下打；默认输出留给 tqdm 进度条。 |
+| f | `TestSaveDiagnosis.test_all_failures_return_error_not_raise()` |  |
+
+### `test_crawler_moneyflow`
+markets/StockCN/crawler/moneyflow.py —— 两个源的行构造与单位换算。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestScalarParsers` |  |
+| f | `TestScalarParsers.test_to_code_keeps_six_digits()` | ⚠️ int 陷阱：000001 必须还是 '000001'，不能塌成 '1'。 |
+| f | `TestScalarParsers.test_parse_cn_amount_units()` |  |
+| f | `TestScalarParsers.test_parse_pct_is_divide_by_100()` |  |
+| C | `TestShortCircuit` | 同一交易日已覆盖 >=90% 时不再抓取/落库（用户 2026-10-22 要求）。 |
+| f | `TestShortCircuit.test_skips_when_day_covered()` |  |
+| f | `TestShortCircuit.test_partial_coverage_still_fetches()` | 上一次半途失败只写了 100 只 —— 不到阈值，必须继续抓（不能留洞）。 |
+| C | `TestEastmoneyRows` |  |
+| f | `TestEastmoneyRows.test_columns_and_units()` |  |
+| f | `TestEastmoneyRows.test_date_stamp_is_recomputed_not_copied()` | date_stamp 由 day_stamp 重算（不取源端）—— 与 8.3 口径一致。 |
+| f | `TestEastmoneyRows.test_does_not_carry_price_or_name()` | 最新价/名称 刻意不落（价在 K 线、名在 stock_list）。 |
+| f | `TestEastmoneyRows.test_bad_rows_are_skipped()` |  |
+| C | `TestThsRows` |  |
+| f | `TestThsRows.test_code_does_not_collapse()` | ⚠️ 同花顺的代码是 int —— 000001 必须是 '000001'。 |
+| f | `TestThsRows.test_amounts_are_parsed()` |  |
+| f | `TestThsRows.test_turnover_and_change_are_dropped()` | ⚠️ 同花顺的换手率是第三个口径 —— 丢，不落（否则就是第三列死列）。 |
+| f | `TestThsRows.test_day_comes_from_the_caller()` | 同花顺不带交易日字段 ⇒ day 由调用方给（实测：周六给的是最后交易日）。 |
+| C | `TestPayloadWhitelists` | 白名单是 upsert_fields 的防线 —— 它必须覆盖本模块真写的每一列。 |
+| f | `TestPayloadWhitelists.test_payloads_cover_what_rows_write()` |  |
+| f | `TestPayloadWhitelists.test_the_two_sources_do_not_share_payload_columns()` | ⚠️ 两个源不得碰同一列 —— 否则后跑的会覆盖前一个的成果。 |
+| C | `TestSaveFrame` | 落库前的帧形状 —— 钉住 b5e95f3 引入的重复列回归。 |
+| f | `TestSaveFrame.setUp()` |  |
+| f | `TestSaveFrame.test_frame_has_unique_index_and_columns()` |  |
+| f | `TestSaveFrame.test_duplicate_source_rows_collapse()` | 同花顺分页会重叠（实测 3,300 行 / 2,237 码）—— 落库前按 (date, code) 去重。 |
 
 ### `test_etf_routing`
 ETF 独立成 ETF_CN / etf_* 之后的路由测试。
@@ -2844,32 +2963,10 @@ stock_reality_feat_day 的落库契约。
 | f | `TestFillTurnover.test_covered_by_either_column_counts_as_present()` | 东财列有值也算覆盖 —— 两列取并集才是「这天有换手率」。 |
 | f | `TestFillTurnover.test_missing_share_capital_skips_the_code()` |  |
 | f | `TestFillTurnover.test_no_codes_is_a_usage_error()` |  |
-
-### `test_moneyflow_save`
-markets/StockCN/moneyflow_save.py —— 两个源的行构造与单位换算。
-
-| | 名称 | 摘要 |
-|:--|:--|:--|
-| C | `TestScalarParsers` |  |
-| f | `TestScalarParsers.test_to_code_keeps_six_digits()` | ⚠️ int 陷阱：000001 必须还是 '000001'，不能塌成 '1'。 |
-| f | `TestScalarParsers.test_parse_cn_amount_units()` |  |
-| f | `TestScalarParsers.test_parse_pct_is_divide_by_100()` |  |
-| C | `TestEastmoneyRows` |  |
-| f | `TestEastmoneyRows.test_columns_and_units()` |  |
-| f | `TestEastmoneyRows.test_date_stamp_is_recomputed_not_copied()` | date_stamp 由 day_stamp 重算（不取源端）—— 与 8.3 口径一致。 |
-| f | `TestEastmoneyRows.test_does_not_carry_price_or_name()` | 最新价/名称 刻意不落（价在 K 线、名在 stock_list）。 |
-| f | `TestEastmoneyRows.test_bad_rows_are_skipped()` |  |
-| C | `TestThsRows` |  |
-| f | `TestThsRows.test_code_does_not_collapse()` | ⚠️ 同花顺的代码是 int —— 000001 必须是 '000001'。 |
-| f | `TestThsRows.test_amounts_are_parsed()` |  |
-| f | `TestThsRows.test_turnover_and_change_are_dropped()` | ⚠️ 同花顺的换手率是第三个口径 —— 丢，不落（否则就是第三列死列）。 |
-| f | `TestThsRows.test_day_comes_from_the_caller()` | 同花顺不带交易日字段 ⇒ day 由调用方给（实测：周六给的是最后交易日）。 |
-| C | `TestPayloadWhitelists` | 白名单是 upsert_fields 的防线 —— 它必须覆盖本模块真写的每一列。 |
-| f | `TestPayloadWhitelists.test_payloads_cover_what_rows_write()` |  |
-| f | `TestPayloadWhitelists.test_the_two_sources_do_not_share_payload_columns()` | ⚠️ 两个源不得碰同一列 —— 否则后跑的会覆盖前一个的成果。 |
-| C | `TestSaveFrame` | 落库前的帧形状 —— 钉住 b5e95f3 引入的重复列回归。 |
-| f | `TestSaveFrame.test_frame_has_unique_index_and_columns()` |  |
-| f | `TestSaveFrame.test_duplicate_source_rows_collapse()` | 同花顺分页会重叠（实测 3,300 行 / 2,237 码）—— 落库前按 (date, code) 去重。 |
+| C | `TestMetadataCovered` | 短路判断的读口：按 date_stamp 精确取已覆盖的 code。 |
+| f | `TestMetadataCovered.test_counts_distinct_codes_for_the_stamp()` |  |
+| f | `TestMetadataCovered.test_subset_adds_code_filter()` |  |
+| f | `TestMetadataCovered.test_empty_codes_short_circuits_without_query()` |  |
 
 ### `test_realtime_merge`
 REALTIME 合成读路径（get_kline_price_* 的 realtime=True）的回归钉子。
@@ -3099,13 +3196,15 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `TestDailyStep.test_columns_and_prefix_stability()` |  |
 | C | `TestRatioColumns` | 价格导出的列必须是 close 相对量，不能是绝对价位（复权断层）。 |
 | f | `TestRatioColumns.test_day_price_columns_are_ratios()` |  |
+| f | `TestRatioColumns.test_renko_dummies_are_in_contract_and_restorable()` | 价格列只能以 *D 进契约，且必须在还原表里 —— 三处共用一份定义。 |
+| f | `TestRatioColumns.test_day_renko_price_columns_are_ratios()` | Renko 的价格量纲列落 *D 比值；方向/时序列原样。D70/D72。 |
 | C | `TestMinorStep` |  |
 | f | `TestMinorStep.test_columns_and_prefix_stability()` |  |
 | C | `TestZen` |  |
 | f | `TestZen.test_prefix_stability()` |  |
-| C | `TestHourExtra` |  |
-| f | `TestHourExtra.test_columns_and_causality()` |  |
-| f | `TestHourExtra.test_prefix_stability()` |  |
+| C | `TestDayExtra` | D74：se / ZenPivotCnt 已移到日族，60min 不再产出。 |
+| f | `TestDayExtra.test_columns_and_causality()` |  |
+| f | `TestDayExtra.test_prefix_stability()` |  |
 | C | `TestCausalPivotCount` |  |
 | f | `TestCausalPivotCount.test_counts_only_after_confirmation()` |  |
 | C | `TestColdstart` |  |

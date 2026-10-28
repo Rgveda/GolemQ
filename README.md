@@ -52,7 +52,7 @@ pip install -e .
 
 ```bash
 python -m GolemQ.cli --save tdx        # 参考数据 + K线(stock/index/etf × day,1,5,15,30,60min) + 复权
-python -m GolemQ.cli --save-coverage   # 只读：K 线覆盖缺口报告
+python -m GolemQ.cli.internal --save-coverage   # 只读：K 线覆盖缺口报告（内部入口）
 python -m GolemQ.cli --sub l1_tencent  # 实时 L1 快照订阅（腾讯）
 python -m GolemQ.cli --help
 ```

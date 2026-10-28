@@ -40,15 +40,29 @@
 ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Prophet **已并入 60min 表**
 （无独立 `*_coldstart_reviews`）；Review 精简到 5 个 step；
 3 个死 benchmark 壳与 `BaseBenchmark` 已删 —— `pipeline/` 只剩 `BasePipeline` + `review/`；
+四量图的 `QuadSt`/`ChoBits`/`QuadCodex` 状态机已删（**D66**：零消费方，`--review`
+每码省约 28 秒）；
 落库/水位已改为 **Active Market 取 DB 实例 + 参数注入**；持久化检查见
 `pipeline/review/persistence.py`（按目标表已有 review 行选缺失 bar，不看侧表水位；
 目标下界 day 2560 / min 800 天）。878 条测试全绿。
 
 **下一步**：全量对拍分类（`compare_review_golden.py`）、coldstart `m9tBsl`
-（需 compact 特征链）、`--eval fast/etf/index/all` 回填；`--review-runtime` 端到端冒烟。
+（需 compact 特征链）、`--eval fast/etf/index/all` 回填；internal 入口的 `--review-runtime` 端到端冒烟。
 ⚠️ `--eval` 是**全局唯一**的 scope 选项（`eval_scope`），与 `--review` / `--scan` /
 `--strategy` 组合；**不要再造** `--review-eval` 这类前缀变体（D58）。
 ⚠️ `--daily` **已删除**（语义不明）；`--review` == `--strategy review`。
+
+#### Review 列覆盖度（2026-10-27 实测，见 D71/D72）
+
+| 列 | 覆盖 | 结论 / 下一步 |
+|:--|--:|:--|
+| `stage` / `garPD` | 99.7% | 不用重跑；缺的多为短历史 / 定带失败 |
+| `poly9MajD` / `poly9WekD` | 100% | — |
+| `rTrePrcMajD` / `rTreSlopMajD` | 93% | 缺的是 `<450` 根 / 拟合失败，**历史不足补不了** |
+| `prophetLbD` 等 | **42%** | 需专门「只补 Prophet」的重型工具，或接受现状（**待你决定**） |
+| `se`（**day 表日频**） | **99.995%** | D74：2,935,066 / 2,935,202；缺 136 行 = 27 只标的上市初期暖机 |
+| `ZenPivotCnt`（**day 表 15:00 采样**） | **99.94%** | D74：2,933,407 / 2,935,202；缺 1,795 行 = 2 只北交所 920xxx（60min 数据 2025-09 才起）。⚠️ 全历史重算使计数变大（000001 8→47） |
+| `renkoSpriceD` 等 14 列 | **100%** | `tools/backfill_renko.py`（D72）已补齐 2,935,202 行 / 1,883 码，14 列缺失 0 |
 
 ### 指标搬迁（`DECISIONS.md` D49 / **D50**）—— ✅ **四块全部收口**（③ 的编排按你的决定挂账）
 
@@ -65,9 +79,10 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 | **第 4 步** | 两表合并：`stock_reality_feat_day` ← `stock_reality_feat_day`（**17,133,065 行**）| ✅ **搬完并核对通过**（D50）：读/写 **17,133,065 / 17,133,065**、丢弃 0；抽样 20,000 行 **缺 0 / 不符 0**；写口全切。**旧表已 drop**（删前又抽 500 条核过）|
 | **第 5 步** | ~~解掉 `features/` 两个 stub~~ → **整个 `GolemQ/features/` 包已删**（5 个函数零调用方；2 个新树已有等价物、3 个数据源在 8.3 不存在）| ✅ **D50** |
 
-**另有一条待办**：D49 第三节那条「**凡价格导出的绝对价位一律存比值**」的通则 ——
-`BOTTOM_PRICE` / `ROOF_PRICE`（`ChipDistribution_jit.py:1123-1125`）**同病未治**，
-写口/读口的比值↔绝对价接线也还没做。
+~~另有一条待办：`BOTTOM_PRICE` / `ROOF_PRICE` 同病未治~~ —— **2026-10-28 已更正**：
+它们是**绝对价**，链路 `garPD`（比值）→ 还原 `garP`（绝对）→ 取
+`btmP`/`roofP`（绝对），**不落库、不归一化**。常量已补、attach 已接线
+（**D76**）。
 
 ### CV 存量搬运（`docs/decisions/D51.md`）—— ✅ **搬完并核对通过**
 
@@ -78,7 +93,7 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 | 迁移函数 | ✅ `migrate_reality_feat_from44` —— 逐码路由、只搬 CV 列、**复用 `upsert_fields`**（用户明确定：「迁移用 Upsert，写入函数共用」） |
 | 执行 | ✅ **16,287,825 / 16,287,825，丢弃 0**（首轮，约 44 分钟）<br>🔁 **2026-10-18 二次补搬**（上卷列 + `ChartScaned` 标记）：**19,816,524 行，exit 0** |
 | ⚠️ 首轮口径缺陷（已修，D51 §五之三） | ① 日族只搬 `ClsMaj` 那套，丢了 `ClsMin`(511万)/`Class`(487万)；② 只有 `ChartScaned` 的标记行(312万)被过滤；③ 60min 族没带上卷来的 `ClsMin`(4.4 抽样 916/3000)。**后果：`all_nat_min` 恒真 ⇒ 每只全扫 1008 天**。实测 mode=1：4.4 **0/40** → 修复前 8.3 **36/40** → 修复后 **0/40** |
-| 二次核对 | ✅ `--migrate-reality-verify` 抽 **120,000 行 → 缺 0 / 不符 0**；`mode=1` 抽样 **0/40** |
+| 二次核对 | ✅ internal 入口的 `--migrate-reality-verify` 抽 **120,000 行 → 缺 0 / 不符 0**；`mode=1` 抽样 **0/40** |
 | 核对 | ✅ 抽样 120,000 行 → **缺 0 / 不符 0**；**两侧独立全扫**对账 16,287,825 vs 16,287,827（**+2 = D42 的两行冒烟数据**），九个集合逐集合精确计数**全 0 差** |
 | **ChartScan 写库路由** | ✅ **揪出 4 处分叉并修**（见下） |
 | **CLI 入口** | ✅ `--scan ChartScan` / `--server ChartScan` 搬进本仓库（`cli/commands/chartscan.py`）。**自动切到 GolemAI env**（子进程 re-exec），**围栏不加豁免**（D51 五之二）。18 条用例 |
@@ -210,6 +225,7 @@ mainstream-credits 等模型函数；牛股诊股数据也未搬。
 |:--|:--|:--|
 | 1 | **未被引用但值错的常量** | 只有**全量审计**能闭合（现有两个工具都只看被引用的）。只读检查，成本低 |
 | 2 | **`880xxx` 那 689 只指数** | 腾讯**不供**（通达信自编指数），已从码表剔除。要它们得换源（通达信本地 / pytdx）—— 但**它们本来就不是交易标的**，多半不必 |
+| 3 | **LEADOUT 是否接入 review** | 库函数已就绪（D73）。选项：① 只留库代码、由策略自行调用；② 进 review 契约并落库（需定阈值校准 + backfill，参照 D69/D72）。快测 edge 弱、高价股 0 触发 |
 
 > **E 已关闭（2026-10-20）**：查库确认 `200–209` 与 `161–169`/`184` 在 `index_*`/`stock_*`
 > **都没有数据** ⇒ 纯分类修正，无需搬数据。ETF 拆分本身已完成（`index_*` 零 ETF）。
@@ -282,6 +298,23 @@ mainstream-credits 等模型函数；牛股诊股数据也未搬。
 | **XGB-COMPACT** | `analysis/compact.py::calc_compact_features`（37 derivable + rank 7 列 + ATR + peak，60min/day 因果映射）；`pipeline/compact/` + `--strategy compact` 只读 | ✅ **D62**，958 条测试 |
 | **D59-EXAMPLES** | `examples/` 里 `analysis.renko` / `analysis.quadrant` 旧 import 同步到 `*_jit`（D59 合并后漏改） | ✅ 2026-10-21 |
 | **NOISE-FIX** | Prophet 1.5 的 cmdstanpy INFO / `Logging error` 与 Chebyshev `RankWarning` 刷屏；`old_tree` 不再误删真实 polars | ✅ **P44**，960 条测试 |
+| **COMPACT-STUDY** | `CompactPipeline.calc_features(code, offset, ret_meta)` 研究入口（范式同老树 cookbook 的 `calc_stock_poolcoef_analysis`）；新增 `cookbooks/calc_compact_features.ipynb`（只产特征 + matplotlib） | ✅ worklog 2026-10-22，962 条测试 |
+| **META-4SRC** | `--save tdx` 元数据段扩成 `turnover · moneyflow · eastmoney · diagnosis`：千股千评复用 `save_moneyflow`；牛股诊股新增 `markets/StockCN/crawler/diagnosis.py`（页面已从 stockpage 搬到 doctor，五维评分 + 综合 + 平均成本）；逐只 ~20–40 分钟，失败降级；进度走 tqdm + 每 100 只 `say` 锚点；eastmoney/diagnosis 有当日覆盖 >=90% 短路闸 | ✅ **D63**，980 条测试 |
+| **BOOTSTRAP-DETAIL** | 环境自检「依赖包」明细**逐包**打勾：新增 `presentation.status_line`，不再因 pandas 一项不过就把 numpy/polars 等全标 `✗` | ✅ worklog 2026-10-23；pandas 3.0.6 全量 982 条全绿；epoch 测试已改按实际 dtype 断言（s/ms/us/ns 四单位模拟均过） |
+| **CLI-INTERNAL** | 用户入口（29 个 dest）与内部入口（`python -m GolemQ.cli.internal`）分离：所有 `--save*` 调参/试跑旗子、review/migrate 的 limit+dry-run、fill-turnover 范围，以及 `--save-coverage` / `--save-status` / `--metadata-align` / `--review-runtime` / 全部 `--migrate-*` 整条命令，用户 `--help` 不再出现 | ✅ **D64**，985 条测试 |
+| **REVIEW-CAMEL** | review/coldstart 列名统一伪驼峰：`stage` / `bstStgBf` / `epStgBf` / `prophet*` / `poly9Maj` / `poly9pwr3Maj` / `se` / `zPLagMajR`；存量 1,217,020 行用 `$rename` 原地改（不重算） | ✅ **D65**，986 条测试 |
+| **M9T-LAG-DEL** | review 不再生产/落库/attach `m9tLag`（库里全 None）；`day_core_step` 盘中补算上一可用交易日的 coldstart 行 | ✅ **D67** |
+| **NOTEBOOK-READONLY** | notebook 只读 review 已落库的 `ZenPivotCnt`/`se`，不再本地重算；attach 增加 `HOUR_EXTRA_COLUMNS` 精确 join | ✅ **D68** |
+| **HOUR-EXTRA-BACKFILL** | `tools/backfill_hour_extra.py` 只补 `se`/`ZenPivotCnt`；已 apply **23 码 / 47,191 行** | ✅ **D69** |
+| **PRICE-DUMMY** | 归一化价格统一 `D`（落库）/ `_DUMMY`（常量）；DB `$rename` 6,650,307 行 + 60min `poly9Maj` `$unset` 3,797,971 行；attach `*close` 还原无后缀价格 | ✅ **D70** |
+| **RENKO-DAY** | review 日族加 Renko S/L 时序；`tools/backfill_renko.py --partial --apply` 两轮，2,875,464 / 2,878,469 日行（99.9%） | ✅ **D71** |
+| **RENKO-FAMILY** | review 日族保存 Renko 全族 14 列，6 个价格列落 `*D` 比值；backfill 扩到 14 列并修掉 `$ifNull` 缺 `$` 的静默 bug | ✅ **D72**：存量 **2,935,202 / 2,935,202 行**（1,883 码），14 列缺失均 0；997 条测试 |
+| **LEADOUT** | 主力吸筹 6 列的镜像（HIGH/HHV/上涨偏离 + KDJ/MACD 反向）：`analysis/quadrant_jit.py::calc_mainstream_leadout_feats` → `MsLeadout*` 6 列；与吸筹共用内核，老树对拍仍过 | ✅ **D73**（库代码；**未接 review/落库**，快测 edge 弱、阈值需校准）；1002 条测试 |
+| **DAY-EXTRA** | `se` / `ZenPivotCnt` 从 60min 契约移到日族：`se` 改日收盘样本熵（540 日窗口），`ZenPivotCnt` 用 **2016 起全历史 60min** 取 15:00 值；60min 侧 `$unset`，attach 走日族映射 | ✅ **D74**：day `se` 99.996%、`ZenPivotCnt` **99.94%**（缺 2 只北交所）；1002 条测试 |
+| **DATA-INVENTORY** | 数据暗线审计：8.3 频率阶梯齐全、1min 母数据 21.5 亿行（2017-11 起）、60min 1999 起、1day 1990 起；4.4 多出的 60min 行是重复/错标频率，**标准时刻缺失 0** | ✅ 新文档 [`docs/data_inventory.md`](docs/data_inventory.md)（已挂 `CLAUDE.md` 第 7 条） |
+| **OLD-REVIEW-NOMIGRATE** | 4.4 `golemq.stock_reality_feat_*` 旧 review 特征**明确不搬**：未归一化、复权锚冻结在过去，无参考意义；8.3 历史缺口是刻意的（CV 列仍保留） | ✅ **D75**，无代码改动 |
+| **BOTTOM-ROOF** | `btmP`/`roofP` 是**绝对价**：`garPD`(比值)→还原`garP`(绝对)→取 band 首底/末顶；补老树常量、`stages.garident_bottom_roof`、attach 接线；**不落库** | ✅ **D76**，由用户更正 D49 的「同病」误记 |
+| **NAMING-AUDIT** | 列名伪驼峰：39 个老树真值全改（`mpwr3*`/`hmpwr12`/`lrgPrice`/`cciNorm`/`ma90Clr*`/`volNorm*`/`peak*`/`fin*`/`lastClose` 等），28 个标准名/已落库元数据保留；8.3 存量扫描 0 命中（4.4 只读不动） | ✅ **D77**，全量 1003 条测试 |
 
 ---
 

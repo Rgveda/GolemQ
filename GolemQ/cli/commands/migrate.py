@@ -6,7 +6,9 @@
 元数据类集合（`stock_ranking` / `stock_valuation`）从没搬过。现在按需恢复，
 用途限定为「一次性搬运」，见 `DECISIONS.md` 的 D33 修正条。
 
-两条：`--migrate-turnover`（换手率）与 `--migrate-index-list`（指数名单）。
+四条（**全部 internal，不向普通用户暴露**）：`--migrate-turnover`（换手率）、
+`--migrate-index-list`（指数名单）、`--migrate-metadata-merge/verify`、
+`--migrate-reality-feat/verify`。
 """
 from __future__ import annotations
 
@@ -28,10 +30,8 @@ def add_turnover_arguments(parser) -> None:
     parser.add_argument('--migrate-until',
                         help="只搬该日之前的（YYYY-MM-DD）",
                         type=str, default=None)
-    parser.add_argument('--migrate-dry-run',
-                        help="只读 4.4 并统计，**不写 8.3**（先量规模与丢弃量用）",
-                        action='store_true',
-                        default=False)
+    # NOTE: `--migrate-dry-run` 是内部/调试旗子，只在
+    # `python -m GolemQ.cli.internal` 里注册（见 `commands/_internal.py`）。
 
 
 def run_migrate_turnover(args) -> None:
@@ -41,7 +41,7 @@ def run_migrate_turnover(args) -> None:
     try:
         out = save_turnover(since=args.migrate_since,
                             until=args.migrate_until,
-                            dry_run=args.migrate_dry_run)
+                            dry_run=getattr(args, 'migrate_dry_run', False))
     except Exception as exc:                     # noqa: BLE001
         # 连不上 4.4 是最可能的失败。**要说清它推的是哪个地址** ——
         # 地址是从 8.3 的 uri 推出来的（同机换端口），推错了会指到别的主机。
@@ -56,7 +56,7 @@ def run_migrate_turnover(args) -> None:
     total_read = sum(s['read'] for s in out.values())
     total_written = sum(s['written'] for s in out.values())
     total_skipped = sum(s['skipped'] for s in out.values())
-    if args.migrate_dry_run:
+    if getattr(args, 'migrate_dry_run', False):
         print('[migrate] 干跑：读 {} / 可写 {} / 丢弃 {}（【没有写库】）'.format(
             total_read, total_written, total_skipped))
     else:
@@ -73,6 +73,7 @@ MIGRATE_TURNOVER = Command(
     flags=('migrate_turnover',),
     add_arguments=add_turnover_arguments,
     run=run_migrate_turnover,
+    internal_only=True,
 )
 
 
@@ -81,7 +82,7 @@ def add_index_list_arguments(parser) -> None:
                         help="把 4.4 的 quantaxis.index_list **补**进 8.3 的 index_list"
                              "（**只补缺、不覆盖** —— 4.4 的 pre_close 早已过期，"
                              "盖掉 pytdx 刚取的新值是净损失）。"
-                             "配合 --migrate-dry-run 干跑。",
+                             "",
                         action='store_true',
                         default=False)
 
@@ -91,7 +92,7 @@ def run_migrate_index_list(args) -> None:
     from GolemQ.markets.StockCN.refdata_save import save_index_list_from44
 
     try:
-        save_index_list_from44(dry_run=args.migrate_dry_run)
+        save_index_list_from44(dry_run=getattr(args, 'migrate_dry_run', False))
     except Exception as exc:                     # noqa: BLE001
         from GolemQ.core.migrate44 import mongo44_uri
         print('[migrate] 失败：{}: {}'.format(type(exc).__name__, exc), file=sys.stderr)
@@ -105,6 +106,7 @@ MIGRATE_INDEX_LIST = Command(
     flags=('migrate_index_list',),
     add_arguments=add_index_list_arguments,
     run=run_migrate_index_list,
+    internal_only=True,
 )
 
 
@@ -113,7 +115,7 @@ def add_metadata_merge_arguments(parser) -> None:
                         help="把 8.3 的 stock_metadata_day **原样**搬进 "
                              "stock_reality_feat_day（**8.3 内部合并**，不连 4.4）。"
                              "幂等（只 $set、键 (code, date_stamp)），中途挂了重跑即可。"
-                             "配合 --migrate-dry-run 先量规模、--migrate-limit 试跑。",
+                             "",
                         action='store_true',
                         default=False)
     parser.add_argument('--migrate-metadata-verify',
@@ -121,9 +123,8 @@ def add_metadata_merge_arguments(parser) -> None:
                              "是否逐字段相同。⚠️ 合并跑完必须先跑它再谈 drop。",
                         action='store_true',
                         default=False)
-    parser.add_argument('--migrate-limit',
-                        help="只搬前 N 行（试跑用）。不传 = 全量",
-                        type=int, default=None)
+    # NOTE: `--migrate-limit` 是**内部/调试**旗子，只在
+    # `python -m GolemQ.cli.internal` 里注册（见 `commands/_internal.py`）。
 
 
 def run_migrate_metadata_merge(args) -> None:
@@ -140,8 +141,8 @@ def run_migrate_metadata_merge(args) -> None:
             sys.exit(1)
         return
 
-    stats = merge_metadata_into_feat(dry_run=args.migrate_dry_run,
-                                     limit=args.migrate_limit)
+    stats = merge_metadata_into_feat(dry_run=getattr(args, 'migrate_dry_run', False),
+                                     limit=getattr(args, 'migrate_limit', None))
     if stats['skipped']:
         print('[migrate] ⚠️ 有丢弃行 —— 见上面的说明', file=sys.stderr)
 
@@ -151,6 +152,7 @@ MIGRATE_METADATA_MERGE = Command(
     flags=('migrate_metadata_merge', 'migrate_metadata_verify'),
     add_arguments=add_metadata_merge_arguments,
     run=run_migrate_metadata_merge,
+    internal_only=True,
 )
 
 
@@ -160,7 +162,7 @@ def add_reality_feat_arguments(parser) -> None:
                              "*_reality_feat_*（**只搬 CV 列**，不搬那 136 个指标列）。"
                              "逐码路由：etf_cn→etf_*、index_cn/fund_cn→index_*、"
                              "stock_cn→stock_*。幂等（只 $set）。"
-                             "配合 --migrate-dry-run 先量规模、--migrate-limit 试跑。",
+                             "",
                         action='store_true',
                         default=False)
     parser.add_argument('--migrate-reality-verify',
@@ -184,15 +186,16 @@ def run_migrate_reality_feat(args) -> None:
         return
 
     try:
-        out = migrate_reality_feat_from44(limit=args.migrate_limit,
-                                          dry_run=args.migrate_dry_run)
+        out = migrate_reality_feat_from44(
+        limit=getattr(args, 'migrate_limit', None),
+                                          dry_run=getattr(args, 'migrate_dry_run', False))
     except Exception as exc:                     # noqa: BLE001
         from GolemQ.core.migrate44 import mongo44_uri
         print('[migrate] 失败：{}: {}'.format(type(exc).__name__, exc), file=sys.stderr)
         print('[migrate] 4.4 地址由 8.3 的 uri 推导得到：{}'.format(mongo44_uri()),
               file=sys.stderr)
         sys.exit(1)
-    if not args.migrate_dry_run and not out:
+    if not getattr(args, 'migrate_dry_run', False) and not out:
         print('[migrate] ⚠️ 一行都没搬到 —— 检查 4.4 是否可达', file=sys.stderr)
 
 
@@ -201,4 +204,5 @@ MIGRATE_REALITY_FEAT = Command(
     flags=('migrate_reality_feat', 'migrate_reality_verify'),
     add_arguments=add_reality_feat_arguments,
     run=run_migrate_reality_feat,
+    internal_only=True,
 )

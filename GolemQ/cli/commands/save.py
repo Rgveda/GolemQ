@@ -1,9 +1,9 @@
 # coding:utf-8
 """`--save <SOURCE>`：参考数据 + K 线 + xdxr/adj 的主流水线（`DECISIONS.md` D11/D14/D15/D16）。
 
-本模块**同时拥有整个 `--save*` 参数家族**（12 个）—— 包括只读命令
-（`--save-coverage` / `--save-status`）也会读的 `--save-targets` /
-`--save-frequencies` / `--save-no-adj`。参数只在一处注册，别的命令读 `args` 即可。
+本模块拥有**面向用户**的 `--save*` 参数；`--save-codes` / `--save-targets` /
+`--save-frequencies` / `--save-dry-run` 是内部/调试旗子，注册在
+`commands/_internal.py`（只由 `python -m GolemQ.cli.internal` 暴露）。
 
 这里只做**校验 + 委托**；取数逻辑全在 `markets/StockCN/{refdata_save,kline_save}.py`。
 ⚠️ 唯一「越界」的是 banner —— 但那是 `D14` 明确定的：「banner 由 CLI 构造后**注入**，
@@ -17,13 +17,6 @@ from ._registry import Command, usage_error
 
 
 def add_save_arguments(parser) -> None:
-    parser.add_argument('--save-collections',
-                        help="限定要保存的参考集合，逗号分隔；默认 = 该源能供的全部"
-                             "（tdx/pytdx：stock_list,stock_info,stock_block,etf_list；"
-                             "qmt：前三者）",
-                        type=str,
-                        default=None)
-
     # ⚠️ `choices=` 是**校验的唯一出处**（用户 2026-10-09）—— 别在 `run_save` 里
     # 再手写一遍 `if value not in (...)`：那样报错是「错误: ...」+ exit 1，
     # 而 argparse 给的是标准 usage + `invalid choice`（退出码 2），
@@ -40,44 +33,10 @@ def add_save_arguments(parser) -> None:
                              "qmt 只做参考数据（走 qmt 源），K 线只有 pytdx 供得了故跳过。"
                              "不带值时等同 tdx")
 
-    parser.add_argument('--save-start', default='2015-01-01',
-                        help="分钟线**首次**灌库的起点（库里没有该 code 时才用），默认 2015-01-01")
-
-    parser.add_argument('--save-turnover-days', type=int, default=7,
-                        help="换手率增量刷新的回溯自然日数（默认 7：够覆盖一个长假）。"
-                             "⚠️ 它读 4.4（同局域网，无频次限制）；4.4 不可达时"
-                             "只报警、不拖垮 --save")
-
-    parser.add_argument('--save-margin-days', type=int, default=0,
-                        help="增量窗口往前多算几个交易日（默认 0 = 只覆盖水位当天那一根）。"
-                             "调大只在「源端回补了更早历史」的修补场景有用，"
-                             "代价是每只票每天多删多写一根")
-
-    parser.add_argument('--save-progress-every', type=int, default=100,
-                        help="每处理 N 个代码打一行进度（0 = 只打首尾），默认 100")
-
-    parser.add_argument('--save-jobs', type=int, default=4,
-                        help="并发线程数（= 同时打开的 pytdx 连接数），默认 4")
-
-    parser.add_argument('--save-targets',
-                        help="限定标的族，逗号分隔：stock,index,etf；默认全部")
-
-    parser.add_argument('--save-frequencies',
-                        help="限定频率，逗号分隔：day,1min,5min,15min,30min,60min；默认全部")
-
-    parser.add_argument('--save-codes',
-                        help="限定代码（试跑/排障用），逗号分隔；默认按标的名单全量")
-
-    parser.add_argument('--save-dry-run', action='store_true', default=False,
-                        help="**只取数不写库**，并与库内重叠窗口逐字段对拍（映射表的验收手段）")
-
-    parser.add_argument('--save-no-adj', action='store_true', default=False,
-                        help="不重算 {stock,etf}_adj（前复权因子）。默认对**事件变化**的 code 整条重算")
-
-    parser.add_argument('--save-refresh', action='store_true', default=False,
-                        help="忽略参考数据的**刷新闸**，本次一律重取。默认按上次**成功完成**"
-                             "的时刻算：盘中 5 小时内 / 盘后 24 小时内不重取（压掉重复的 "
-                             "HTTP 查询）。起算点是「上次成功完成」而非「上次启动」")
+    # NOTE: `--save*` 的调参/试跑旗子（collections/start/turnover-days/
+    # margin-days/progress-every/jobs/no-adj/refresh/codes/targets/
+    # frequencies/dry-run）全部是**内部/调试**用，只在
+    # `python -m GolemQ.cli.internal` 里注册（见 `commands/_internal.py`）。
 
 
 def run_save(args) -> None:
@@ -88,10 +47,10 @@ def run_save(args) -> None:
     def _split(v):
         return [x.strip() for x in v.split(',') if x.strip()] if v else None
 
-    targets = _split(args.save_targets)
-    frequencies = _split(args.save_frequencies)
-    codes = _split(args.save_codes)
-    ref_collections = _split(args.save_collections)
+    targets = _split(getattr(args, 'save_targets', None))
+    frequencies = _split(getattr(args, 'save_frequencies', None))
+    codes = _split(getattr(args, 'save_codes', None))
+    ref_collections = _split(getattr(args, 'save_collections', None))
 
     # 收盘行情下载是**长跑**：Ctrl-C 与数据形状异常（KeyError 等）都该给人话，
     # 不把堆栈砸到用户脸上。⚠️ `KeyboardInterrupt` **不是 `Exception` 子类**，
@@ -120,8 +79,9 @@ def run_save(args) -> None:
             refresh_stock_codes_cache,
             save_refdata,
         )
+        from GolemQ.markets.StockCN.crawler.diagnosis import save_diagnosis
+        from GolemQ.markets.StockCN.crawler.moneyflow import save_moneyflow
         from GolemQ.markets.StockCN.metadata_save import refresh_turnover
-        from GolemQ.markets.StockCN.moneyflow_save import save_moneyflow
 
         # 源名决定整条流程。**K 线只有 pytdx 供得了**（`kline_save` 全模块只走
         # tdx 适配器），故非 tdx 侧一律跳过 K 线/xdxr/adj，只做参考数据。
@@ -151,21 +111,22 @@ def run_save(args) -> None:
 
         requested = [c for c in (ref_collections or refdata_set)
                      if c in refdata_set]
-        do_refdata = bool(requested) and not args.save_dry_run
+        do_refdata = bool(requested) and not getattr(args, 'save_dry_run', False)
 
         # K 线的实际工作项：(族, 频率) → 集合名。默认取 kline_save 的两张表。
         k_targets = tuple(targets) if targets else KLINE_TARGETS
         k_freqs = tuple(frequencies) if frequencies else KLINE_FREQS
-        do_xdxr = (tdx_like and not args.save_dry_run
+        do_xdxr = (tdx_like and not getattr(args, 'save_dry_run', False)
                    and (targets is None or 'stock' in k_targets))
 
         # —— banner：把**整条流程**摆成表头，跑一步点一个 ——
         # 表在 CLI 拼，`refdata_save` / `kline_save` 都不认识 UI：它们只负责
         # `on_progress` 回调与 `echo` 输出汇。标题报**真实源名**而非 SOURCE 取值
         # （`--save tdx` 走的源就叫 pytdx，报 `source: pytdx` 才不误导）。
-        # 元数据刷新：只有 tdx 侧的非干跑才做。**它一个闸管两件事** ——
-        # 换手率（读 4.4）与资金流（同花顺当日快照）。
-        do_turnover = tdx_like and not args.save_dry_run
+        # 元数据刷新：只有 tdx 侧的非干跑才做。**它一个闸管四件事** ——
+        # 换手率（8.3 现算）、资金流（同花顺当日快照）、千股千评（东财）、
+        # 牛股诊股（同花顺逐只，最慢，排最后）。
+        do_turnover = tdx_like and not getattr(args, 'save_dry_run', False)
 
         rows = []
         if do_refdata:
@@ -182,7 +143,8 @@ def run_save(args) -> None:
         # 与 K线/复权那条**历史回填**链没有依赖 ⇒ 放最后，前面任何一段跑挂了都不
         # 影响它；而它本来就是「收盘后」那一步。
         if do_turnover:
-            rows.append(('元数据', None, ['turnover', 'moneyflow']))
+            rows.append(('元数据', None,
+                         ['turnover', 'moneyflow', 'eastmoney', 'diagnosis']))
 
         # `数据源` 一行：与阶段名**对齐成一列**，取代旧 banner 自己那条头行
         # `source: pytdx`（2026-10-09 改版，见 `core.presentation.identity`）。
@@ -209,7 +171,7 @@ def run_save(args) -> None:
         # 名单类盘中 5h/盘后 24h，`stock_info` 恒定 24h），未过期的不重取。
         # 所以这里传的是**函数**而不是一个数：阈值要按集合现算。
         # 起算点是「上次**成功完成**」——见 refdata_save 的 `mark_refdata_success`。
-        refdata_ttl = None if args.save_refresh else refdata_ttl_hours
+        refdata_ttl = None if getattr(args, 'save_refresh', False) else refdata_ttl_hours
         refdata = {}
         if do_refdata:
             # 刷新闸的**参数细节**只在 `-v` 下说 —— 不加 `--verbose` 别往外铺
@@ -218,7 +180,7 @@ def run_save(args) -> None:
             if refdata_ttl and args.verbose:
                 say('[refdata] 刷新闸：**按集合**计时'
                     '（名单类 盘中5h/盘后24h，stock_info 恒定24h）；'
-                    '要强制重取用 --save-refresh')
+                    '要强制重取走 internal 入口的 --save-refresh')
             # 只按「真取到行」点亮 —— failed/skipped 的节点留在未获取，
             # 免得 banner 替失败的集合谎报成功；逐集合的真实状态由 format_status 出。
             # ⚠️ 例外：被刷新闸拦下的（`cached`）**要点亮** —— 数据是好的、只是没重取，
@@ -264,18 +226,18 @@ def run_save(args) -> None:
         else:
             report = save_kline_tdx(
                 targets=targets, frequencies=frequencies, codes=codes,
-                start_min=args.save_start, jobs=args.save_jobs,
-                dry_run=args.save_dry_run,
-                margin_days=args.save_margin_days,
-                progress_every=args.save_progress_every,
+                start_min=getattr(args, 'save_start', '2015-01-01'), jobs=getattr(args, 'save_jobs', 4),
+                dry_run=getattr(args, 'save_dry_run', False),
+                margin_days=getattr(args, 'save_margin_days', 0),
+                progress_every=getattr(args, 'save_progress_every', 100),
                 verbose=args.verbose, echo=say,
                 # `--save-refresh` 一个旗子两处生效：参考数据的刷新闸（上面）、
                 # K 线的短路（这里）。语义统一为「别信缓存，全查一遍」。
-                force_refresh=args.save_refresh,
+                force_refresh=getattr(args, 'save_refresh', False),
                 on_progress=lambda nm, phase, st: (
                     banner.mark(nm, RUNNING if phase == 'start' else DONE)
                     if banner else None))
-            if args.save_dry_run:
+            if getattr(args, 'save_dry_run', False):
                 for name, st in report['kline'].items():
                     say('[dry-run] {}: 可比 {} 行'.format(name, st.get('compared', 0)))
                     for field, entry in sorted(st.get('diffs', {}).items()):
@@ -299,7 +261,7 @@ def run_save(args) -> None:
                     # ⚠️ `adj` 节点**刻意不设闸**：它不是"定期全扫"，而是"**事件变了才重算**"
                     # （只在上面 `events_changed` 非空时才走到）—— 拿 TTL 拦它等于
                     # **该重标的时候不重标**，那正是它存在的理由。
-                    if not args.save_refresh and allow_xdxr_shortcircuit(xdxr_node):
+                    if not getattr(args, 'save_refresh', False) and allow_xdxr_shortcircuit(xdxr_node):
                         banner.mark(xdxr_node, DONE)   # 数据是好的、只是没重取（同参考数据的 `cached`）
                         # ⚠️ **`_adj` 也要点白**（用户 2026-10-10 实报「两个 _adj 运行过就该白」）：
                         # 闸跳过时这里 `continue`，**下面整个 `_adj` 段一次都不执行** ⇒ 它会留灰。
@@ -321,7 +283,7 @@ def run_save(args) -> None:
                     # 不改成给 `save_xdxr_tdx` 加 `on_progress`：那函数内部的进度已经由
                     # tqdm 条承担，banner 这层只要粗粒度状态（绿=在跑 / 白=跑完）。
                     banner.mark(xdxr_node, RUNNING)
-                    xdxr = save_xdxr_tdx(codes=codes, jobs=args.save_jobs,
+                    xdxr = save_xdxr_tdx(codes=codes, jobs=getattr(args, 'save_jobs', 4),
                                          verbose=args.verbose, echo=say,
                                          target=tgt)
                     banner.mark(xdxr_node, DONE)
@@ -338,7 +300,7 @@ def run_save(args) -> None:
                         # —— 留灰会被读成"这一步没做成"。与参考数据那条 `cached ⇒ DONE`
                         # **同一条口径**（`PENDING` 只留给"真的没轮上"）。
                         banner.mark(adj_node, DONE)
-                    elif args.save_no_adj:
+                    elif getattr(args, 'save_no_adj', False):
                         # ⚠️ 事件**变了**却按用户的 `--save-no-adj` 跳过重算 ⇒
                         # `{target}_adj` 此刻是**过期**的（旧因子）。**不许点白** ——
                         # 那才是真的谎报。留灰 + `-v` 说清。
@@ -354,9 +316,9 @@ def run_save(args) -> None:
                         if codes is None:
                             mark_kline_sweep(adj_node)
 
-        # —— 元数据（换手率 + 资金流）——
+        # —— 元数据（换手率 + 资金流 + 千股千评 + 牛股诊股）——
         # ⚠️ **排在复权之后**（2026-10-12 用户要求），理由见上面 `rows` 那处。
-        # 两件事都**不可达时降级**：它们是加分项，不该拖垮整条 `--save`。
+        # 四件事都**不可达时降级**：它们是加分项，不该拖垮整条 `--save`。
         if do_turnover:
             # ① 换手率：**8.3 现算**（`成交量 ÷ 流通股本`，2026-10-18 起）。
             #    ⚠️ 此前是从 **4.4** 读的 —— 现在整条 `--save` 不再依赖 4.4 可达。
@@ -364,7 +326,7 @@ def run_save(args) -> None:
             if banner is not None:
                 # 阻塞调用**之前**先点亮（`PITFALLS.md` P22；同 `xdxr_node` 那条）
                 banner.mark('turnover', RUNNING)
-            turnover = refresh_turnover(days=args.save_turnover_days,
+            turnover = refresh_turnover(days=getattr(args, 'save_turnover_days', 7),
                                         verbose=args.verbose, echo=say)
             if banner is not None:
                 banner.mark('turnover',
@@ -388,6 +350,39 @@ def run_save(args) -> None:
                 banner.mark('moneyflow', DONE if mf_ok else PENDING)
             if not mf_ok:
                 say('[reality_feat_day] 资金流本次未落库：{}'.format(mf.get('error') or mf))
+
+            # ③ 千股千评：东财当日快照（`ak.stock_comment_em`，11 次分页 / ~3s）。
+            #    ⚠️ 它也写 `TurnoverRate`（÷100）—— 与上面 8.3 现算是**同一个源**，
+            #    数值一致；这里相当于用源端值再刷一遍，不是第三套口径。
+            if banner is not None:
+                banner.mark('eastmoney', RUNNING)
+            try:
+                em = save_moneyflow(source='eastmoney', verbose=args.verbose,
+                                    echo=say)
+                em_ok = bool(em.get('written') or em.get('skipped'))
+            except Exception as exc:      # noqa: BLE001 网络失败不该拖垮 --save
+                em, em_ok = {'error': '{}: {}'.format(type(exc).__name__, exc)}, False
+            if banner is not None:
+                banner.mark('eastmoney', DONE if em_ok else PENDING)
+            if not em_ok:
+                say('[reality_feat_day] 千股千评本次未落库：{}'.format(
+                    em.get('error') or em))
+
+            # ④ 牛股诊股：同花顺**逐只**抓（doctor.10jqka.com.cn）。
+            #    ⚠️ 最慢的一段（全市场 20–40 分钟）—— 排最后，且失败只降级。
+            #    `codes` 给了就只抓那几只（`--save-codes` 试跑），否则全市场。
+            if banner is not None:
+                banner.mark('diagnosis', RUNNING)
+            try:
+                dg = save_diagnosis(codes=codes, verbose=args.verbose, echo=say)
+                dg_ok = bool(dg.get('written') or dg.get('skipped'))
+            except Exception as exc:      # noqa: BLE001 网络失败不该拖垮 --save
+                dg, dg_ok = {'error': '{}: {}'.format(type(exc).__name__, exc)}, False
+            if banner is not None:
+                banner.mark('diagnosis', DONE if dg_ok else PENDING)
+            if not dg_ok:
+                say('[reality_feat_day] 牛股诊股本次未落库：{}'.format(
+                    dg.get('error') or dg))
 
         if banner is not None:
             banner.close()

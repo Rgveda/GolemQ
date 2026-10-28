@@ -74,6 +74,7 @@ __all__ = [
     'calc_garident_stages',
     'garident_bands_to_ratio',
     'garident_bands_from_ratio',
+    'garident_bottom_roof',
 ]
 
 #: 定带用的滚动窗口：取 checkpoint 之前这么多根收盘价。
@@ -189,7 +190,9 @@ def garident_bands_to_ratio(bands, anchor_close):
     if _is_missing(bands):
         return None
     k = float(anchor_close)
-    return [(float(a) / k, float(b) / k) for a, b in bands]
+    # 先解析成 numpy 再归一化；落库仍转回 list[tuple]（BSON 友好）。
+    arr = np.asarray(bands, dtype=np.float64) / k
+    return [tuple(row) for row in arr.tolist()]
 
 
 def garident_bands_from_ratio(ratio_bands, anchor_close):
@@ -206,7 +209,32 @@ def garident_bands_from_ratio(ratio_bands, anchor_close):
     if _is_missing(ratio_bands):
         return None
     k = float(anchor_close)
-    return [(float(a) * k, float(b) * k) for a, b in ratio_bands]
+    arr = np.asarray(ratio_bands, dtype=np.float64) * k
+    return [tuple(row) for row in arr.tolist()]
+
+
+def garident_bottom_roof(bands):
+    """`GARIDENT_PRICE` 带列表 → `(BOTTOM_PRICE, ROOF_PRICE)` 两条**绝对价**。
+
+    * `ROOF_PRICE` = 最近一段波浪的顶 = `bands[-1][0]`；
+    * `BOTTOM_PRICE` = 最早一段波浪的底 = `bands[0][1]`。
+
+    链路（D76）：`garPD`（比值）→ `garP`（绝对价带）→ `BOTTOM_P` / `ROOF_P`
+    （绝对价）。**它们不落库、不归一化** —— 只在上层读取时从还原后的带里取。
+
+    >>> garident_bottom_roof([(100.0, 50.0), (120.0, 105.0)])
+    (50.0, 120.0)
+    >>> garident_bottom_roof(None)
+    (nan, nan)
+    """
+    if isinstance(bands, tuple):
+        bands = list(bands)
+    if not isinstance(bands, (list, np.ndarray)) or len(bands) == 0:
+        return float('nan'), float('nan')
+    try:
+        return float(bands[0][1]), float(bands[-1][0])
+    except (TypeError, IndexError, ValueError):
+        return float('nan'), float('nan')
 
 
 def calc_garident_stage(curr_closep: float, curr_garident_prices) -> float:

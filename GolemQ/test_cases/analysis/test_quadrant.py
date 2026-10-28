@@ -162,11 +162,15 @@ def _make_ohlc(n=400, seed=7, code='600519'):
     }, index=idx)
 
 
+#: 2026-10-25：新树**不再计算**的老树状态机列（D66）。老树有、新树没有 ⇒ 对拍时排除。
+_DROPPED = frozenset({LTT.QUADRANT_STATUS, LTT.CHOBITS, LTT.QUADRANT_CODEX})
+
+
 def _same(a, b) -> bool:
     """逐值相同（含 NaN）—— 判据不容差（D36）。
 
     ⚠️ 不能直接 `np.array_equal(..., equal_nan=True)`：列里混着 float 与 object
-    （如 `ChoBits` 是字符串）时 `isnan` 会抛 `TypeError`。用 pandas 逐元素比。
+    （历史上 `ChoBits` 是字符串）时 `isnan` 会抛 `TypeError`。用 pandas 逐元素比。
     """
     a = np.asarray(a, dtype=object)
     b = np.asarray(b, dtype=object)
@@ -185,8 +189,8 @@ class TestMatchesOldTree(unittest.TestCase):
     def setUpClass(cls):
         cls.old = _load_old_base()
 
-    def _assert_same_columns(self, old_df, new_df):
-        cols = sorted(set(old_df.columns) | set(new_df.columns))
+    def _assert_same_columns(self, old_df, new_df, ignore=()):
+        cols = sorted((set(old_df.columns) | set(new_df.columns)) - set(ignore))
         diffs = [c for c in cols
                  if c not in old_df.columns or c not in new_df.columns
                  or not _same(old_df[c], new_df[c])]
@@ -196,7 +200,7 @@ class TestMatchesOldTree(unittest.TestCase):
         ohlc = _make_ohlc()
         old_df = self.old.calc_four_quadrant_boost('600519', pd.DataFrame(index=ohlc.index), ohlc)
         new_df = NEW.calc_four_quadrant_boost('600519', pd.DataFrame(index=ohlc.index), ohlc)
-        self._assert_same_columns(old_df, new_df)
+        self._assert_same_columns(old_df, new_df, ignore=_DROPPED)
         # 空心探针：确认真算出了东西（别让「两边都空」混过去）
         self.assertIn(LTT.QUADRANT_1, new_df.columns)
         self.assertEqual(new_df[LTT.QUADRANT_1].notna().sum(), len(ohlc))
@@ -210,7 +214,7 @@ class TestMatchesOldTree(unittest.TestCase):
             base[col] = np.random.randn(len(ohlc))
         old_df = self.old.calc_four_quadrant_boost('600519', base.copy(), ohlc)
         new_df = NEW.calc_four_quadrant_boost('600519', base.copy(), ohlc)
-        self._assert_same_columns(old_df, new_df)
+        self._assert_same_columns(old_df, new_df, ignore=_DROPPED)
         self.assertIn(LTT.QUADRANT_POWERLINE_LEADIN, new_df.columns)
 
     def test_mainstream_feats(self):
@@ -278,6 +282,76 @@ class TestFormulaWiring(unittest.TestCase):
         out = NEW.calc_quadrant_bs_trunk_timing_lag(f)
         self.assertTrue(_same(out[LTT.QUADRANT_BS_TRUNK_TIMING_LAG],
                               calc_event_timing_lag(np.where(cond, 1, -1))))
+
+
+class TestMainstreamLeadout(unittest.TestCase):
+    """`calc_mainstream_leadout_feats` —— 吸筹的镜像（D73，新树自造）。"""
+
+    @staticmethod
+    def _ohlc(n=400, seed=7):
+        rng = np.random.default_rng(seed)
+        close = 100 + np.cumsum(rng.standard_normal(n))
+        high = close + np.abs(rng.standard_normal(n))
+        low = close - np.abs(rng.standard_normal(n))
+        op = close + rng.standard_normal(n) * 0.2
+        idx = pd.MultiIndex.from_product(
+            [pd.date_range('2024-01-01', periods=n, freq='h'), ['600519']],
+            names=['ts', 'code'])
+        return pd.DataFrame({'open': op, 'high': high, 'low': low,
+                             'close': close}, index=idx), idx
+
+    def test_six_columns_and_non_empty(self):
+        ohlc, idx = self._ohlc()
+        f = pd.DataFrame(index=idx)
+        f[_C.FIELD.MACD] = np.random.default_rng(1).standard_normal(len(idx))
+        out = NEW.calc_mainstream_leadout_feats(ohlc, f)
+        for col in (LTT.MAINSTREAM_LEADOUT_VAR5,
+                    LTT.MAINSTREAM_LEADOUT_ENTRY,
+                    LTT.MAINSTREAM_LEADOUT_SHAKEOUT,
+                    LTT.MAINSTREAM_LEADOUT_BEFORE,
+                    LTT.MAINSTREAM_LEADOUTx3_BEFORE,
+                    LTT.MAINSTREAM_LEADOUTx5_BEFORE):
+            self.assertIn(col, out.columns)
+            self.assertEqual(out[col].notna().sum(), len(idx))
+        # 空心探针：VAR5 / 两段必须真的算出值
+        self.assertTrue((out[LTT.MAINSTREAM_LEADOUT_VAR5] != 0).any())
+        self.assertTrue((out[LTT.MAINSTREAM_LEADOUT_ENTRY] != 0).any())
+        self.assertTrue((out[LTT.MAINSTREAM_LEADOUT_SHAKEOUT] != 0).any())
+
+    def test_entry_and_shakeout_are_disjoint(self):
+        ohlc, idx = self._ohlc(seed=11)
+        f = pd.DataFrame(index=idx)
+        f[_C.FIELD.MACD] = np.random.default_rng(2).standard_normal(len(idx))
+        out = NEW.calc_mainstream_leadout_feats(ohlc, f)
+        both = ((out[LTT.MAINSTREAM_LEADOUT_ENTRY] != 0) &
+                (out[LTT.MAINSTREAM_LEADOUT_SHAKEOUT] != 0))
+        self.assertFalse(both.any())
+
+    def test_causal_prefix_invariance(self):
+        """只喂前 300 根与喂全 400 根，前 300 行逐值相同（不看未来）。"""
+        ohlc, idx = self._ohlc(seed=13)
+        macd = np.random.default_rng(3).standard_normal(len(idx))
+        f_full = pd.DataFrame({_C.FIELD.MACD: macd}, index=idx)
+        f_head = f_full.iloc[:300].copy()
+        full = NEW.calc_mainstream_leadout_feats(ohlc, f_full)
+        head = NEW.calc_mainstream_leadout_feats(ohlc.iloc[:300].copy(), f_head)
+        for col in (LTT.MAINSTREAM_LEADOUT_VAR5, LTT.MAINSTREAM_LEADOUT_ENTRY,
+                    LTT.MAINSTREAM_LEADOUT_SHAKEOUT,
+                    LTT.MAINSTREAM_LEADOUT_BEFORE,
+                    LTT.MAINSTREAM_LEADOUTx3_BEFORE,
+                    LTT.MAINSTREAM_LEADOUTx5_BEFORE):
+            self.assertTrue(_same(full[col].iloc[:300], head[col]), col)
+
+    def test_mirror_is_not_the_original(self):
+        """HIGH 侧 ≠ LOW 侧 —— 否则「镜像」只是复制了一份吸筹。"""
+        ohlc, idx = self._ohlc(seed=17)
+        f = pd.DataFrame(index=idx)
+        f[_C.FIELD.MACD] = np.random.default_rng(4).standard_normal(len(idx))
+        leadin = NEW.calc_mainstream_feats(ohlc, f.copy())
+        leadout = NEW.calc_mainstream_leadout_feats(ohlc, f.copy())
+        self.assertFalse(np.allclose(
+            leadin[LTT.MAINSTREAM_LEADIN_VAR5].fillna(0),
+            leadout[LTT.MAINSTREAM_LEADOUT_VAR5].fillna(0)))
 
 
 class TestDecoupled(unittest.TestCase):

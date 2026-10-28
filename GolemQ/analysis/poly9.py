@@ -18,7 +18,7 @@
 会被各处抄一遍（本项目的老毛病）；提出来才能钉住、也才能被对拍覆盖。
 **算术一字未改**（`range_list` 仍是 `5..29`）。
 
-⚠️ `*_REAL` 那一族（`poly9MajR` / `poly9WekR` / …）**不在本模块** ——
+⚠️ `*_REAL` 那一族（`poly9MajD` / `poly9WekD` / …）**不在本模块** ——
 它们是**周线/月线重采样后 rename**，属编排的更外层（老树在
 `features/empirical.py:3838` 的 rename map 里）。等 `features/` 那两个 stub 解掉时再落。
 """

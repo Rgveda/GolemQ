@@ -40,7 +40,7 @@ class _StubMeta(type):
 
     ⚠️ **不要改回返回值。** 若某常量抛 AttributeError，正解是从
     ``GolemQ_old/utils/parameter.py`` 取它的**真实值**补上 ——
-    那才是该字段在 MongoDB 里的实际存储名（如 ``'ZPLagMajR'``）。
+    那才是该字段在 MongoDB 里的实际存储名（如 ``'zPLagMajR'``）。
     """
     def __getattr__(cls, name):
         raise AttributeError(
@@ -265,7 +265,7 @@ class AKA(metaclass=_StubMeta):
     CLOSE_RAW = 'closeRaw'
     UNCLOSED = 'unclosed'
     CLOSE_MAJOR = 'closeMaj'
-    LAST_CLOSE = 'last_close'
+    LAST_CLOSE = 'lastClose'
     OPEN_LASTDAY = 'openLastday'
     PRICE = 'price'
 
@@ -317,7 +317,7 @@ class AKA(metaclass=_StubMeta):
     PCT_RANK_CHECKPOINT = 'PctRnkChkPOI'
 
     # 熵值分析
-    SAMPLE_ENTROPY = 'SE'
+    SAMPLE_ENTROPY = 'se'
     SAMPLE_ENTROPY_DUMMY = 'SED'
 
     # 评分系统
@@ -326,6 +326,10 @@ class AKA(metaclass=_StubMeta):
     BASELINE_SCORE = 'BslScr'
     TECH_SCORE = 'TechScr'
     TREND_SCORE = 'TrdScr'
+    # 同花顺牛叉诊股（doctor.10jqka.com.cn）的五维评分补充列
+    INDUSTRY_SCORE = 'IndustryScr'
+    BASIC_SCORE = 'BasicScr'
+    DIAG_AVG_COST = 'DiagAvgCost'
 
     # 热度排名
     HOT_RANK = 'HotRnk'
@@ -358,13 +362,15 @@ class AKA(metaclass=_StubMeta):
     SYSTEM_NAME = 'GolemQuant'
     TRADE_CAL = 'tradeCalendar'
     COST5_PRICE = 'cost5Prz'
+    COST5_PRICE_DUMMY = 'cost5PrzD'
     RETURN_COST95 = 'RetCost95'
     COST15_PRICE = 'cost15Prz'
+    COST15_PRICE_DUMMY = 'cost15PrzD'
     CATALOG = 'catalog'
     LENGTH = 'length'
     FROZEN = 'FrozenExpired'
     CHECKPOINT = 'ChkPoi'
-    STAGE = 'STAGE'
+    STAGE = 'stage'
 
     # ── 2026-10-21 补：ChipDistribution 用到的列名（真值逐字取自老树
     # `utils/parameter.py::AKA`；MongoDB 实际存储名，别改写）──
@@ -373,13 +379,15 @@ class AKA(metaclass=_StubMeta):
     COST5_BOOTSTRAP_CANDIDATE = 'cost5BstCand'
     COST5_BOOTSTRAP_CANDIDATE_BEFORE = 'cost5BstCandBf'
     COST85_PRICE = 'cost85Prz'
+    COST85_PRICE_DUMMY = 'cost85PrzD'
     COST90 = 'cost9'
     COST90_CHANNEL = 'cost9W'
     COST95_ENDPOINT_CANDIDATE = 'cost95EpCand'
     COST95_ENDPOINT_CANDIDATE_BEFORE = 'cost95EpCandBf'
     COST95_PRICE = 'cost95Prz'
-    FINAL_COST90 = 'FIN_COST9'
-    FINAL_PROFIT = 'FIN_PROF'
+    COST95_PRICE_DUMMY = 'cost95PrzD'
+    FINAL_COST90 = 'finCost9'
+    FINAL_PROFIT = 'finProf'
     PROFIT = 'profit'
     RETURN_COST5 = 'RetCost5'
 
@@ -453,25 +461,27 @@ class FIELD(metaclass=_StubMeta):
     CHARTSCAN_BUY_BEFORE_MINOR_DUMMY = 'ChrScBuyBfMinD'
     MACD_CROSS_SX_BEFORE_MAJOR = 'macdSxBfMaj'
     #: 60min 的 MACD 死叉计数（真值取自老树 `utils/parameter.py`）。
-    MACD_CROSS_SX_BEFORE = 'MACD_SX_BF'
+    MACD_CROSS_SX_BEFORE = 'macdSxBf'
     #: 日线 DEA（老树同名字段，`DEA_MAJ`）。
-    DEA_MAJOR = 'DEA_MAJ'
+    DEA_MAJOR = 'deaMaj'
     CHARTSCAN_BUY_BEFORE_MAJOR_DUMMY = 'ChrScBuyBfMajD'
     ZEN_DASH_TIMING_LAG_DUMMY = 'zDLagD'
     #: 笔/线段的 ZEN 状态原始列（老树 `utils/parameter.py` 真值）。
-    ZEN_DASH_TIMING_LAG = 'ZEN_D_LAG'
-    ZEN_PEAK_TIMING_LAG = 'ZEN_P_LAG'
+    #: 内部工作列名（不落库；落库走 review 的 `zDLagR` / `zPLagR`）。
+    #: 2026-10-28 统一为伪驼峰：`ZEN_D_LAG` → `zDLag`、`ZEN_P_LAG` → `zPLag`。
+    ZEN_DASH_TIMING_LAG = 'zDLag'
+    ZEN_PEAK_TIMING_LAG = 'zPLag'
     RENKO_BOOST_S_TIMING_LAG = 'renkosBstLag'
     MACD_MAJOR = 'macdMaj'
     STOCK_SCORE_M15 = 'scoreM15'
-    MAXFACTOR = 'MAXFACTOR'
+    MAXFACTOR = 'maxFactor'
     MAXFACTOR_MAJOR = 'mftMaj'
     MACD_ZERO_TIMING_LAG = 'macdOLag'
     BOLL_LB_HMA5_TIMING_LAG = 'bollLHma5Lag'
     DEA_NORM = 'deaNor'
     DIF_NORM = 'difNorm'
     MTM_NORM = 'mtmNorm'
-    MAPOWER30 = 'MPWR3'
+    MAPOWER30 = 'mpwr3'
     MACD_ZERO_TIMING_LAG_MAJOR = 'macdOLagMaj'
     BOLL_LB_HMA5_TIMING_LAG_MAJOR = 'bollLHma5LagMaj'
     DEA_NORM_MAJOR = 'deaNormMaj'
@@ -488,11 +498,17 @@ class FIELD(metaclass=_StubMeta):
     FBPROPHET_LB = 'prophetLb'
     FBPROPHET_UB = 'prophetUb'
     #: Prophet 区间净空（D53：新树落**比值**，旧树是绝对价；模型层迁移时换算）。
-    FBPROPHET_CLEARANCE = 'PROPHET_CLR'
-    FBPROPHET_CLEARANCE_MAJOR = 'PROPHET_CLR_MAJ'
-    FBPROPHET_CLEARANCE_NORM = 'PROPHET_CLR_NORM'
-    FBPROPHET_CLEARANCE_NORM_MAJOR = 'PROPHET_CLR_NORM_MAJ'
+    FBPROPHET_CLEARANCE = 'prophetClr'
+    FBPROPHET_CLEARANCE_MAJOR = 'prophetClrMaj'
+    FBPROPHET_CLEARANCE_NORM = 'prophetClrNorm'
+    FBPROPHET_CLEARANCE_NORM_MAJOR = 'prophetClrNormMaj'
+    #: **归一化落库名**（比值，D = 归一化）；base 无后缀是 attach 乘回 close 后的价格。
+    FBPROPHET_LB_DUMMY = 'prophetLbD'
+    FBPROPHET_UB_DUMMY = 'prophetUbD'
+    FBPROPHET_LB_MAJOR_DUMMY = 'prophetLbMajD'
+    FBPROPHET_UB_MAJOR_DUMMY = 'prophetUbMajD'
     GARIDENT_PRICE = 'garP'
+    GARIDENT_PRICE_DUMMY = 'garPD'
     GARIDENT_PRICE_COUNT = 'garPCount'
     GARIDENT_PRICE_CLEARANCE = 'garPClr'
     #: `GAR_P` 那组带是**哪个 checkpoint** 算出来的（日期字符串 `'YYYY-MM-DD'`）。
@@ -501,6 +517,12 @@ class FIELD(metaclass=_StubMeta):
     #: （已复权的）close，所以锚日期得跟着落库。**老树没有这一列**（老树存绝对价）。
     GARIDENT_PRICE_ANCHOR = 'garPAnchor'
     GARIDENT_STAGE_TIMING_LAG = 'garSLag'
+    #: `btmP` / `roofP` —— **绝对价**，由**还原后的** `garP` 带直接取：
+    #: `roofP = bands[-1][0]`、`btmP = bands[0][1]`（老树 `zen_pivot.py`
+    #: `_garident_roof_or_bottom`）。链路：`garPD`(比值) → `garP`(绝对)
+    #: → `btmP`/`roofP`(绝对)。**它们不落库、不归一化**（D76）。
+    BOTTOM_PRICE = 'btmP'
+    ROOF_PRICE = 'roofP'
     # ⚠️ 老树那四列 `STOCK_TREND_CHECKOUT_CLOSE` / `STOCK_TREND_RETURNS` /
     # `STOCK_TREND_BEFORE` / `STOCK_TREND_RETURNS_GARIDENT` **没有搬进来**
     # （2026-10-16，用户定）：它们**老树从没落过库**、新树零消费，整条链在
@@ -531,20 +553,28 @@ class FIELD(metaclass=_StubMeta):
     POLYNOMIAL9_NORM_MAJOR = 'poly9pwr3Maj'
     POLYNOMIAL9_DELTA = 'poly9Delta'
     POLYNOMIAL9_MAJOR = 'poly9Maj'
+    POLYNOMIAL9_MAJOR_DUMMY = 'poly9MajD'
+    POLYNOMIAL9_DUMMY = 'poly9D'
     POLYNOMIAL9_WEEKLY = 'poly9Wek'
     POLYNOMIAL9_NORM_WEEKLY = 'poly9NorWek'
     RENKO_TREND_S_TIMING_LAG = 'renkosBarLag'
     RENKO_TREND_S_LB = 'renkosBarLb'
     RENKO_TREND_S_UB = 'renkosBarUb'
+    RENKO_TREND_S_LB_DUMMY = 'renkosBarLbD'
+    RENKO_TREND_S_UB_DUMMY = 'renkosBarUbD'
     RENKO_TREND = 'renkoBar'
     RENKO_TREND_S = 'renkoSbar'
     RENKO_PRICE_S = 'renkoSprice'
+    RENKO_PRICE_S_DUMMY = 'renkoSpriceD'
     RENKO_TREND_S_BEFORE = 'renkosBarBf'
     RENKO_S_JX_BEFORE = 'renkoSbarJxBf'
     RENKO_TREND_L = 'renkoLbar'
     RENKO_PRICE_L = 'renkoLprice'
+    RENKO_PRICE_L_DUMMY = 'renkoLpriceD'
     RENKO_TREND_L_LB = 'renkolBarLb'
     RENKO_TREND_L_UB = 'renkolBarUb'
+    RENKO_TREND_L_LB_DUMMY = 'renkolBarLbD'
+    RENKO_TREND_L_UB_DUMMY = 'renkolBarUbD'
     RENKO_TREND_L_BEFORE = 'renkoLbarBf'
     RENKO_TREND_L_JX_BEFORE = 'renkoLbarJxBf'
     RENKO_TREND_L_TIMING_LAG = 'renkoLbarLag'
@@ -592,7 +622,7 @@ class FIELD(metaclass=_StubMeta):
     DEA_ZERO_TIMING_LAG = 'deaOLag'
     HMA10 = 'HMA10'
     HMA5 = 'HMA5'
-    HMAPOWER120 = 'HMPWR12'
+    HMAPOWER120 = 'hmpwr12'
     HMAPOWER120_QUARTER = 'hmpwr12Qtr'
     HMAPOWER120_TIMING_LAG = 'hmpwr12Lag'
     MA30 = 'MA30'
@@ -627,7 +657,7 @@ class FIELD(metaclass=_StubMeta):
     RSRS_ZSCORE_R2 = 'rsrsZsR2'
     RSRS_RIGHT = 'rsrsRight'
     MACD_DELTA = 'macdDiff1t'
-    MAPOWER120 = 'MPWR12'
+    MAPOWER120 = 'mpwr12'
     MAPOWER120_QUARTER = 'mpwr12Qtr'
     MAPOWER120_TIMING_LAG = 'mpwr12Lag'
     MAPOWER30_QUARTER = 'mpwr3Qtr'
@@ -637,6 +667,9 @@ class FIELD(metaclass=_StubMeta):
     REGTREE_DENY_LINE = 'regtreeDenyLine'
     REGTREE_MA90_INTERCEPT = 'regtreeMa90Int'
     REGTREE_PRICE = 'regtreePrice'
+    REGTREE_PRICE_MAJOR = 'regtreePriceMaj'
+    REGTREE_PRICE_DUMMY = 'regtreePriceD'
+    REGTREE_PRICE_MAJOR_DUMMY = 'regtreePriceMajD'
     REGTREE_SLOPE = 'regtreeSlp'
     REGTREE_TIMING_LAG = 'regtreeLag'
     REGTREE_TREND = 'regtreeTrd'
@@ -646,49 +679,49 @@ class FIELD(metaclass=_StubMeta):
     # `utils/parameter.py::INDICATOR_FIELD`；MongoDB 实际存储名，别改写）──
     CCI = 'CCI'
     RSI = 'RSI'
-    CCI_NORM = 'CCI_NORM'
+    CCI_NORM = 'cciNorm'
     BOLL_UB = 'BOLL_UB'
     BOLL = 'BOLL_MA'
     BOLL_LB = 'BOLL_LB'
     BOLL_CHANNEL = 'BOLL_WIDTH'
-    BOLL_DELTA = 'BBW_diff_1T'
+    BOLL_DELTA = 'bbwDiff1T'
     MTM = 'MTM'
     MTMMA = 'MTMMA'
-    MA90_CLEARANCE = 'MA90_CLR'
-    MA90_CLEARANCE_TIMING_LAG = 'MA90_CLR_LAG'
-    MA90_CLR_RETURNS_GARIDENT = 'MA90_CLR_RET_GAR'
-    DRAWDOWN_RATIO = 'DRDN_RATIO'
-    VOLUME_NORM = 'VOL_NORM'
-    VOLUME_NORM_TIMING_LAG = 'VOL_NORM_LAG'
+    MA90_CLEARANCE = 'ma90Clr'
+    MA90_CLEARANCE_TIMING_LAG = 'ma90ClrLag'
+    MA90_CLR_RETURNS_GARIDENT = 'ma90ClrRetGar'
+    DRAWDOWN_RATIO = 'drdnRatio'
+    VOLUME_NORM = 'volNorm'
+    VOLUME_NORM_TIMING_LAG = 'volNormLag'
     MAGIC_NINE_TURNS_BEFORE_MAJOR = 'm9tBfMaj'
     MAGIC_NINE_TURNS_SX_BEFORE_MAJOR = 'm9tSxBfMaj'
-    MAPOWER30_TIMING_LAG_MAJOR = 'MPWR3_LAG_MAJ'
-    MAPOWER30_MEDIAN = 'MPWR3_MED'
-    MAPOWER30_MAJOR_MEDIAN = 'MPWR3_MAJ_MED'
-    MTM_NORM_WEEKLY = 'MTM_NORM_WEK'
-    MTMMA_NORM = 'MTMMA_NORM'
-    MTMMA_NORM_WEEKLY = 'MTMMA_NORM_WEK'
-    MTMMA_NORM_MAJOR = 'MTMMA_NORM_MAJ'
-    POLYNOMIAL9_TIMING_LAG_MAJOR = 'poly9_LAG_MAJ'
+    MAPOWER30_TIMING_LAG_MAJOR = 'mpwr3LagMaj'
+    MAPOWER30_MEDIAN = 'mpwr3Med'
+    MAPOWER30_MAJOR_MEDIAN = 'mpwr3MajMed'
+    MTM_NORM_WEEKLY = 'mtmNormWek'
+    MTMMA_NORM = 'mtmmaNorm'
+    MTMMA_NORM_WEEKLY = 'mtmmaNormWek'
+    MTMMA_NORM_MAJOR = 'mtmmaNormMaj'
+    POLYNOMIAL9_TIMING_LAG_MAJOR = 'poly9LagMaj'
     PEAK_LOW_TIMING_LAG = 'PeakLowLag'
-    PEAK_HIGH_BACKWARD = 'PEAK_HI_BKWRD'
-    PEAK_LOW_BACKWARD = 'PEAK_LO_BKWRD'
-    MAPOWER30_PEAK_HIGH_BEFORE = 'MPWR3_PEAK_HI_BF'
-    MAPOWER30_PEAK_LOW_BEFORE = 'MPWR3_PEAK_LO_BF'
+    PEAK_HIGH_BACKWARD = 'peakHiBkwrd'
+    PEAK_LOW_BACKWARD = 'peakLoBkwrd'
+    MAPOWER30_PEAK_HIGH_BEFORE = 'mpwr3PeakHiBf'
+    MAPOWER30_PEAK_LOW_BEFORE = 'mpwr3PeakLoBf'
     #: ATR Stopline / SuperTrend（2026-10-21 随 markup 工具补；真值取自老树）。
-    ATR_Stopline = 'ATR_Stopline'
+    ATR_Stopline = 'atrStopline'
     ATR_Stopline_PRICE = 'ATRStplnPrc'
-    ATR_SuperTrend = 'ATR_SUPTRD'
-    ATR_Stopline_TIMING_LAG_WEEKLY = 'ATR_Stopline_LAG_WEK'
-    ATR_SuperTrend_TIMING_LAG_WEEKLY = 'ATR_SUPTRD_LAG_WEK'
+    ATR_SuperTrend = 'atrSuptrd'
+    ATR_Stopline_TIMING_LAG_WEEKLY = 'atrStoplineLagWek'
+    ATR_SuperTrend_TIMING_LAG_WEEKLY = 'atrSuptrdLagWek'
     #: Linear-regression band / peak 极值点（2026-10-21 随 `calc_peak_point_vX` 补）。
-    LINEAREG_PRICE = 'LRC_PRICE'
+    LINEAREG_PRICE = 'lrgPrice'
     ATR_UB = 'ATR_UB'
-    LINEAREG_TREND_TIMING_LAG = 'LRG_TRD_LAG'
-    LINEAREG_BAND_TIMING_LAG = 'LRG_BAND_LAG'
-    PEAK_TOWARDS_TIMING_LAG = 'PEAK_TOWARDS_LAG'
-    PEAK_HIGH_TIMING_LAG = 'PEAK_HIGH_LAG'
-    PEAK_TOWARDS_BEFORE = 'PEAK_TOWARDS_BF'
+    LINEAREG_TREND_TIMING_LAG = 'lrgTrdLag'
+    LINEAREG_BAND_TIMING_LAG = 'lrgBandLag'
+    PEAK_TOWARDS_TIMING_LAG = 'peakTowardsLag'
+    PEAK_HIGH_TIMING_LAG = 'peakHighLag'
+    PEAK_TOWARDS_BEFORE = 'peakTowardsBf'
 
 class FEATURES(metaclass=_StubMeta):
     """
@@ -702,7 +735,7 @@ class FEATURES(metaclass=_StubMeta):
     ZEN_DASH_TIMING_LAG_MINOR_REAL = 'zDLagMinR'
     ZEN_DASH_TIMING_LAG_MAJOR_REAL = 'zDLagMajR'
     ZEN_DASH_TIMING_LAG_WEEKLY_REAL = 'zDLagWekR'
-    ZEN_PEAK_TIMING_LAG_MAJOR_REAL = 'ZPLagMajR'
+    ZEN_PEAK_TIMING_LAG_MAJOR_REAL = 'zPLagMajR'
     ZEN_PEAK_TIMING_LAG_REAL = 'zPLagR'
     ZEN_PEAK_TIMING_LAG_MINOR_REAL = 'zPLagMinR'
 
@@ -713,9 +746,9 @@ class FEATURES(metaclass=_StubMeta):
     CVaR_risk95_MAJOR = 'EsRisk95Maj'
 
     # Polynomial features
-    POLYNOMIAL9_WEEKLY_REAL = 'poly9WekR'
+    POLYNOMIAL9_WEEKLY_REAL = 'poly9WekD'
     POLYNOMIAL9_NORM_WEEKLY_REAL = 'poly9NorWekR'
-    POLYNOMIAL9_MAJOR_REAL = 'poly9MajR'
+    POLYNOMIAL9_MAJOR_REAL = 'poly9MajD'
     POLYNOMIAL9_NORM_MAJOR_REAL = 'poly9NorMajR'
 
     # Magic Nine Turns features
@@ -723,11 +756,15 @@ class FEATURES(metaclass=_StubMeta):
     MAGIC_NINE_TURNS_WEEKLY_REAL = 'm9tWekR'
     MAGIC_NINE_TURNS_TIMING_LAG_WEEKLY_REAL = 'm9tLagWekR'
     MAGIC_NINE_TURNS_TIMING_LAG_MAJOR_REAL = 'm9tLagMajR'
+    #: 老树 `MAGIC_NINE_TURNS_TIMING_LAG_REAL` 的真值（`m9tLagR`）。
+    #: ⚠️ 当前 review **不生产/不落库**这列：库里 `m9tLag` 全为 None、
+    #: `m9tLagR` 不存在 ⇒ review 契约与 attach 都不再包含它（D67）。
+    MAGIC_NINE_TURNS_TIMING_LAG_REAL = 'm9tLagR'
 
     # Regression tree features
-    REGTREE_PRICE_MAJOR_REAL = 'rTrePrcMajR'
+    REGTREE_PRICE_MAJOR_REAL = 'rTrePrcMajD'
     REGTREE_TIMING_LAG_MAJOR_REAL = 'rTreLagMajR'
-    REGTREE_SLOPE_MAJOR_REAL = 'rTreSlopMajR'
+    REGTREE_SLOPE_MAJOR_REAL = 'rTreSlopMajD'
 
     def __new__(cls):
         if cls._instance is None:
@@ -825,8 +862,9 @@ def epoch_divisor(dtype) -> int:
     >>> epoch_divisor('datetime64[us]')
     1000000
     >>> import pandas as pd
-    >>> epoch_divisor(pd.DatetimeIndex(['2026-01-05']).tz_localize('Asia/Shanghai').dtype)
-    1000000
+    >>> dt = pd.DatetimeIndex(['2026-01-05']).tz_localize('Asia/Shanghai').dtype
+    >>> epoch_divisor(dt) == EPOCH_UNIT_TO_SECONDS[dt.unit]
+    True
     """
     unit = getattr(dtype, 'unit', None)          # tz-aware（pandas 的 DatetimeTZDtype）
     if unit is None:

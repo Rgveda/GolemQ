@@ -78,6 +78,15 @@ class LTT:
     MAINSTREAM_LEADIN_SHAKEOUT = 'MsLeadinSko'
     MAINSTREAM_LEADINx3_BEFORE = 'MsLeadinx3Bf'
     MAINSTREAM_LEADINx5_BEFORE = 'MsLeadinx5Bf'
+    #: 主力**派发/出货**（下跌指示）—— `calc_mainstream_leadout_feats` 的镜像族。
+    #: **新树自造**（老树没有），与 `MAINSTREAM_LEADIN_*` 一一对应；命名沿用老树
+    #: `QUADRANT_POWERLINE_LEADOUT` 的 lead-out 习惯。尚未进 review 契约/落库。
+    MAINSTREAM_LEADOUT_VAR5 = 'MsLeadoutVar5'
+    MAINSTREAM_LEADOUT_ENTRY = 'MsLeadoutEntry'
+    MAINSTREAM_LEADOUT_SHAKEOUT = 'MsLeadoutSko'
+    MAINSTREAM_LEADOUT_BEFORE = 'MsLeadoutBf'
+    MAINSTREAM_LEADOUTx3_BEFORE = 'MsLeadoutx3Bf'
+    MAINSTREAM_LEADOUTx5_BEFORE = 'MsLeadoutx5Bf'
     BS_REF_LINE = 'BSRefLn'
     BS_BORDER_LINE = 'BSBrdLn'
     BS_BUY = 'BSBu'
