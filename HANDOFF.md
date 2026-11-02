@@ -80,8 +80,13 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 新增 **internal** `--review-shard i/N`（`shard_codes()` 在
 `pipeline/review/pipeline.py`，`tools/backfill_hour_extra.py` 改用同一函数）。
 
-进度：Gate A 已过（1013 条测试全绿）；Gate B 试点（`002462` / `300520` / `510300`
-dry-run 计时）进行中。
+进度（2026-11-03）：缺口实测 **3,140 只股票**（`etc` 3,013 + `fast` 127；ETF 1,716 本轮不含）。
+码表 `_review_missing_all.txt` 按 `shard_codes` md5 分 3 片
+（`_review_shard1/2/3.txt` = 1,043 / 1,072 / 1,025）。**Babel 已启动 shard 1**
+（`_review_shard1.log`，9 并发，单码 4h 超时）；Gilgamesh/Nightwatcher 用
+`_run_review_shard.cmd 2|3` 启动。冒烟（002380 / 002400，`--from 2026-10-20`）
+真写正常：40 行/码，`ZenPivotCnt`/`renkoSbar`/`zDLagR` 均落库。单码 800 天约
+36–40 分钟；3 机 × 9 并发估算 2–3 天。跑完按「码表 − 有 `zDLagR` 的码」生成重跑表。
 
 #### 回填结束后第一件事：消除补数与 `--review` 的**编排**平行实现（2026-10-31 挂账）
 
