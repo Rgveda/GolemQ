@@ -200,6 +200,55 @@ def reality_feat_rows(features: pd.DataFrame, family: str, created_at=None,
     return rows
 
 
+def save_position_series(df: pd.DataFrame, market_type=None, db=None,
+                         verbose: bool = False, echo=None) -> dict:
+    """「全局智能仓位」→ ``stock_/index_massive_reality_60min_models``（**旧名**）。
+
+    这张表是**全系统共用的 massive 模型表**（每根 60min bar 一行、唯一键
+    ``time_stamp``），仓位只是其中一批字段（`PosBsln` / `PosPad` /
+    `PosNegBsln` / `MasPosOnhold` / `DS_*` / `mberCnt`）。**不要另起
+    `*_position_*` 这类按用途命名的表** —— 那会把全系统表切碎。
+
+    ⚠️ 与旧树的区别只在数据来源（8.3 现算 vs 4.4 历史），**表名与列名照旧**
+    （D79）。
+
+    :param market_type: A 股用 ``STOCK_CN`` → ``stock_`` 前缀；ETF 用
+        ``ETF_CN`` → ``index_massive_reality_60min_models``（旧树同口径）。
+    """
+    from GolemQ.core.constants import MARKET_TYPE
+    from GolemQ.datasource.writer import upsert_fields
+
+    mt = MARKET_TYPE.STOCK_CN if market_type is None else market_type
+    name = ('stock_massive_reality_60min_models' if mt == MARKET_TYPE.STOCK_CN
+            else 'index_massive_reality_60min_models')
+    stats = {'name': name, 'rows': 0, 'upserted': 0, 'modified': 0}
+    if df is None or len(df) == 0:
+        return stats
+    out = df.copy()
+    dt = pd.to_datetime(out['datetime'])
+    out['datetime'] = dt.dt.strftime('%Y-%m-%d %H:%M:%S')
+    out['time_stamp'] = [int(t.timestamp()) for t in dt]
+    out['date_stamp'] = [int(t.normalize().timestamp()) for t in dt]
+    out['created_at'] = int(pd.Timestamp.now().timestamp())
+    rows = []
+    for _, r in out.iterrows():
+        doc = {}
+        for col in out.columns:
+            v = r[col]
+            if isinstance(v, float) and pd.isna(v):
+                continue
+            doc[col] = v.item() if hasattr(v, 'item') else v
+        rows.append(doc)
+    target_db = _db() if db is None else db
+    res = upsert_fields(target_db[name], rows, ['time_stamp'])
+    stats.update(rows=len(rows), upserted=res['upserted'],
+                 modified=res['modified'])
+    if verbose:
+        (echo or print)(f'[position] {name}: 写 {len(rows)} 行 / '
+                        f'upserted {res["upserted"]} / modified {res["modified"]}')
+    return stats
+
+
 def save_reality_feat(features: pd.DataFrame, family: str, market_type,
                       verbose: bool = True, echo=None, created_at=None,
                       write_nulls: bool = False, db=None) -> dict:

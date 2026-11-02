@@ -718,6 +718,14 @@ class ChipDistribution():
         else:
             self.data = data
         
+        # 调用方已把换手率备齐（例如按日 960 窗口，外层一次性取好）⇒ 跳过 DB。
+        # 实测：960 根窗口 19~42s 里绝大部分是下面两次 `stock_reality_feat_day`
+        # 查询；算法本身 ~1s（用户 2026-10-30 指出「最多 3 秒」）。
+        if (FLD.TURNOVER_RATE in self.data.columns
+                and self.data[FLD.TURNOVER_RATE].notna().all()):
+            self._finalize()
+            return
+
         start = '{}'.format(
             self.data.index.get_level_values(level=0)[0] - timedelta(hours=8.5)
         )
@@ -865,6 +873,10 @@ class ChipDistribution():
                 self.data[AKA.CLOSE].tail(2).head(1)
             )
         
+        self._finalize()
+
+    def _finalize(self):
+        """`get_data` 的尾部整理（MA250/MACD/avg/date）。"""
         self.data[FLD.MA250] = talib.MA(self.data[AKA.CLOSE], 250)
         self.data[FLD.DIF], self.data[FLD.DEA], self.data[FLD.MACD] = talib.MACD(
             self.data[AKA.CLOSE], fastperiod=12, slowperiod=26, signalperiod=9

@@ -125,7 +125,9 @@ def run_review_daily(args) -> int:
             force=args.force, dry_run=getattr(args, 'dry_run', False), verbose=args.verbose,
             offset=args.offset, from_date=args.from_date,
             recheck_days=getattr(args, 'recheck_days', 0),
-            limit=getattr(args, 'review_limit', 0))
+            limit=getattr(args, 'review_limit', 0),
+            shard=getattr(args, 'review_shard', ''),
+            code_timeout=getattr(args, 'review_timeout', 0))
     except KeyboardInterrupt:
         # 128 + SIGINT 的惯例退出码；worker 的终止由 `BasePipeline` 的
         # `with Parallel(...)` 负责（见该处注释）。

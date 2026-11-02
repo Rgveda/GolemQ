@@ -48,7 +48,8 @@ CONFIGFILE_PATH = os.path.join(setting_path, 'config.ini')
 #: 就会出现「读得到、写却写进 Mongo」这种半吊子状态 —— 收成一处。
 #: `TDXAIDATA` / `TUSHARE` 是 2026-10-10 补进来的（`tushare_source` 的模块
 #: docstring 里早就写着这条待办）。
-INI_ONLY_SECTIONS = ('DINGTALK', 'SERVERCHAN', 'XTQUANT', 'TDXAIDATA', 'TUSHARE')
+INI_ONLY_SECTIONS = ('DINGTALK', 'SERVERCHAN', 'XTQUANT', 'TDXAIDATA',
+                     'TUSHARE', 'MONGODB44')
 
 
 

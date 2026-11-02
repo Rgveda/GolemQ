@@ -48,8 +48,10 @@ def _stage_columns(day: pd.DataFrame, features: pd.DataFrame = None) -> pd.DataF
     feats = features if features is not None else pd.DataFrame(index=day.index)
     feats[AKA.CLOSE] = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
     ck = feats[[AKA.CLOSE]].iloc[::CHECKPOINT_STRIDE].copy()
-    if len(ck) == 0 or ck.index[-1] != feats.index[-1]:
-        ck = pd.concat([ck, feats.tail(1)])
+    # ⚠️ **不要把最后一根强行追加成 checkpoint**：老树 vXII 的 checkpoint 由
+    # `CLT_GRP_CHK > 0` 信号决定，目标 bar 若不在网格上，它的 stage 应当用
+    # **上一个 checkpoint 的带子**（ffill）来判 —— 那才是 `-0.5` / 半档的来源。
+    # 追加了最后一根，就等于用「含当根 close 的窗口」定带 ⇒ 必然整数。
     try:
         feats = calc_garident_stages(ck, feats, random_state=0)
     except Exception:               # noqa: BLE001 缺 sklearn/kneed 或定带失败
@@ -63,6 +65,28 @@ def _stage_columns(day: pd.DataFrame, features: pd.DataFrame = None) -> pd.DataF
     feats[FLD.GARIDENT_STAGE_TIMING_LAG] = calc_feature_event_timing_lag(
         feats, AKA.STAGE).astype(np.int16)
     return feats
+
+
+def calc_stage_series(ohlc: pd.DataFrame, random_state: int = 0) -> pd.Series:
+    """**全帧一次算** stage（`(dt, code)` 帧 → 逐 bar 的 STAGE）。
+
+    与 `_stage_columns` 同一实现，但**不对每天重建 2160 窗口**：
+    stage 自带 502 根定带窗口，逐 checkpoint 即因果；整帧一次算同时保证
+    `native_by_day`（增量）与 `tools/backfill_stage.py`（历史回填）**同口径**。
+
+    ⚠️ checkpoint 网格 = `iloc[::CHECKPOINT_STRIDE]`（老树用 `CLT_GRP_CHK`
+    信号，新树缺该 producer，见 D79）。
+    """
+    if ohlc is None or len(ohlc) == 0:
+        return pd.Series(dtype=float)
+    feats = pd.DataFrame(index=ohlc.index)
+    feats[AKA.CLOSE] = pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce')
+    ck = feats[[AKA.CLOSE]].iloc[::CHECKPOINT_STRIDE].copy()
+    try:
+        feats = calc_garident_stages(ck, feats, random_state=random_state)
+    except Exception:               # noqa: BLE001 缺 sklearn/kneed
+        return pd.Series(np.nan, index=ohlc.index, dtype=float)
+    return pd.to_numeric(feats.get(AKA.STAGE), errors='coerce')
 
 
 def _core_daily(day: pd.DataFrame, feats: pd.DataFrame = None) -> pd.DataFrame:
@@ -231,9 +255,39 @@ def coldstart_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFram
         row = cache.get(key, nan_row)
         rows.append([row.get(c, np.nan) for c in COLDSTART_COLUMNS])
         idx.append((t, ctx.code))
-    return pd.DataFrame(rows,
-                        index=pd.MultiIndex.from_tuples(idx, names=['ts', 'code']),
-                        columns=list(COLDSTART_COLUMNS))
+    out = pd.DataFrame(
+        rows, index=pd.MultiIndex.from_tuples(idx, names=['ts', 'code']),
+        columns=list(COLDSTART_COLUMNS))
+    # Garident Price 是**定带事件**：`garPD` 稀疏，按用户 2026-10-30 要求
+    # **向后填充**；`garPAnchor` 必须同步 ffill —— 还原时要乘回**同一锚日**的
+    # close，只填 garPD 会造成“band 是旧锚、价是新 close”的错配。
+    # ⚠️ 不能直接 `Series.ffill()`：`garPD` 是 list/数组，pandas 会走 2D pad
+    # 路径并在 int8 上抛 `TypeError: No matching signature`。这里逐值手工前填。
+    def _is_null(v):
+        if v is None:
+            return True
+        if isinstance(v, float):
+            return np.isnan(v)
+        if isinstance(v, (list, tuple, np.ndarray)):
+            return False
+        try:
+            return bool(pd.isna(v))
+        except (TypeError, ValueError):
+            return False
+
+    for c in ('garPD', 'garPAnchor', 'garPCount', 'garPClr', 'garSLag'):
+        if c not in out.columns:
+            continue
+        last = None
+        filled = []
+        for v in out[c].tolist():
+            if _is_null(v):
+                filled.append(last)
+            else:
+                last = v
+                filled.append(v)
+        out[c] = filled
+    return out
 
 
 def build_coldstart_steps() -> List[FeatureStep]:

@@ -342,6 +342,27 @@ class TestMainstreamLeadout(unittest.TestCase):
                     LTT.MAINSTREAM_LEADOUTx5_BEFORE):
             self.assertTrue(_same(full[col].iloc[:300], head[col]), col)
 
+    def test_fold_only_folds_price_above_ten(self):
+        """折叠法：`close > 10` 才取 `log10`，≤ 10 原样（用户 2026-10-29）。"""
+        s = pd.Series([3.5, 10.0, 300.0, 15.0, np.nan])
+        out = NEW.fold_high_price(s)
+        self.assertAlmostEqual(out.iloc[0], 3.5)
+        self.assertAlmostEqual(out.iloc[1], 10.0)          # 边界不折
+        self.assertAlmostEqual(out.iloc[2], np.log10(300.0))
+        self.assertAlmostEqual(out.iloc[3], np.log10(15.0))
+        self.assertTrue(np.isnan(out.iloc[4]))
+
+    def test_fold_unlocks_high_price_signals(self):
+        """高价股（合成 close≈100）不折时 0 次，折后 > 0 次 —— 量纲缺陷的直接证据。"""
+        ohlc, idx = self._ohlc(seed=7)
+        f = pd.DataFrame(index=idx)
+        f[_C.FIELD.MACD] = np.random.default_rng(1).standard_normal(len(idx))
+        raw = NEW.calc_mainstream_leadout_feats(ohlc, f.copy())
+        folded = NEW.calc_mainstream_leadout_feats(ohlc, f.copy(), fold=True)
+        self.assertEqual(int((raw[LTT.MAINSTREAM_LEADOUT_BEFORE] == 0).sum()), 0)
+        self.assertGreater(
+            int((folded[LTT.MAINSTREAM_LEADOUT_BEFORE] == 0).sum()), 0)
+
     def test_mirror_is_not_the_original(self):
         """HIGH 侧 ≠ LOW 侧 —— 否则「镜像」只是复制了一份吸筹。"""
         ohlc, idx = self._ohlc(seed=17)

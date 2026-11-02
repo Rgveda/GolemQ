@@ -21,6 +21,7 @@ from . import (      # noqa: F401 导入即注册（见上）
     chartscan,
     compact,
     fill_turnover,
+    mainstream,
     heartbeat,
     metadata_align,
     migrate,
@@ -65,6 +66,9 @@ register([
     review.REVIEW_RUNTIME,
     # compact（只读：8.3 60min+day → calc_compact_features）—— `--strategy compact`
     compact.COMPACT,
+    # mainstream（全市场聚合：当前只有「全局智能仓位」一段，写
+    # `stock_massive_position_60min`）—— `--strategy mainstream`
+    mainstream.MAINSTREAM,
     # —— 外部抓取（HTTP，落 stock_reality_feat_day）——
     moneyflow.MONEYFLOW,             # --moneyflow {eastmoney|ths|all}
     # 现算补齐（不连 4.4、不抓外网）—— 与 MONEYFLOW 同层，都落 stock_reality_feat_day

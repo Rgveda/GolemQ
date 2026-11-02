@@ -26,11 +26,13 @@ from GolemQ.core.constants import AKA, FIELD as FLD, MARKET_TYPE
 from GolemQ.pipeline.base import BasePipeline, CodeResult
 from GolemQ.pipeline.review.pipeline import ReviewPipeline, ReviewOptions
 from GolemQ.pipeline.review.runtime import compute_runtime
-from GolemQ.pipeline.review.contract import (DAY_COLUMNS, MINOR_COLUMNS,
+from GolemQ.pipeline.review.contract import (DAY_COLUMNS, HOUR_COLUMNS,
+                                             MINOR_COLUMNS,
                                              MINOR_15MIN_COLUMNS)
 from GolemQ.pipeline.review.steps.daily import (daily_snapshot_step,
                                                 day_core_step)
 from GolemQ.pipeline.review.steps.minor import minor_signals_step
+from GolemQ.pipeline.review.steps.zen import zen_snapshots_step
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, StepRunner,
                                    TIER_RUNTIME, slice_asof, target_times)
 
@@ -142,38 +144,40 @@ class TestRatioColumns(unittest.TestCase):
         self.assertLess(abs(float(out.iloc[0]['rTreSlopMajD'])), 10.0)
 
     def test_renko_dummies_are_in_contract_and_restorable(self):
-        """价格列只能以 `*D` 进契约，且必须在还原表里 —— 三处共用一份定义。"""
+        """价格列只能以 `*D` 进契约，且必须在还原表里 —— 三处共用一份定义。
+
+        Renko 2026-10-30 起归 **60min 族**（D78），不再在 DAY_COLUMNS。
+        """
         from GolemQ.markets.StockCN.reality_save import PRICE_RATIO_COLUMNS
         from GolemQ.pipeline.review.contract import RENKO_PRICE_DUMMIES
         for base, dummy in RENKO_PRICE_DUMMIES:
-            self.assertIn(dummy, DAY_COLUMNS)
+            self.assertIn(dummy, HOUR_COLUMNS)
             self.assertIn(dummy, PRICE_RATIO_COLUMNS)
-            self.assertNotIn(base, DAY_COLUMNS)
+            self.assertNotIn(base, HOUR_COLUMNS)
+            self.assertNotIn(dummy, DAY_COLUMNS)
 
-    def test_day_renko_price_columns_are_ratios(self):
-        """Renko 的价格量纲列落 `*D` 比值；方向/时序列原样。D70/D72。"""
+    def test_hour_renko_is_asof_window_and_ratios(self):
+        """60min Renko：**逐日 as-of 2160 窗口**，价格列落 `*D` 比值。"""
         from GolemQ.analysis.renko_jit import available
         if not available():
             self.skipTest('renko numba 不可用')
-        day = _ohlc(600, freq='B', seed=31)
-        as_of = day.index.get_level_values(0)[-1]
+        hour60 = _hour_frame(days=600)          # 2,400 根 ≥ 2160
+        ts = pd.DatetimeIndex(hour60.index.get_level_values(0))
+        T = ts[-1]
         ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
-                            frames={'day': day}, as_of=as_of)
-        ctx.targets['day'] = pd.DatetimeIndex([as_of])
-        ctx.targets['60min'] = pd.DatetimeIndex([as_of])
-        day_core_step(ctx, [as_of])
-        out = daily_snapshot_step(ctx, [as_of])
-        close = float(day[AKA.CLOSE].iloc[-1])
+                            frames={'60min': hour60}, as_of=T)
+        ctx.targets['60min'] = pd.DatetimeIndex([T])
+        out = zen_snapshots_step(ctx, pd.DatetimeIndex([T]))
+        close = float(hour60[AKA.CLOSE].iloc[-1])
         for col in ('renkoSpriceD', 'renkoLpriceD', 'renkosBarLbD',
                     'renkosBarUbD', 'renkolBarLbD', 'renkolBarUbD'):
             v = float(out.iloc[0][col])
             self.assertTrue(np.isfinite(v), col)
             self.assertLess(abs(v), 10.0,
                             f'{col}={v} 看起来是绝对价（close={close}），不是比值')
-            self.assertNotIn(col[:-1], DAY_COLUMNS)   # 绝对价列不得进契约
         for col in ('renkoSbar', 'renkoLbar', 'renkoBar', 'renkosBarLag',
                     'renkoLbarLag', 'renkosBstLag', 'renkoLboostLag'):
-            self.assertIn(col, DAY_COLUMNS)
+            self.assertIn(col, HOUR_COLUMNS)
 
 
 class TestMinorStep(unittest.TestCase):
@@ -230,50 +234,86 @@ def _hour_frame(days=100, seed=41):
                          'amount': np.full(len(idx), 1e6)}, index=idx)
 
 
-class TestDayExtra(unittest.TestCase):
-    """D74：`se` / `ZenPivotCnt` 已移到日族，60min 不再产出。"""
+class TestHourExtra(unittest.TestCase):
+    """D78：`se` / `ZenPivotCnt` 回到 60min 族，逐 bar 产出（撤销 D74）。"""
 
-    def _ctx(self, day, hour60, as_of):
-        return ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
-                             frames={'day': day, '60min': hour60},
-                             as_of=as_of)
+    def _run(self, hour60, as_of, targets):
+        ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
+                            frames={'60min': hour60}, as_of=as_of)
+        ctx.targets['60min'] = pd.DatetimeIndex(targets)
+        return zen_snapshots_step(ctx, pd.DatetimeIndex(targets))
 
-    def test_columns_and_causality(self):
-        day = _ohlc(200, freq='B', seed=31, start='2025-01-02')
+    def test_columns_and_counts(self):
         hour60 = _hour_frame(days=300)
-        last_day = day.index.get_level_values(0)[-1]
-        as_of = last_day + pd.Timedelta(hours=15)   # 15:00 收盘后
-        targets = target_times(day, last_day)[-20:]
-        ctx = self._ctx(day, hour60, as_of)
-        ctx.targets['day'] = targets
-        ctx.targets['60min'] = targets
-        day_core_step(ctx, targets)
-        out = daily_snapshot_step(ctx, targets)
-        self.assertIn(AKA.SAMPLE_ENTROPY, DAY_COLUMNS)
-        self.assertIn('ZenPivotCnt', DAY_COLUMNS)
+        ts = pd.DatetimeIndex(hour60.index.get_level_values(0))
+        out = self._run(hour60, ts[-1], ts[-20:])
+        self.assertIn(AKA.SAMPLE_ENTROPY, out.columns)
+        self.assertIn('ZenPivotCnt', out.columns)
+        self.assertIn(AKA.SAMPLE_ENTROPY, HOUR_COLUMNS)
+        self.assertNotIn(AKA.SAMPLE_ENTROPY, DAY_COLUMNS)
         self.assertTrue(np.isfinite(out[AKA.SAMPLE_ENTROPY]).any())
         cnt = out['ZenPivotCnt'].to_numpy(dtype=float)
+        cnt = cnt[np.isfinite(cnt)]
         self.assertTrue((cnt >= 0).all())
-        self.assertTrue((np.diff(cnt) >= 0).all(), '中枢计数必须单调不减')
+        # 2160 根滑窗的计数**可以下降**（旧中枢滑出窗口）—— 不许断言单调。
 
-    def test_prefix_stability(self):
-        day = _ohlc(200, freq='B', seed=31, start='2025-01-02')
+    def test_pivot_count_is_asof_2160_window(self):
+        """ZenPivotCnt = 只用 ≤T 的最近 2160 根、从头建 CZSC 的计数。
+
+        与「全历史跑一次再取 T」**不等价**（600519 2024-08-16 实测 12 vs 44）。
+        """
+        from czsc import CZSC
+        from czsc.objects import Freq, RawBar
+        from GolemQ.analysis.pivot import calc_pivots, causal_pivot_count
+        hour60 = _hour_frame(days=300)          # 1,200 根 < 2160 ⇒ 窗口=全部
+        ts = pd.DatetimeIndex(hour60.index.get_level_values(0))
+        T = ts[-1]
+        out = self._run(hour60, T, pd.DatetimeIndex([T]))
+        bars = [RawBar(symbol='600519', dt=t, id=i, freq=Freq.F60,
+                       open=float(r['open']), close=float(r['close']),
+                       high=float(r['high']), low=float(r['low']),
+                       vol=float(r['volume']), amount=float(r['amount']))
+                for i, (t, (_, r)) in enumerate(zip(ts, hour60.iterrows()))]
+        cz = CZSC(bars[:1], max_bi_count=512, verbose=False)
+        conf, prev = {}, None
+        for bar in bars[1:]:
+            cz.update(bar)
+            if cz.bi_list:
+                key = cz.bi_list[-1].fx_b.dt
+                if key != prev:
+                    conf[key] = bar.dt
+                    prev = key
+        piv = calc_pivots(bi_list=list(cz.bi_list), conf_map=conf, strict=True)
+        want = int(causal_pivot_count(piv, pd.DatetimeIndex([T]), strict=True)[0])
+        self.assertEqual(int(out['ZenPivotCnt'].iloc[0]), want)
+
+    def test_se_only_uses_1500_and_ffills_intraday(self):
+        """SE 只在 15:00 算；盘中沿用上一交易日 15:00（因果 ffill）。"""
+        hour60 = _hour_frame(days=30)
+        ts = pd.DatetimeIndex(hour60.index.get_level_values(0))
+        out = self._run(hour60, ts[-1], ts)
+        se = out[AKA.SAMPLE_ENTROPY]
+        times = ts.time
+        # 同一交易日内，10:30/11:30/14:00 必须等于当日 15:00 之前最近一个 15:00
+        last_val = np.nan
+        for t, v in zip(times, se.to_numpy()):
+            if t.hour == 15:
+                last_val = v
+            else:
+                same = (np.isnan(v) and np.isnan(last_val)) or v == last_val
+                self.assertTrue(same, f'{t} 的 se 不该提前用当日 15:00 值')
+
+    def test_future_bars_do_not_change_history(self):
         hour60 = _hour_frame(days=300)
-        T = day.index.get_level_values(0)[-1]
-        full = self._run(day, hour60, T)
-        cut = self._run(slice_asof(day, T),
-                        slice_asof(hour60, T + pd.Timedelta(hours=15)), T)
-        pd.testing.assert_frame_equal(full.tail(1), cut.tail(1),
-                                      check_dtype=False)
-
-    def _run(self, day, hour60, T):
-        targets = target_times(day, T)[-1:]
-        as_of = T + pd.Timedelta(hours=15)
-        ctx = self._ctx(day, hour60, as_of)
-        ctx.targets['day'] = targets
-        ctx.targets['60min'] = targets
-        day_core_step(ctx, targets)
-        return daily_snapshot_step(ctx, targets)
+        ts = pd.DatetimeIndex(hour60.index.get_level_values(0))
+        T = ts[-50]
+        mod = hour60.copy()
+        fut = pd.DatetimeIndex(mod.index.get_level_values(0)) > T
+        for col in ('open', 'high', 'low', 'close'):
+            mod.loc[fut, col] = mod.loc[fut, col] * 3.0
+        a = self._run(hour60, ts[-1], pd.DatetimeIndex([T]))
+        b = self._run(mod, ts[-1], pd.DatetimeIndex([T]))
+        pd.testing.assert_frame_equal(a, b, check_dtype=False)
 
 
 class TestCausalPivotCount(unittest.TestCase):
@@ -334,8 +374,9 @@ class TestColdstart(unittest.TestCase):
         }
         out = coldstart_step(
             ctx, pd.DatetimeIndex(['2025-01-03 10:30', '2025-01-03 15:00']))
-        self.assertEqual(float(out.iloc[0][AKA.STAGE]), 1.0, '盘中必须用上一交易日')
-        self.assertEqual(float(out.iloc[1][AKA.STAGE]), 2.0, '15:00 用当日收盘')
+        # `stage` 已改为 60min 原生（D78），这里用 coldstart 的另一列验映射
+        self.assertEqual(float(out.iloc[0]['garPCount']), 1.0, '盘中必须用上一交易日')
+        self.assertEqual(float(out.iloc[1]['garPCount']), 2.0, '15:00 用当日收盘')
 
 
 class TestRouting(unittest.TestCase):
@@ -535,6 +576,42 @@ class TestRuntimeNoWrites(unittest.TestCase):
         self.assertFalse(ups.called)
 
 
+class TestShardCodes(unittest.TestCase):
+    """`--review-shard` 的分片口径：并集=全集、两两不交、可复现。
+
+    分片只回答「这台机器算哪一份」，**不改变**每码的算法与写库口径。
+    """
+
+    CODES = ['600519', '000001', '301308', '000949', '510300',
+             '430489', '688777', '002380', '159915', '601318']
+
+    def test_partition_is_complete_and_disjoint(self):
+        from GolemQ.pipeline.review.pipeline import shard_codes
+        for n in (2, 3, 6):
+            parts = [shard_codes(self.CODES, f'{i}/{n}') for i in range(1, n + 1)]
+            self.assertEqual(sorted(sum(parts, [])), sorted(self.CODES),
+                             f'N={n} 时各片并集必须等于全集')
+            seen = set()
+            for part in parts:
+                self.assertFalse(seen & set(part), f'N={n} 分片有重叠：{part}')
+                seen |= set(part)
+
+    def test_deterministic(self):
+        from GolemQ.pipeline.review.pipeline import shard_codes
+        self.assertEqual(shard_codes(self.CODES, '2/6'),
+                         shard_codes(self.CODES, '2/6'))
+
+    def test_empty_spec_returns_all(self):
+        from GolemQ.pipeline.review.pipeline import shard_codes
+        self.assertEqual(shard_codes(self.CODES, ''), self.CODES)
+
+    def test_bad_spec_raises(self):
+        from GolemQ.pipeline.review.pipeline import shard_codes
+        for bad in ('1', '0/3', '4/3', 'a/b', '1/0', '1/-2'):
+            with self.assertRaises(ValueError):
+                shard_codes(self.CODES, bad)
+
+
 class TestCLI(unittest.TestCase):
     def test_parse_review(self):
         from GolemQ.cli.__main__ import build_parser
@@ -641,6 +718,21 @@ class TestReviewCliDefaults(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue(run.call_args.kwargs['force'])
         self.assertEqual(run.call_args.kwargs['from_date'], '2026-09-01')
+
+    def test_internal_review_shard_reaches_run_review(self):
+        """`--review-shard` 只在 internal parser；值必须透传给 `run_review`。"""
+        from GolemQ.cli.__main__ import build_parser
+        from GolemQ.cli.commands.review import run_review_daily
+        args = build_parser(internal=True).parse_args(
+            ['--strategy', 'review', '--eval', 'etc', '--review-shard', '3/6'])
+        out, err = io.StringIO(), io.StringIO()
+        with unittest.mock.patch('GolemQ.pipeline.review.run_review',
+                                 return_value=({}, self.STATS)) as run, \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            rc = run_review_daily(args)
+        self.assertEqual(rc, 0)
+        self.assertEqual(run.call_args.kwargs['shard'], '3/6')
 
     def test_eval_accepts_codes_as_second_argument(self):
         """`--eval` 的第二参数可以是逗号分隔代码；没有独立的 `--review-codes`。"""

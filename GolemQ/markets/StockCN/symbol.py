@@ -265,7 +265,7 @@ def _match_segment(segments, bare):
 _EXCHANGE_TOKENS = {
     'SH': 'SH', 'XSHG': 'SH',
     'SZ': 'SZ', 'XSHE': 'SZ',
-    'BJ': 'BJ',
+    'BJ': 'BJ', 'XBJE': 'BJ',       # 通达信北交所后缀（如 430489.XBJE）
 }
 
 #: 没有显式交易所时，靠号段就能断定属于沪市的 3 位前缀（债券/回购等）。
@@ -293,6 +293,8 @@ def _split_cn_code(raw):
     >>> _split_cn_code('600519.XSHG')     # 点号后缀
     ('600519', 'SH')
     >>> _split_cn_code('bj430489')        # 北交所 —— 原实现认不出来
+    ('430489', 'BJ')
+    >>> _split_cn_code('430489.XBJE')     # 通达信北交所后缀
     ('430489', 'BJ')
     >>> _split_cn_code('XSHG600519')      # QUANTAXIS 的前缀式
     ('600519', 'SH')

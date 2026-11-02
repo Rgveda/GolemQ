@@ -60,9 +60,62 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 | `poly9MajD` / `poly9WekD` | 100% | — |
 | `rTrePrcMajD` / `rTreSlopMajD` | 93% | 缺的是 `<450` 根 / 拟合失败，**历史不足补不了** |
 | `prophetLbD` 等 | **42%** | 需专门「只补 Prophet」的重型工具，或接受现状（**待你决定**） |
-| `se`（**day 表日频**） | **99.995%** | D74：2,935,066 / 2,935,202；缺 136 行 = 27 只标的上市初期暖机 |
-| `ZenPivotCnt`（**day 表 15:00 采样**） | **99.94%** | D74：2,933,407 / 2,935,202；缺 1,795 行 = 2 只北交所 920xxx（60min 数据 2025-09 才起）。⚠️ 全历史重算使计数变大（000001 8→47） |
+| `se`（**60min 表**，D78） | 回填中 | 撤销 D74；`tools/backfill_hour_extra.py` 按码写 `*_reality_feat_60min`；2026-10-31 三机分片（`--shard i/3`）：Babel 1/3、Gilgamesh 2/3、Nightwatcher 3/3，1511/2434 码 |
+| `ZenPivotCnt`（**60min 表**，D78） | 回填中 | 与 `se` 同批；口径 = 截至当前 60min bar 的因果中枢数 |
 | `renkoSpriceD` 等 14 列 | **100%** | `tools/backfill_renko.py`（D72）已补齐 2,935,202 行 / 1,883 码，14 列缺失 0 |
+
+#### 全市场覆盖缺口（2026-11-01 查明，进行中）
+
+`--review` 历史上只跑 `--eval fast`，而 `fast`/`block` 都解析成 **`focus_block`**
+（`analysis/cv/scopes.py:175-176`）⇒ 只覆盖关注板块：
+
+| 口径 | 数值 |
+|:--|--:|
+| `stock_list` 在册 / 有 review 行（`zDLagR`） | 5,580 / **2,433** |
+| 缺口合计 | **3,147** = `etc` 3,019 + `fast` 128 |
+| ETF（`etf_list` 1,716） | 有 60min 行，**0** 有 review 列 |
+| 未覆盖码的 60min 行 | 只有 ChartScan 列；全表 `ZEN_DASH_LAG` 文档数 **0**，不是旧契约 |
+
+处理（计划已批）：`--review --eval etc` + 补一轮 `--eval fast` + `--eval etf`，
+新增 **internal** `--review-shard i/N`（`shard_codes()` 在
+`pipeline/review/pipeline.py`，`tools/backfill_hour_extra.py` 改用同一函数）。
+
+进度：Gate A 已过（1013 条测试全绿）；Gate B 试点（`002462` / `300520` / `510300`
+dry-run 计时）进行中。
+
+#### 回填结束后第一件事：消除补数与 `--review` 的**编排**平行实现（2026-10-31 挂账）
+
+两侧**算法本体已共用**（`pipeline/review/steps/hour_extra.py` 的
+`sample_entropy_by_day` / `pivot_stats` / `renko_by_day` / `native_by_day` /
+`chip_cost_by_day`，`zen.py` 与工具 import 同一组），但**映射编排有两份**：
+
+| 分叉点 | 管线侧 | 工具侧 |
+|:--|:--|:--|
+| se / 中枢 / Renko / 原生 → 每目标的 `searchsorted` + Renko ÷close | `steps/zen.py:101-132`（逐 T 内联） | `backfill_hour_extra.compute_frame`（向量化） |
+| 日族采样（15:00=当日、盘中=上一交易日） | `steps/daily.py::day_sample_step`（ctx `_day_sample_rows` 缓存） | `backfill_hour_extra.day_sample_frame`（直接读日表） |
+| ChipDist 取数 | `day_core_step`：ctx 日帧 + 换手率 | 工具：自己 `get_kline_price_v3` + 换手率 |
+
+当前两条路径**输出一致**（Gate 2 三码逐值对拍、Gate 3 五码 2027 行审计 0 异常），
+但属于 `CLAUDE.md` 警告的「平行实现只会分叉」。整改（**回填期间不动代码**）：
+
+1. `hour_extra.py` 抽 `hour_extra_block(ohlc60, targets, code)` →
+   `se + ZenPivotCnt + ZenPivotLag + Renko14 + Native11`，`zen.py` 与工具都调它；
+2. 抽 `day_sample_map(dates, rows, targets, close60, chip_abs)`：管线传 ctx 缓存、
+   工具读库后传进来，映射规则只剩一份；
+3. ChipDist 的取数差异保留（日表 chip 尚未回填完成），但都经 `chip_cost_by_day`；
+4. 验收：`tools/compare_review_golden.py` 对拍前后逐值不变，再提交。
+
+#### 与上面同批待办（Gate 5，2026-10-31 挂账）
+
+1. **日表 ChipDist 4 列回填**：新建 `tools/backfill_day_chip.py`，复用
+   `hour_extra.chip_cost_by_day`（960 日线窗口 + `adj` 缩放），逐码对已存在的
+   review 日行算绝对成本 → ÷当日 close 写 `cost5/15/85/95PrzD`；
+   实测库里 **14/18 列有值，chip 4 列全缺**；
+2. **日表清理**：跑 `backfill_hour_extra --unset-day --unset-day-renko`
+   （`$unset` `se` / `ZenPivotCnt` / Renko 14 列）—— 库中实测仍有
+   **3.8M 行**带这些列，D78 要求只在 60min 表；
+3. 顺序：60min 全量回填收尾 → 抽公共映射（对拍验收）→ chip 回填 → `$unset` → 提交。
+   （先抽映射，`backfill_day_chip.py` 才能直接复用同一份日采样/chip 映射。）
 
 ### 指标搬迁（`DECISIONS.md` D49 / **D50**）—— ✅ **四块全部收口**（③ 的编排按你的决定挂账）
 
@@ -189,7 +242,7 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 2. 横截面统计（按日聚合 rank/特征）→ 再决定落库形态（用户：详细数据暂不落库）；
 3. `--train` / `--strategy xgb` 与预测落点。
 
-### Mainstream 移植（`models/mainstream.py`）—— ⏳ 待启动
+### Mainstream 移植（`models/mainstream.py`）—— 🚧 第一段已落地（D79）
 
 老树 2,103 行 + workload 848 行，输出 **83 列**；其中 **64 列**新树无生产者、
 也不在 review 契约里。`calc_compact_features` 的**新树精简版**已在 D62 落地
@@ -198,6 +251,41 @@ mainstream-credits 等模型函数；牛股诊股数据也未搬。
 架构与阶段拆分见 worklog 2026-10-20「再续六」：
 `pipeline/mainstream/` + `MainstreamPipeline(BasePipeline)` + `--strategy mainstream`，
 先搬 compact builder 并对拍，不能一次搬完。
+
+**已完成的一段（2026-11-01，D79）**：「筛选计算全局智能仓位」
+（Dempster–Shafer 策略仓位控制）——
+
+* `pipeline/mainstream/` + `--strategy mainstream --eval <scope>`；
+* `analysis/{mainstream_timing,position}.py`、`quadrant_jit.calc_quadrant_downrisk_major`；
+* 输出 **`stock_massive_reality_60min_models`**（旧表名；全系统共用的 massive
+  模型表，仓位只是其中一批字段 —— 不许另起 `*_position_*` 新表）：
+  `PosBsln/PosPad/PosNegBsln/MasPosOnhold/DS_*`；
+* **口径**：新树自洽、**不逐值复刻 4.4**（缠论实现差异已证实：600495
+  2026-03-02 旧 `zDLagD=+21` vs 新 `-4`；数据/复权/窗口/参数均已排除）；
+* 验证：2025-04-02→07 做空比 0.69→0.82、仓位 0（旧窗口版本复现）；
+  无后视镜版本改为「三段脉冲式清仓」（04-02~04-07 仓位 0.21~0.24）；
+  2026 年 7 月内有 31 根零仓位（07-01 起），见 D79。
+* 事件列（D79 增补）：`PosFull` / `PosFullOnset` / `PosReClear`（清仓暴击，
+  ≤4 根内二次清仓）；基准指数默认用**科创50 + 创业板指**，沪深300 仅历史对照。
+
+### OmniPathUpR1Coef* 链（2026-11-02 盘点，待移植）
+
+**生产者**：旧树 `analysis/base.py:936 calc_omnipath_coef_scores`
+（引擎 `analysis/pool_coef.py::calc_wavlet_coef_of_fractal_vXI`；新树已有
+`analysis/quadrant_coef.py::calc_wavlet_coef_of_fractal`）。
+
+**5 个输入的精确公式与状态**：
+
+| 输入 | 公式（旧树） | 新树状态 |
+|:--|:--|:--|
+| `ATR_CHANNEL_MAJOR` | `lineareg_band(daily)` 的 `(lrc_u-lrc_l)/lrc`（**不是 ATR**，名字误导） | ✅ 原语齐（`indicators.lineareg_band`、`peak.py`）→ 易 |
+| `BOLL_TREND_TIMING_LAG_MAJOR` | `event_lag(close > BOLL_MAJOR)`（日线） | ✅ `analysis/compact.py` 已算 BOLL → 易 |
+| `MAGIC_NINE_TURNS_DUMMY`（`m9tDmy`） | `M9T_BASELINE = f(m9t_lag + m9t_lag_maj)`，dummy 即 baseline | ⚠️ m9t/m9tLag 有；缺 `m9tLagMaj`（日线）→ 中 |
+| `LINEAREG_WAVELET_UPRISING_TIMING_LAG_CANDIDATE` | `event_lag(CHOSEN_TRIGGER_EXPECTED_LINEAREG_LB < close)`；`CHOSEN_TRIGGER_*` 依赖 `MASSIVE_XGB_ECHO_UPRISING_BEFORE` + `ATR_LB/UB_MAJOR` | ❌ **卡 XGB echo**（新树无 producer） |
+| `FBPROPHET_LB_UPRISING_TIMING_LAG_DUMMY`（`fbpLUpRsgLagDmy`） | `event_lag(FBPROPHET_LB_UPRISING_CANDIDATE>0 \| (FBPROPHET_LB_UPRISING_TIMING_LAG + CVaR_PEAK_PRICE_TIMING_LAG)>0)` | ❌ **卡 CVaR peak candidate**（只有常量） |
+
+**顺序**：3 个易项 → XGB echo / CVaR peak 两条上游 → `calc_omnipath_coef_scores`
+→ `QLevLagD` → `QLevLagDMed` / `QuadUpr1CoefLagMed`。
 
 ### 卡在**上游特征链**上（不是卡在谁身上，是前置没到）
 
@@ -225,7 +313,7 @@ mainstream-credits 等模型函数；牛股诊股数据也未搬。
 |:--|:--|:--|
 | 1 | **未被引用但值错的常量** | 只有**全量审计**能闭合（现有两个工具都只看被引用的）。只读检查，成本低 |
 | 2 | **`880xxx` 那 689 只指数** | 腾讯**不供**（通达信自编指数），已从码表剔除。要它们得换源（通达信本地 / pytdx）—— 但**它们本来就不是交易标的**，多半不必 |
-| 3 | **LEADOUT 是否接入 review** | 库函数已就绪（D73）。选项：① 只留库代码、由策略自行调用；② 进 review 契约并落库（需定阈值校准 + backfill，参照 D69/D72）。快测 edge 弱、高价股 0 触发 |
+| 3 | **LEADOUT 是否接入 review** | **已退回未校准**（用户 2026-10-29）：`calc_mainstream_leadout_feats` = D73 逐字镜像，无 `min_price`/事件校准。**2026-10-29 新增折叠法**：`fold_high_price`（股价 >10 → `log10`，≤10 原值），两族都接受 `fold=True`（**默认 False**）。折叠后七点验收 ±7 天 **7/7**、严格「目标日或之后」**5/7**。⚠️ 降级 60min 单独无效（量纲缺陷在任何频率都成立）。选项：① 只留库代码；② 把 fold 设为默认并进 review 契约（参照 D69/D72）。**已知冗余买点**（用户 2026-10-29 决定维持现状、后期再过滤）：000711 2026-09-21（原公式固有）、301308 2026-07-22 / 601869 2026-10-20（折叠法引入，均在 MA20 下方）。区间收益工具：`tools/mainstream_segments.py` |
 
 > **E 已关闭（2026-10-20）**：查库确认 `200–209` 与 `161–169`/`184` 在 `index_*`/`stock_*`
 > **都没有数据** ⇒ 纯分类修正，无需搬数据。ETF 拆分本身已完成（`index_*` 零 ETF）。
@@ -286,7 +374,9 @@ mainstream-credits 等模型函数；牛股诊股数据也未搬。
 | **CN-COMMENT-AUDIT** | 千股千评只搬了 `TurnoverRate`；牛股诊股（`stock_diagnosis*`）与旧 `stock_moneyflow` **完全未搬**；新采集仅当日/近 7 日 | ⚠️ 见 worklog 2026-10-20 |
 | **M9T-AUDIT** | raw+lag 四列齐全（`m9tMajR/m9tLagMajR/m9tWekR/m9tLagWekR`）；`m9tBsl/m9tBslLag/m9tBf/m9tSxBf/m9tDmy` 缺失，卡上游特征链 | ⚠️ worklog 2026-10-20 |
 | **POOLCOEF** | `--strategy poolcoef` 暂不能恢复：新 `models/poolcoef.py` 缺 `calc_stock_poolcoef_analysis`；需单独移植 `benchmark/poolcoef.py::workload` | ⏳ 待排期 |
-| **SE-PIVOT** | 60min 新增 `SE`（15:00 日频样本熵，≤2160 根）+ `ZenPivotCnt`（因果中枢计数）；60min 契约 36 列 | ✅ worklog 2026-10-20，882 条用例 |
+| **REVIEW-MODEL** | **模型说明** [`docs/review_model.md`](docs/review_model.md)：日线/60min/15min 三族、落库关系、互相映射 | 📌 接手 review 先读 |
+| **60MIN-SPEC** | **权威规格** [`docs/review_model_60min_feature_spec.md`](docs/review_model_60min_feature_spec.md)：79 列、as-of、命名单一真相 | 📌 改契约先改这份 |
+| **SE-PIVOT / 一体化** | **60min 行 69 列**（D78）：zen4 + minor17 + coldstart16 + `se`/`ZenPivotCnt`2 + **Renko14（60min 原生 2160 as-of）** + **日族14（日表原生 + 60min 采样）** + **M9T2（60min 原生）**；日表 = 14 列。Poly9/RegTree/Prophet 按「算过就免算」复用日频结果 | ✅ **D78**（撤销 D74）；审计 [`docs/review_model_asof_audit.md`](docs/review_model_asof_audit.md)；回填 `tools/backfill_hour_extra.py` |
 | **REVIEW-ONEPASS** | day 832 / 周线 2160；60min 一趟合并 zen60+minor17+zen15+SE+pivot；day 一趟合并 daily_snapshot+coldstart（M9T/Poly9 共享，周线按周缓存）；15min 表 1:4 取样 | ✅ worklog 2026-10-20 |
 
 | **JIT-MERGE** | `analysis/{magic_nine,quadrant,renko,regtree}.py` 并入对应 `*_jit.py`，原文件删除；核心核显式 numba 签名 | ✅ **D59**，881 条测试 |
@@ -309,12 +399,13 @@ mainstream-credits 等模型函数；牛股诊股数据也未搬。
 | **PRICE-DUMMY** | 归一化价格统一 `D`（落库）/ `_DUMMY`（常量）；DB `$rename` 6,650,307 行 + 60min `poly9Maj` `$unset` 3,797,971 行；attach `*close` 还原无后缀价格 | ✅ **D70** |
 | **RENKO-DAY** | review 日族加 Renko S/L 时序；`tools/backfill_renko.py --partial --apply` 两轮，2,875,464 / 2,878,469 日行（99.9%） | ✅ **D71** |
 | **RENKO-FAMILY** | review 日族保存 Renko 全族 14 列，6 个价格列落 `*D` 比值；backfill 扩到 14 列并修掉 `$ifNull` 缺 `$` 的静默 bug | ✅ **D72**：存量 **2,935,202 / 2,935,202 行**（1,883 码），14 列缺失均 0；997 条测试 |
-| **LEADOUT** | 主力吸筹 6 列的镜像（HIGH/HHV/上涨偏离 + KDJ/MACD 反向）：`analysis/quadrant_jit.py::calc_mainstream_leadout_feats` → `MsLeadout*` 6 列；与吸筹共用内核，老树对拍仍过 | ✅ **D73**（库代码；**未接 review/落库**，快测 edge 弱、阈值需校准）；1002 条测试 |
-| **DAY-EXTRA** | `se` / `ZenPivotCnt` 从 60min 契约移到日族：`se` 改日收盘样本熵（540 日窗口），`ZenPivotCnt` 用 **2016 起全历史 60min** 取 15:00 值；60min 侧 `$unset`，attach 走日族映射 | ✅ **D74**：day `se` 99.996%、`ZenPivotCnt` **99.94%**（缺 2 只北交所）；1002 条测试 |
+| **LEADOUT** | 主力吸筹 6 列的**逐字镜像**（未校准）：`calc_mainstream_leadout_feats(ohlc, features, fold=False)` → `MsLeadout*` 6 列；与吸筹共用内核；`fold=True` 时股价 >10 折成 `log10` | ✅ **D73**（库代码；**未接 review/落库**）；校准尝试已撤回；折叠法默认 `False`（用户 2026-10-29 确认现版本） |
+| **DAY-EXTRA** | （已撤销）D74 曾把 `se` / `ZenPivotCnt` 移到日族 | ⛔ **D74 → D78 撤销**（2026-10-30）：两列回到 60min 逐 bar；日表两列 `$unset` |
 | **DATA-INVENTORY** | 数据暗线审计：8.3 频率阶梯齐全、1min 母数据 21.5 亿行（2017-11 起）、60min 1999 起、1day 1990 起；4.4 多出的 60min 行是重复/错标频率，**标准时刻缺失 0** | ✅ 新文档 [`docs/data_inventory.md`](docs/data_inventory.md)（已挂 `CLAUDE.md` 第 7 条） |
 | **OLD-REVIEW-NOMIGRATE** | 4.4 `golemq.stock_reality_feat_*` 旧 review 特征**明确不搬**：未归一化、复权锚冻结在过去，无参考意义；8.3 历史缺口是刻意的（CV 列仍保留） | ✅ **D75**，无代码改动 |
 | **BOTTOM-ROOF** | `btmP`/`roofP` 是**绝对价**：`garPD`(比值)→还原`garP`(绝对)→取 band 首底/末顶；补老树常量、`stages.garident_bottom_roof`、attach 接线；**不落库** | ✅ **D76**，由用户更正 D49 的「同病」误记 |
 | **NAMING-AUDIT** | 列名伪驼峰：39 个老树真值全改（`mpwr3*`/`hmpwr12`/`lrgPrice`/`cciNorm`/`ma90Clr*`/`volNorm*`/`peak*`/`fin*`/`lastClose` 等），28 个标准名/已落库元数据保留；8.3 存量扫描 0 命中（4.4 只读不动） | ✅ **D77**，全量 1003 条测试 |
+| **EXAMPLES-RENKO-ASOF** | examples 的 Renko 图改读落库 `*_reality_feat_60min`（as-of）：`app_renko` 砖序 = 快照变化点；`app_pivot_renko{,_coef}` 非 60min 禁用 Renko；顺带修 `_attach_day` 的 ChipDist 列重叠（510300/000711） | ✅ 2026-11-03，全量 1029 条测试；详见 [`docs/worklog/2026-11.md`](docs/worklog/2026-11.md) |
 
 ---
 

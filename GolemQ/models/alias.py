@@ -63,6 +63,11 @@ class LTT:
     FOUR_QUADRANT_UPRISING_TIMING_LAG = '4QUprLag'
     FOUR_QUADRANT_PRE_PRELUDE_BEFORE = '4QPreludePreBf'
     QUADRANT_DOWNRISK_TIMING_LAG = 'QuadDwnRskLag'
+    #: D78 之后新补：日频版下行风险 lag（旧树 `models/mainstream.py:1445` 再编码）。
+    QUADRANT_DOWNRISK_TIMING_LAG_MAJOR = 'QuadDwnRskLagMaj'
+    #: 「全局智能仓位」的两个前奏计数（旧树 `analysis/mainstream.py:348-360`）。
+    QUADRANT_PRELUDE_UPRISING_BEFORE = 'QuadPreUprBf'
+    QUADRANT_PRELUDE_ENDPOINT_BEFORE = 'QuadPreEpBf'
     QUADRANT_STATUS = 'QuadSt'
     CHOBITS = 'ChoBits'
     QUADRANT_CODEX = 'QuadCodex'

@@ -379,6 +379,11 @@ def calc_garident_stages(checkpoints: pd.DataFrame, features: pd.DataFrame,
     # ⚠️ 老树这里还有 `STOCK_TREND_CHECKOUT_CLOSE` / `RETURNS` / `BEFORE` /
     # `RETURNS_GARIDENT` 四列的计算与落列 —— **已整条删除**，理由见 docstring。
 
+    # ⚠️ **顺序必须与老树 vXII.py:238-253 一致**：先 `ffill` 带子、再逐 bar 判价。
+    # 反过来（先判价后 ffill）会让**非 checkpoint 行**判成 NaN ⇒ stage 只剩
+    # checkpoint 的整数值，永远拿不到 `-0.5` / 半档（2026-11-01 实测：
+    # 8.3 全库 stage 只有 0..5 整数，而 4.4 的 STAGE_MOD 有 -0.5×754、2.5×24）。
+    features[FLD.GARIDENT_PRICE] = features[FLD.GARIDENT_PRICE].ffill()
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=RuntimeWarning)
         ret_garident_stages = features.groupby(
@@ -387,7 +392,6 @@ def calc_garident_stages(checkpoints: pd.DataFrame, features: pd.DataFrame,
                 lambda x: calc_garident_stage(
                     x[AKA.CLOSE].item(),
                     x[FLD.GARIDENT_PRICE].item()))
-        features[FLD.GARIDENT_PRICE] = features[FLD.GARIDENT_PRICE].ffill()
         ret_garident_stages_count = features.groupby(
             level=[0],
             group_keys=True).apply(

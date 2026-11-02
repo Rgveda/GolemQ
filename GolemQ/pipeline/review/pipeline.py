@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence
 
@@ -30,7 +31,6 @@ PIPELINE_NAME = 'review'
 
 #: 各族的读取暖机（**只影响取数窗口，不决定写哪些行**）。
 DAY_LOOKBACK_DAYS = 4000
-MIN_LOOKBACK_DAYS = 900
 #: 固定锚点：batch 与 runtime 必须用同一个起点，否则递归指标（EMA/BS/KMeans/
 #: Prophet）的值会随窗口漂移。数据不足时自然截断。
 REVIEW_ANCHOR_DAY = '2016-01-01'
@@ -83,9 +83,8 @@ class ReviewPipeline(BasePipeline):
         fam = set(families)
         req = set()
         if fam & {'day'}:
-            # 日族的 `ZenPivotCnt` 是 60min 中枢在 15:00 的取值（D74）；
-            # 日频 `se` 仍只用日线。60min 帧缺失时该列留 NaN。
-            req |= {'day', '60min'}
+            # 日族只用日线（`se`/`ZenPivotCnt` 2026-10-30 起回归 60min，D78）。
+            req |= {'day'}
         if fam & {'60min'}:
             # 60min 里的 coldstart 列（STAGE/BST/M9T）要从日线采样。
             req |= {'60min', '15min', 'day'}
@@ -100,7 +99,6 @@ class ReviewPipeline(BasePipeline):
         market = get_active_market()
 
         day_start = REVIEW_ANCHOR_DAY
-        min_start = str((as_of - pd.Timedelta(days=MIN_LOOKBACK_DAYS)).date())
         frames: Dict[str, pd.DataFrame] = {}
         want = set(freqs) if freqs is not None else {'day', '60min', '15min'}
 
@@ -117,12 +115,13 @@ class ReviewPipeline(BasePipeline):
                 continue
             if key == '15min':
                 freq_start = REVIEW_ANCHOR_15MIN
-            elif 'day' in want:
-                # 日族 `ZenPivotCnt` 要**全历史** 60min（D74）；只跑 60min 族时
-                # 各 step 最多用 2160 根，900 天足够。
-                freq_start = REVIEW_ANCHOR_DAY
             else:
-                freq_start = min_start
+                # ⚠️ 60min **一律从 2016 锚点取**（D78）：`se` 的窗口是 2160 根、
+                # `ZenPivotCnt` 是累计值，目标下界最早可到 `as_of-800d`，
+                # 再往前还要 ≥2160 根（≈780 自然日）暖机。900 天窗口会让
+                # **目标区间头部**（如 2024 年以前）少掉一半以上的基础数据，
+                # SE/中枢计数全部失真。这条不许按“省 IO” reclaim。
+                freq_start = REVIEW_ANCHOR_DAY
             res, _ = market.get_kline_price_min(
                 code, start=freq_start, end=str(as_of.date()) + ' 23:59:59',
                 frequency=freq, realtime=False, verbose=False)
@@ -252,12 +251,44 @@ def build_default_steps() -> List[FeatureStep]:
 # --------------------------------------------------------------------------- #
 # 顶层入口
 # --------------------------------------------------------------------------- #
+def shard_codes(codes, spec: str = '') -> List[str]:
+    """按 ``md5(code) % N == i-1`` 取第 i 片（1-based），保持原顺序。
+
+    与 `tools/backfill_hour_extra.py --shard` **同一口径**（两处只留这一份实现）：
+    多机各跑一片、合起来恰好覆盖全集且两两不交。
+
+    >>> shard_codes(['600519', '000001', '301308'], '1/2')
+    ['600519']
+    >>> shard_codes(['600519', '000001', '301308'], '2/2')
+    ['000001', '301308']
+    >>> shard_codes(['600519', '000001', '301308'], '')
+    ['600519', '000001', '301308']
+    """
+    out = [str(c).strip() for c in (codes or []) if str(c).strip()]
+    if not spec:
+        return out
+    try:
+        i_s, n_s = str(spec).split('/')
+        i, n = int(i_s), int(n_s)
+    except Exception as exc:        # noqa: BLE001
+        raise ValueError(f'shard 形如 1/3，收到 {spec!r}') from exc
+    if n < 1 or not (1 <= i <= n):
+        raise ValueError(f'shard 形如 1/3（1 ≤ i ≤ N），收到 {spec!r}')
+    return [c for c in out
+            if int(hashlib.md5(c.encode()).hexdigest(), 16) % n == i - 1]
+
+
 def run_review(eval_range: str = 'fast', codes: Optional[Iterable[str]] = None,
                pct_of_cores: float = 0.32, families=DEFAULT_FAMILIES,
                force: bool = False, dry_run: bool = False, verbose: bool = False,
                offset: str = '', from_date: str = '', recheck_days: int = 0,
-               limit: int = 0, **kwargs):
-    """解析 scope → 逐码跑 → 返回 ``(CodeResult 列表, 统计)``。"""
+               limit: int = 0, shard: str = '', code_timeout: int = 0,
+               **kwargs):
+    """解析 scope → 逐码跑 → 返回 ``(CodeResult 列表, 统计)``。
+
+    ``shard='i/N'`` 在**解析出码表之后**按 md5 再切一片（多机分布式用，
+    内部旗子 `--review-shard`；`limit` 作用在切分之后）。
+    """
     from GolemQ.analysis.cv.scopes import perpar_symbol_range
     from GolemQ import get_active_market
 
@@ -269,6 +300,7 @@ def run_review(eval_range: str = 'fast', codes: Optional[Iterable[str]] = None,
         if got is False:
             raise ValueError(f'无法解析 eval_range={eval_range!r}')
         codelist = list(got)
+    codelist = shard_codes(codelist, shard)
     if limit and limit > 0:
         codelist = codelist[:int(limit)]
 
@@ -284,6 +316,11 @@ def run_review(eval_range: str = 'fast', codes: Optional[Iterable[str]] = None,
     opts = ReviewOptions(families=tuple(families), force=force, dry_run=dry_run,
                          recheck_days=recheck_days, from_date=from_date,
                          offset=offset, verbose=verbose)
-    pipe = ReviewPipeline(options=opts, verbose=verbose)
+    _kw = {}
+    if code_timeout and int(code_timeout) > 0:
+        # 内部旗子 `--review-timeout`：全市场回填时，单码从零算满 800 天
+        # 在并发下可能超过默认 2h（实测 002462/300520 超时）。
+        _kw['timeout'] = int(code_timeout)
+    pipe = ReviewPipeline(options=opts, verbose=verbose, **_kw)
     return pipe.run_codes(codelist, pool_size=cpu, verbose=verbose,
                           as_of=(offset or None))

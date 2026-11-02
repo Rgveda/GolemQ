@@ -11,21 +11,14 @@ from GolemQ.analysis.indicators import TA_HMA
 from GolemQ.analysis.magic_nine_jit import calc_magic_nine_turns_np_vXs_jit
 from GolemQ.analysis.poly9 import calc_polynomial9_vXIs
 from GolemQ.analysis.quadrant_jit import mapower_np_vXIIs
-from GolemQ.analysis.renko_jit import (available as renko_available,
-                                       renko_trend_cross_func_jit)
 from GolemQ.analysis.regtree_jit import calc_regtree_fractal_vXIs
 from GolemQ.analysis.timing import calc_event_timing_lag
 from GolemQ.analysis.timeseries import weekly_ohlc
 from GolemQ.analysis.zen import calc_zen_timing_lag
 from GolemQ.core.constants import AKA, FEATURES as FTR, FIELD as FLD
-from GolemQ.models.alias import ZEN
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_DAILY,
                                    slice_asof)
-from GolemQ.pipeline.review.contract import (DAY_COLUMNS,
-                                             RENKO_DAY_COLUMNS,
-                                             RENKO_PRICE_DUMMIES)
-from GolemQ.pipeline.review.steps.day_extra import (pivot_counts,
-                                                    sample_entropy_daily)
+from GolemQ.pipeline.review.contract import DAY_COLUMNS, DAY_SAMPLE_COLUMNS
 
 
 def _last(series, default=np.nan):
@@ -109,20 +102,9 @@ def _week_start(t) -> pd.Timestamp:
     return t - pd.Timedelta(days=t.weekday())
 
 
-def _renko_last(renko, col, T, code):
-    if renko is None or col not in renko.columns:
-        return np.nan
-    try:
-        return renko.loc[(pd.Timestamp(T).normalize(), code), col]
-    except KeyError:
-        return np.nan
-
-
-def _day_row(day: pd.DataFrame, feats: pd.DataFrame,
-             wk_raw: pd.DataFrame, wk_feats: pd.DataFrame,
-             renko: pd.DataFrame = None,
-             se: float = np.nan, pivot_cnt: float = np.nan) -> dict:
-    """从已算好的 day / week 特征抽一行（含 Renko + 日频 `se`/`ZenPivotCnt`）。"""
+def _poly9_regtree_row(day: pd.DataFrame, feats: pd.DataFrame,
+                       wk_raw: pd.DataFrame, wk_feats: pd.DataFrame) -> dict:
+    """日行里的 Poly9 / RegTree 7 列（60min 行按日采样复用，D78）。"""
     close = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
     poly9_ratio = (feats[FLD.POLYNOMIAL9] / close.to_numpy()
                    if FLD.POLYNOMIAL9 in feats.columns else pd.Series(np.nan, index=feats.index))
@@ -135,32 +117,45 @@ def _day_row(day: pd.DataFrame, feats: pd.DataFrame,
         poly9_week_ratio = wk_feats[FLD.POLYNOMIAL9] / wk_close
     else:
         poly9_week_ratio = pd.Series(dtype=float)
-    row = {
-        FTR.ZEN_DASH_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.ZEN_DASH_TIMING_LAG]),
-        FTR.ZEN_PEAK_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.ZEN_PEAK_TIMING_LAG]),
-        FTR.ZEN_DASH_TIMING_LAG_WEEKLY_REAL: _last(
-            wk_feats[FLD.ZEN_DASH_TIMING_LAG]) if len(wk_feats) else np.nan,
+    return {
         FTR.POLYNOMIAL9_MAJOR_REAL: _last(poly9_ratio),
         FTR.POLYNOMIAL9_NORM_MAJOR_REAL: _last(feats[FLD.POLYNOMIAL9_NORM]),
         FTR.POLYNOMIAL9_WEEKLY_REAL: _last(poly9_week_ratio),
         FTR.POLYNOMIAL9_NORM_WEEKLY_REAL: _last(
             wk_feats[FLD.POLYNOMIAL9_NORM]) if len(wk_feats) else np.nan,
+        FTR.REGTREE_PRICE_MAJOR_REAL: _last(regtree_ratio),
+        FTR.REGTREE_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.REGTREE_TIMING_LAG]),
+        FTR.REGTREE_SLOPE_MAJOR_REAL: _last(regtree_slope_ratio),
+    }
+
+
+_CHIP_SRC = (('cost5PrzD', 'cost5Prz'), ('cost15PrzD', 'cost15Prz'),
+             ('cost85PrzD', 'cost85Prz'), ('cost95PrzD', 'cost95Prz'))
+
+
+def _day_row(day: pd.DataFrame, feats: pd.DataFrame,
+             wk_raw: pd.DataFrame, wk_feats: pd.DataFrame,
+             chip: dict = None) -> dict:
+    """从已算好的 day / week 特征抽一行（Day 族 18 列；Renko 归 60min）。"""
+    row = {
+        FTR.ZEN_DASH_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.ZEN_DASH_TIMING_LAG]),
+        FTR.ZEN_PEAK_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.ZEN_PEAK_TIMING_LAG]),
+        FTR.ZEN_DASH_TIMING_LAG_WEEKLY_REAL: _last(
+            wk_feats[FLD.ZEN_DASH_TIMING_LAG]) if len(wk_feats) else np.nan,
         FTR.MAGIC_NINE_TURNS_MAJOR_REAL: _last(feats[FLD.MAGIC_NINE_TURNS]),
         FTR.MAGIC_NINE_TURNS_TIMING_LAG_MAJOR_REAL: _last(
             feats[FLD.MAGIC_NINE_TURNS_TIMING_LAG]),
         FTR.MAGIC_NINE_TURNS_WEEKLY_REAL: _last(
             wk_feats[FLD.MAGIC_NINE_TURNS]) if len(wk_feats) else np.nan,
         FTR.MAGIC_NINE_TURNS_TIMING_LAG_WEEKLY_REAL: _weekly_m9t_lag(wk_feats),
-        FTR.REGTREE_PRICE_MAJOR_REAL: _last(regtree_ratio),
-        FTR.REGTREE_TIMING_LAG_MAJOR_REAL: _last(feats[FLD.REGTREE_TIMING_LAG]),
-        FTR.REGTREE_SLOPE_MAJOR_REAL: _last(regtree_slope_ratio),
+        **_poly9_regtree_row(day, feats, wk_raw, wk_feats),
     }
-    _t = day.index.get_level_values(0)[-1]
-    _code = day.index.get_level_values(1)[0]
-    for _col in RENKO_DAY_COLUMNS:
-        row[_col] = _renko_last(renko, _col, _t, _code)
-    row[AKA.SAMPLE_ENTROPY] = se
-    row[ZEN.PIVOT_COUNT] = pivot_cnt
+    # ChipDist（日频 960 窗口）：绝对成本 ÷ 当日 close 存 *D
+    _close = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
+    _c = float(_close.iloc[-1]) if len(_close) else np.nan
+    for _dst, _src in _CHIP_SRC:
+        _v = np.nan if not chip else chip.get(_src, np.nan)
+        row[_dst] = (_v / _c) if (_c and np.isfinite(_v)) else np.nan
     return row
 
 
@@ -188,10 +183,13 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
             day_all.index.get_level_values(0))).normalize().unique().sort_values()
     prev_dates = set()
     if len(day_dates):
+        # ⚠️ 对**所有** 60min 目标都算上一可用交易日，不只盘中：
+        # `coldstart_step` 给盘中行映射的是「上一交易日」的 coldstart 行；
+        # 若某次增量运行只写了 15:00 行（盘中行已存在被跳过），下一交易日
+        # 盘中就找不到上一日的 cache ⇒ 出现「15:00 有值、盘中 NaN」。
+        # 2026-10-30 审计在 000001（10-22/23/26）实测到该形态。
         for t in t60:
             t = pd.Timestamp(t)
-            if t.time() >= pd.Timestamp('15:00').time():
-                continue
             pos = day_dates.searchsorted(t.normalize(), side='left') - 1
             if pos >= 0:
                 prev_dates.add(day_dates[pos])
@@ -202,31 +200,29 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
 
     from ..coldstart import _coldstart_row     # 延迟导入避免循环
 
-    day_rows, cold_rows = {}, {}
+    day_rows, cold_rows, sample_rows = {}, {}, {}
     wk_cache = {}
-    renko_all = None
-    # 只有要写日行时才需要 Renko（盘中只补 coldstart 时省掉这一趟）
-    if day_target_set and renko_available() and day_all is not None and len(day_all):
-        try:
-            renko_all = renko_trend_cross_func_jit(day_all)
-            _close = pd.to_numeric(day_all[AKA.CLOSE], errors='coerce')
-            for _base, _dummy in RENKO_PRICE_DUMMIES:
-                if _base in renko_all.columns:
-                    renko_all[_dummy] = renko_all[_base] / _close
-        except Exception:        # noqa: BLE001 Renko 失败不该毁掉 review
-            renko_all = None
+    # ChipDist：日频 960 根窗口（D78），对每个 need_date 算当天 15:00 的值
+    chip_abs = {}
+    try:
+        from GolemQ.core.constants import AKA as _AKA
+        from GolemQ.markets.StockCN.refdata import (
+            GQ_fetch_stock_reality_feat_day)
+        from GolemQ.pipeline.review.steps.hour_extra import chip_cost_by_day
+        _tr = GQ_fetch_stock_reality_feat_day(
+            ctx.code, start='2016-01-01', end=str(ctx.as_of.date()),
+            columns=[_AKA.TURNOVER])
+        if _tr is not None and len(_tr) and need_dates:
+            _tgt = pd.DatetimeIndex(
+                [pd.Timestamp(t) + pd.Timedelta(hours=15) for t in need_dates])
+            _days_c, _chip_df = chip_cost_by_day(
+                day_all, _tgt, ctx.code, turnover=_tr[_AKA.TURNOVER])
+            for i, _t in enumerate(_tgt):
+                if i < len(_chip_df):
+                    chip_abs[pd.Timestamp(_t).normalize()] = _chip_df.iloc[i].to_dict()
+    except Exception:               # noqa: BLE001 ChipDist 失败留空
+        chip_abs = {}
 
-    # 日频 `se` + 15:00 取样的 `ZenPivotCnt`（D74）—— 只给要写的日行算。
-    se_by_day, piv_by_day = {}, {}
-    if day_target_set and day_all is not None and len(day_all):
-        _days = sorted(day_target_set)
-        _se = sample_entropy_daily(day_all, _days)
-        _cut = pd.DatetimeIndex([pd.Timestamp(t) + pd.Timedelta(hours=15)
-                                 for t in _days])
-        _piv = pivot_counts(slice_asof(ctx.frame('60min'), ctx.as_of),
-                            _cut, ctx.code)
-        se_by_day = dict(zip(_days, _se))
-        piv_by_day = dict(zip(_days, _piv))
     for T in need_dates:
         T = pd.Timestamp(T)
         day = slice_asof(day_all, T, 832)
@@ -251,11 +247,11 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
             wk_cache[wkey] = (wk_raw, wk_feats)
         wk_raw, wk_feats = wk_cache[wkey]
 
+        # 日族 14 列：60min 行按日采样复用（用户 2026-10-30：算过就免算）
+        _chip = chip_abs.get(pd.Timestamp(T).normalize())
+        sample_rows[T] = _day_row(day, feats, wk_raw, wk_feats, chip=_chip)
         if T in day_target_set:
-            day_rows[T] = _day_row(day, feats, wk_raw, wk_feats,
-                                   renko=renko_all,
-                                   se=se_by_day.get(T, np.nan),
-                                   pivot_cnt=piv_by_day.get(T, np.nan))
+            day_rows[T] = _day_row(day, feats, wk_raw, wk_feats, chip=_chip)
         if T in cold_dates or T in prev_dates:
             cold_rows[T] = _coldstart_row(day, feats=feats)
 
@@ -266,6 +262,10 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
             list(day_rows.values()), index=idx, columns=list(DAY_COLUMNS))
     if cold_rows:
         ctx.outputs['_coldstart_rows'] = cold_rows
+    if sample_rows:
+        ctx.outputs['_day_sample_rows'] = sample_rows
+    if chip_abs:
+        ctx.outputs['_chip_abs_rows'] = chip_abs
     return None
 
 
@@ -277,6 +277,51 @@ def daily_snapshot_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.Dat
     return src
 
 
+def day_sample_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFrame:
+    """把 `day_core` 已算好的 Poly9/RegTree 采样到 60min 目标（D78）。
+
+    口径与 `coldstart_step` 相同：15:00 用当日行；盘中用**上一交易日**行
+    （当日的日线要到收盘才成立）。
+    """
+    cache = ctx.outputs.get('_day_sample_rows') or {}
+    chip_abs = ctx.outputs.get('_chip_abs_rows') or {}
+    dates = sorted(cache)
+    nan_row = {c: np.nan for c in DAY_SAMPLE_COLUMNS}
+    # chip 列：日表存的是「÷当日 close」的比值；60min 行要存「÷本 bar close」，
+    # 所以这里用缓存的**绝对成本**按目标行 close 重新归一。
+    _chip_src = {d: s for d, s in _CHIP_SRC if d in DAY_SAMPLE_COLUMNS}
+    _close60 = {}
+    _src60 = ctx.frames.get('60min')
+    if _src60 is not None and len(_src60):
+        _close60 = dict(zip(
+            pd.DatetimeIndex(pd.to_datetime(
+                _src60.index.get_level_values(0))),
+            pd.to_numeric(_src60[AKA.CLOSE], errors='coerce')))
+    rows, idx = [], []
+    for t in (targets if targets is not None else []):
+        t = pd.Timestamp(t)
+        d = t.normalize()
+        if t.time() >= pd.Timestamp('15:00').time():
+            key = d
+        else:
+            prev = [x for x in dates if x < d]
+            key = prev[-1] if prev else None
+        row = cache.get(key, nan_row)
+        vals = {c: row.get(c, np.nan) for c in DAY_SAMPLE_COLUMNS}
+        _ca = chip_abs.get(key)
+        _c60 = _close60.get(t, np.nan)
+        if _ca and _c60 and np.isfinite(_c60):
+            for _dst, _src in _chip_src.items():
+                _v = _ca.get(_src, np.nan)
+                vals[_dst] = (_v / _c60) if np.isfinite(_v) else np.nan
+        rows.append([vals[c] for c in DAY_SAMPLE_COLUMNS])
+        idx.append((t, ctx.code))
+    return pd.DataFrame(
+        rows,
+        index=pd.MultiIndex.from_tuples(idx, names=['ts', 'code']),
+        columns=list(DAY_SAMPLE_COLUMNS))
+
+
 def build_daily_steps() -> List[FeatureStep]:
     return [
         FeatureStep(name='day_core', tier=TIER_DAILY, input_freq='day',
@@ -285,5 +330,10 @@ def build_daily_steps() -> List[FeatureStep]:
         FeatureStep(name='daily_snapshot', tier=TIER_DAILY, input_freq='day',
                     output_family='day', columns=DAY_COLUMNS,
                     func=daily_snapshot_step, deps=('day_core',),
+                    history='bars', warmup=832),
+        # 60min 一体化行：Poly9/RegTree 复用日行计算结果（不重算）
+        FeatureStep(name='day_sample', tier=TIER_DAILY, input_freq='day',
+                    output_family='60min', columns=DAY_SAMPLE_COLUMNS,
+                    func=day_sample_step, deps=('day_core',),
                     history='bars', warmup=832),
     ]

@@ -47,9 +47,9 @@ def run_migrate_turnover(args) -> None:
         # 地址是从 8.3 的 uri 推出来的（同机换端口），推错了会指到别的主机。
         from GolemQ.core.migrate44 import mongo44_uri
         print('[migrate] 失败：{}: {}'.format(type(exc).__name__, exc), file=sys.stderr)
-        print('[migrate] 4.4 地址由 8.3 的 uri 推导得到：{}'.format(mongo44_uri()),
+        print('[migrate] 4.4 地址取自 config.ini 的 [MONGODB44] uri：{}'.format(mongo44_uri()),
               file=sys.stderr)
-        print('[migrate] 若 4.4 不在同一台机，请改 ~/.GolemQ/settings/config.ini',
+        print('[migrate] 若地址不对，请改 ~/.GolemQ/settings/config.ini 的 [MONGODB44] uri',
               file=sys.stderr)
         sys.exit(1)
 
@@ -96,7 +96,7 @@ def run_migrate_index_list(args) -> None:
     except Exception as exc:                     # noqa: BLE001
         from GolemQ.core.migrate44 import mongo44_uri
         print('[migrate] 失败：{}: {}'.format(type(exc).__name__, exc), file=sys.stderr)
-        print('[migrate] 4.4 地址由 8.3 的 uri 推导得到：{}'.format(mongo44_uri()),
+        print('[migrate] 4.4 地址取自 config.ini 的 [MONGODB44] uri：{}'.format(mongo44_uri()),
               file=sys.stderr)
         sys.exit(1)
 
@@ -192,7 +192,7 @@ def run_migrate_reality_feat(args) -> None:
     except Exception as exc:                     # noqa: BLE001
         from GolemQ.core.migrate44 import mongo44_uri
         print('[migrate] 失败：{}: {}'.format(type(exc).__name__, exc), file=sys.stderr)
-        print('[migrate] 4.4 地址由 8.3 的 uri 推导得到：{}'.format(mongo44_uri()),
+        print('[migrate] 4.4 地址取自 config.ini 的 [MONGODB44] uri：{}'.format(mongo44_uri()),
               file=sys.stderr)
         sys.exit(1)
     if not getattr(args, 'migrate_dry_run', False) and not out:

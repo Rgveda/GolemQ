@@ -32,7 +32,7 @@
 from __future__ import annotations
 
 #: 只该出现在 internal parser 里的 dest。测试据此守「用户入口不暴露」。
-INTERNAL_DESTS = ('review_limit', 'migrate_limit',
+INTERNAL_DESTS = ('review_limit', 'review_shard', 'review_timeout', 'migrate_limit',
                   'save_collections', 'save_start', 'save_turnover_days',
                   'save_margin_days', 'save_progress_every', 'save_jobs',
                   'save_no_adj', 'save_refresh',
@@ -46,6 +46,12 @@ def add_internal_arguments(parser) -> None:
     """把内部旗子注册到 parser —— **只由 `build_parser(internal=True)` 调用**。"""
     parser.add_argument('--review-limit', dest='review_limit', type=int, default=0,
                         help='[internal] 只跑前 N 只（调试/分批）。')
+    parser.add_argument('--review-timeout', dest='review_timeout', type=int,
+                        default=0,
+                        help='[internal] 单码超时秒数（0=默认 7200）；全市场回填用。')
+    parser.add_argument('--review-shard', dest='review_shard', default='',
+                        help='[internal] 分布式分片 "i/N"（1-based）：按 code md5 '
+                             '取模，多台机器各跑一片。')
     parser.add_argument('--migrate-limit', dest='migrate_limit', type=int, default=None,
                         help='[internal] 只搬前 N 行（试跑用；不传 = 全量）。')
     parser.add_argument('--save-collections', dest='save_collections',

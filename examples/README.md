@@ -58,41 +58,41 @@ GG-DD 延伸边界 / 是否加长历史。
 streamlit run examples/app_renko.py
 ```
 
-侧边栏可选：股票代码 / **K 线频率（日线 + 1、5、15、30、60min）** / 砖高（自动 ATR 中位数
-或手动）/ 最多用多少根 K 线。
+侧边栏可选：股票代码 / 最多显示多少根 60min。
 
 ### 这条链上有什么
 
 | 环节 | 落点 | 说明 |
 |:--|:--|:--|
-| 取数 | `get_active_market()` | 日线 `get_kline_price_v3`、分钟 `get_kline_price_min`（**两者签名不同**，日线无数据返回 `None`）|
+| 取数 | `get_active_market().get_kline_price_min` | 只做 60min：review 的 Renko 只落 60min 表（D78）|
 | ↓ | `markets/StockCN/kline83.py` | MongoDB **8.3** 时序集合，**已前复权** |
-| 砖块序列 | `analysis/renko.renko` | `set_brick_size(auto=True)` → `talib.ATR(14)` 中位数定砖高 |
-| 特征列 | `analysis/renko.renko_trend_cross_func` | S 族（numba 压缩砖）/ L 族（1200 bar 分窗搜砖高）/ `RENKO_BAR` 合成 |
+| Renko 14 列 | `analysis.reality_attach.attach_reality_feats` | 只读；把 `*_reality_feat_60min` 的列贴回特征帧（`loaded['60min_renko']`）|
+| 砖序 | 本页 `_snapshot_bricks` | 把逐 bar 的 as-of 砖界压成「快照变化点」|
 
-### 两个页签看的是同一份数据的两个面
+### 为什么不再现场算
 
-1. **砖块图（按砖序）** —— 横轴是**第几块砖**，与时间无关。一根 K 线可能产生多块砖，
-   也可能连续多根都不产生（横盘）。这才是 Renko 剔噪的方式。
-   砖身按 `renko_prices` + `renko_directions` 摆（方向 +1 → `[p-砖高, p]`）。
-2. **特征叠加（按时间轴）** —— K 线 + S/L 两族的上下界台阶线 + `RENKO_BAR` 信号标记。
+旧版在页面上跑 `renko_trend_cross_func`：S 族的砖高取**整段** ATR 中位数、L 族按
+1200 bar 分窗各搜砖高 —— 窗口里都包含目标 bar **之后**的数据，是**后视镜**。
+现在画的是 `--review` 的 as-of 结果：
+
+* 每个交易日 **15:00** 用 **≤T 的最近 2160 根 60min** 重算一次；
+* 盘中 3 根（10:30 / 11:30 / 14:00）沿用**上一交易日 15:00** 的快照；
+* 同一交易日的 4 根共用一个值，图上表现为台阶。
+
+### 两个页签
+
+1. **砖块图（as-of 砖序）** —— 横轴是**快照砖序号**。一次跳多块砖只记终点，
+   所以块数会比「真 Renko 砖序列」少；它的价值是「模型在 T 时刻实际看到的砖界」。
+2. **特征叠加（按时间轴）** —— K 线 + S/L 两族上下界台阶线 + `RENKO_BAR` 信号标记。
 
 ### 三条刻意设计，别当 bug「修」
 
-1. **砖块图的「砖」与特征列的「砖」不是同一批数。** 砖块图用 `class renko` 的**真实砖序**；
-   特征列的 S 族用同一套砖高，但 **L 族另起一套**（按 1200 bar 分窗、每窗自己搜最优砖高）。
-   这正是 small / large 的由来 —— 把两者画在一条轴上会以为实现错了。
-2. **S 族是 `float16`。** `renko_trend_cross_func` 末尾对 `RENKO_TREND_S` / `_LB` / `_UB`
-   做 `astype(np.float16)`（旧树如此）。看图无碍，但拿这几列做算术要知情。
-3. **`RENKO_PRICE_S/L` 是砖位价，不是收盘价**；`RENKO_OPTIMAL` 只在每个 1200 bar 窗口
-   首行有值、其余为 **0**；这三列旧树也**写后无人读**（`RENKO_PRICE_S` 被下游统一 drop）。
-
-### ⚠️ `source_aligned` 的两列在下跌砖上是**反序**的
-
-`class renko` 的 `source_aligned[idx]` 在下跌砖上返回 `[上一砖位, 上一砖位 - 砖高]`
-（即 **lb > ub**）。本 demo 走的是 `renko_chart`，它的 lb/ub **有序** —— 实测两族
-都满足 `lb <= ub`。要走 `source_aligned` 的那条线（另案的 `calc_renko_atr_vX`）
-必须自己 `min/max`。详见 `analysis/renko_jit.py` 的模块 docstring。
+1. **不退回现场重算。** 缺 Renko 行时页面只给警告（先跑 `--review` /
+   `tools/backfill_renko.py`），不会悄悄改用有后视镜的算法补数。
+2. **砖身用 `renkosBarLb/Ub`，不用 `renkoSprice`。** 后者是**带符号的砖位**
+   （下跌砖为负），不是价格；上下沿才是还原后的有序价格带。
+3. **快照变化用 `np.isclose` 判断。** 落库是「绝对价 ÷ 本 bar close」，还原时乘回；
+   浮点往返最后几位可能不等（实测同一快照内 `==` 偶尔为 False），直接比较会造出假砖。
 
 ## `app_pivot_renko.py` —— 缠论中枢 × RENKO 砖块界（**叠加图**）
 
@@ -106,19 +106,23 @@ streamlit run examples/app_pivot_renko.py
 以及**两条方法各自的显示开关**（中枢箱体 / GG-DD / 笔 / RENKO S 族 / RENKO L 族 /
 `RENKO_BAR` 信号）—— 分开开关就是为了对照。
 
+⚠️ **RENKO 只在 60min 可用**：review 的 Renko 14 列只落 `*_reality_feat_60min`
+（D78）。其它频率下 RENKO 开关被禁用、指标卡显示 `—`，页内只显示中枢/笔。
+
 ### 它要回答的问题
 
 **两条互不相干的方法，在同一张图上说了什么。**
 
 * **缠论中枢**（`analysis/pivot.py`）：从 `czsc` 的**笔**序列找「至少三笔重叠」的箱体。
   给的是**结构**（箱体上下沿 + 走势类型 盘整/上涨/下跌）。
-* **RENKO 砖块界**（`analysis/renko_jit.py`）：把价格压成固定砖高的砖块，给出
-  S 族（全段 ATR 中位数砖高）与 L 族（1200 bar 分窗、每窗自搜砖高）的上下界。
+* **RENKO 砖块界**（`*_reality_feat_60min` 的 Renko 14 列，经
+  `analysis.reality_attach` 贴回）：给出 S 族 / L 族上下界。
   给的是**趋势**（`RENKO_BAR` 只在 S、L **同向**时才给 ±1）。
+  ⚠️ 这是 **review 的 as-of 落库值**，本页**不重算** —— 现场对整段历史跑
+  `renko_trend_cross_func` 会把目标 bar 之后的数据带进来，是后视镜。
 
-两者**没有共同的数学基础** ⇒ 图上的分歧是常态。实测 `000711`/60min 末根
-**S=+1 而 L=−1** ⇒ `RENKO_BAR=0`（不给信号）；`600519`/日线则 S=L=−1 ⇒ `−1`。
-**本页不做任何融合**，分歧本身就是要看的东西。
+两者**没有共同的数学基础** ⇒ 图上的分歧是常态。`RENKO_BAR` 只在 S、L **同向**
+时才非零；**本页不做任何融合**，分歧本身就是要看的东西。
 
 ### 三条刻意设计
 
@@ -127,8 +131,8 @@ streamlit run examples/app_pivot_renko.py
    不是"看起来差不多"——对不齐的叠加图会把人误导。
 2. **RENKO 砖界画台阶线**（`line_shape='hv'`）：砖界在两次分型之间**恒定不变**，
    用普通折线会把"没变化"画成斜线，看不出台阶。
-3. **jit 缺失时自动退回纯版**（`renko_jit.available()`），并在侧边栏**如实标出**
-   走的是哪个版本 —— 两版逐值相同（见 `test_renko_jit.py`），只是快慢差 ~6×。
+3. **缺 Renko 行时只警告，不偷偷重算。** 页面会写明是「没跑 review」还是
+   「频率不是 60min」；不会退回有后视镜的算法补数。
 
 ## `app_chartscan.py` —— ChartScanAI（YOLOv8 买卖点识别）演示
 
@@ -186,6 +190,9 @@ streamlit run examples/app_pivot_renko_coef.py
 （值 `QUprICoefD`）：**叠在主图的副轴**上（matplotlib 的 `ax3 = ax1.twinx()`
 ≡ Plotly 的 `yaxis='y2'`），`darkred` 虚线、`lw=1`、`alpha=0.67`
 —— 与 `OneWaveQuant/.../calc_4quad_poolcoef-bs-stage-of-zen.ipynb` 的 `ax3.plot(...)` 同一口径。
+
+⚠️ RENKO 两条砖界与 `app_pivot_renko.py` 完全一致：来自 `*_reality_feat_60min`
+（review 的 as-of 落库值，**无后视镜**），只在 60min 可用，本页**不重算**。
 
 ### 上升系数怎么算（**自包含**那条路，2026-10-19 搬）
 

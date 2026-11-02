@@ -80,6 +80,7 @@ __all__ = [
     'ema',
     'llv',
     'hhv',
+    'fold_high_price',
     'kdj',
     'calc_four_quadrant_boost',
     'calc_quadrant_leverage_macd_timing_lag',
@@ -552,6 +553,35 @@ def calc_quadrant_leverage_macd_timing_lag(features: pd.DataFrame) -> pd.DataFra
     return features
 
 
+def calc_quadrant_downrisk_major(code: str, ohlc_day: pd.DataFrame,
+                                 index60, annual: int = 252) -> pd.Series:
+    """`QuadDwnRskLagMaj` —— 日线下行风险 lag，广播到 60min 后再编码。
+
+    旧树：`GolemQ_old/models/mainstream.py:1163`（日线 `calc_four_quadrant_boost`,
+    `annual=252`）→ 1194-1365 的日→60min 广播 → 1445-1448 的
+    `calc_event_timing_lag(where(v > 1e-19, 1, -1)).astype(int16)`。
+
+    ⚠️ 结果是 **60min bar 单位**（连续 5 个交易日的下行 ≈ -20），
+    与旧树下游阈值（`<36`、`-3.82` 等）配套，不要当成日线根数。
+    ⚠️ 当日日线值会贴到**当日盘中** 4 根 bar —— 旧树既如此（后视镜），
+    移植第一期照抄，见 `mainstream_timing` 模块 docstring。
+
+    :param ohlc_day: 单只标的日线 OHLC（`calc_four_quadrant_boost` 需要 open/high/low/close）
+    :param index60: 目标 60min 时间索引
+    """
+    from GolemQ.analysis.mainstream_timing import broadcast_daily_to_60min
+
+    feat = pd.DataFrame(index=ohlc_day.index)
+    feat = calc_four_quadrant_boost(code=code, features=feat,
+                                    ohlc_data=ohlc_day, annual=annual)
+    daily = feat[LTT.QUADRANT_DOWNRISK_TIMING_LAG]
+    v = broadcast_daily_to_60min(daily, index60)
+    return pd.Series(
+        calc_event_timing_lag(np.where(v.to_numpy() > 1e-19, 1, -1)),
+        index=v.index, dtype=np.int16,
+        name=LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR)
+
+
 def _linear_regression_slope(y) -> float:
     """最小二乘斜率（老树 `calc_bs_signals` 内联的那个）。"""
     x = np.arange(len(y), dtype=np.float64)
@@ -809,15 +839,37 @@ def _mainstream_pressure(ohlc: pd.DataFrame, side: str = 'low'):
     return var5, np.where(var5 > prev, var5, 0), np.where(var5 < prev, var5, 0)
 
 
+def fold_high_price(close):
+    """**股价折叠**：> 10 的股价取 `log10(close)`，≤ 10 原样返回。
+
+    用户 2026-10-29 的「折叠方法」：`ENTRY`（VAR5）是**无量纲压力值**（实测中位数
+    约 20~30），而阈值 `close*0.618` 是**绝对价位量纲** —— 3.5 元的股票阈值只要
+    2.2（天天触发），300 元的股票要 185（几乎不触发）。把高价股的价格折成
+    `log10(close)` 后，阈值回到同一数量级（300 → 2.48），两族信号都能出来。
+
+    ⚠️ **只在 `close > 10` 时折叠**（用户明确：小于 10 用无系数算法）；
+    `close == 10` 处不连续（10 → 1），这是有意的取舍，不是 bug。
+
+    >>> [round(v, 4) for v in fold_high_price(pd.Series([3.5, 10.0, 300.0]))]
+    [3.5, 10.0, 2.4771]
+    """
+    c = pd.to_numeric(close, errors='coerce').astype(float)
+    folded = np.log10(c.where(c > 10))
+    return c.where(c <= 10, folded)
+
+
 def _mainstream_before(ohlc: pd.DataFrame, features: pd.DataFrame,
                        primary, secondary, *, rising: bool,
-                       mult=None, first=None):
+                       mult=None, first=None, fold: bool = False):
     """`Timeline_duration` 包装：`BEFORE`（`mult=None`）与 `x3`/`x5`（`mult=3/5`）。
 
     `rising=True` 吸筹（KDJ/MACD 向上、`primary` 为上升段、`secondary` 为洗盘）；
     `rising=False` 派发（全部镜像）。
+
+    `fold=True` ⇒ 阈值里的 `close` 换成 :func:`fold_high_price` 的结果
+    （高价股自动降尺度）。默认 `False`，与老树逐值一致。
     """
-    close = ohlc[AKA.CLOSE]
+    close = fold_high_price(ohlc[AKA.CLOSE]) if fold else ohlc[AKA.CLOSE]
     j = features[FLD.KDJ_J].diff(1)
     macd = features[FLD.MACD].diff(1)
     turn = (j > 1e-3) if rising else (j < -1e-3)
@@ -842,7 +894,8 @@ def _mainstream_before(ohlc: pd.DataFrame, features: pd.DataFrame,
     return Timeline_duration(np.where(cond, 1, 0))
 
 
-def calc_mainstream_feats(ohlc: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
+def calc_mainstream_feats(ohlc: pd.DataFrame, features: pd.DataFrame,
+                          fold: bool = False) -> pd.DataFrame:
     """主力资金吸筹 —— 产出 `MsLeadinBf` / `MsLeadinx3Bf` / `MsLeadinx5Bf`。
 
     逐字搬自老树 `analysis/base.py:2569-2687`（VAR1..VAR5 → Entry/Shakeout 链，
@@ -855,6 +908,9 @@ def calc_mainstream_feats(ohlc: pd.DataFrame, features: pd.DataFrame) -> pd.Data
 
     ⚠️ **要求 `features` 里有 `MACD` 列**（`x3`/`x5` 的分支读它）—— 老树同此。
     `KDJ_K/D/J` 与 `KDJ_TRD_LAG` 若缺则**本函数自己补**（走 `talib.STOCH`）。
+
+    `fold=True` ⇒ 阈值里的 `close` 走 :func:`fold_high_price`（股价 > 10 折成
+    `log10`）。**默认 `False`**：老树没有折叠，打开后与老树逐值对拍不再成立。
     """
     features = _ensure_kdj(ohlc, features)
 
@@ -874,20 +930,21 @@ def calc_mainstream_feats(ohlc: pd.DataFrame, features: pd.DataFrame) -> pd.Data
     features[LTT.MAINSTREAM_LEADIN_SHAKEOUT] = shakeout
     features[LTT.MAINSTREAM_LEADIN_BEFORE] = _mainstream_before(
         ohlc, features, features[LTT.MAINSTREAM_LEADIN_ENTRY],
-        features[LTT.MAINSTREAM_LEADIN_SHAKEOUT], rising=True)
+        features[LTT.MAINSTREAM_LEADIN_SHAKEOUT], rising=True, fold=fold)
     features[LTT.MAINSTREAM_LEADINx3_BEFORE] = _mainstream_before(
         ohlc, features, features[LTT.MAINSTREAM_LEADIN_ENTRY],
         features[LTT.MAINSTREAM_LEADIN_SHAKEOUT], rising=True,
-        mult=3, first=0.618)
+        mult=3, first=0.618, fold=fold)
     features[LTT.MAINSTREAM_LEADINx5_BEFORE] = _mainstream_before(
         ohlc, features, features[LTT.MAINSTREAM_LEADIN_ENTRY],
         features[LTT.MAINSTREAM_LEADIN_SHAKEOUT], rising=True,
-        mult=5, first=0.832)
+        mult=5, first=0.832, fold=fold)
     return features
 
 
 def calc_mainstream_leadout_feats(ohlc: pd.DataFrame,
-                                  features: pd.DataFrame) -> pd.DataFrame:
+                                  features: pd.DataFrame,
+                                  fold: bool = False) -> pd.DataFrame:
     """主力**派发/出货**（下跌指示）—— :func:`calc_mainstream_feats` 的镜像。
 
     **新树自造**（老树没有这个指标）：把吸筹口径的
@@ -904,10 +961,12 @@ def calc_mainstream_leadout_feats(ohlc: pd.DataFrame,
     `MsLeadoutBf` / `x3Bf` / `x5Bf` `Timeline_duration`（0 = 刚触发）
     ==============================  ==================================
 
-    ⚠️ **接入 review 前先校准**：2026-10-27 用 16 码 × 60min 快测，
-    镜像 `x5` 触发后 5 根平均 **-0.055%**（原指标 +0.091%），方向对但 edge 弱；
-    且原公式的 `ENTRY > close*0.618` 是**绝对价位**量纲，高价股几乎不触发
-    （600519 全样本 0 次）。本函数只做算术，**不写库、不被管线调用**。
+    ⚠️ **原样镜像，未校准**（用户 2026-10-29 决定退回 D73 口径）：
+    `ENTRY > close*0.618` 是绝对价位量纲，高价股几乎不触发 —— 这是已知的
+    老公式缺陷。本函数只做算术，**不写库、不被管线调用**。
+
+    `fold=True` ⇒ 阈值里的 `close` 走 :func:`fold_high_price`（股价 > 10 折成
+    `log10`），价格量纲不再压死高价股。**默认 `False`**（与 D73 逐字镜像一致）。
     """
     features = _ensure_kdj(ohlc, features)
 
@@ -927,15 +986,15 @@ def calc_mainstream_leadout_feats(ohlc: pd.DataFrame,
     features[LTT.MAINSTREAM_LEADOUT_SHAKEOUT] = rebound
     features[LTT.MAINSTREAM_LEADOUT_BEFORE] = _mainstream_before(
         ohlc, features, features[LTT.MAINSTREAM_LEADOUT_ENTRY],
-        features[LTT.MAINSTREAM_LEADOUT_SHAKEOUT], rising=False)
+        features[LTT.MAINSTREAM_LEADOUT_SHAKEOUT], rising=False, fold=fold)
     features[LTT.MAINSTREAM_LEADOUTx3_BEFORE] = _mainstream_before(
         ohlc, features, features[LTT.MAINSTREAM_LEADOUT_ENTRY],
         features[LTT.MAINSTREAM_LEADOUT_SHAKEOUT], rising=False,
-        mult=3, first=0.618)
+        mult=3, first=0.618, fold=fold)
     features[LTT.MAINSTREAM_LEADOUTx5_BEFORE] = _mainstream_before(
         ohlc, features, features[LTT.MAINSTREAM_LEADOUT_ENTRY],
         features[LTT.MAINSTREAM_LEADOUT_SHAKEOUT], rising=False,
-        mult=5, first=0.832)
+        mult=5, first=0.832, fold=fold)
     return features
 
 

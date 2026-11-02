@@ -49,11 +49,11 @@ RENKO_DAY_COLUMNS: Tuple[str, ...] = (
     FLD.RENKO_BOOST_S_TIMING_LAG, FLD.RENKO_BOOST_L_TIMING_LAG,
 )
 
-#: 日族：老树 `--daily` 的 14 列 + Renko 全族 + 日频 `se` / `ZenPivotCnt`（30 列）。
+#: 日族：老树 `--daily` 的 14 列（**Renko 2026-10-30 起归 60min 族**，D78）。
 #: ⚠️ `poly9MajD` / `poly9WekD` / `rTrePrcMajD` 存的是**除以同一行 close 的比值**，
 #: 不是绝对价位 —— 复权换挡时绝对价会断层（D49 通则）。`*Nor*` 本来就是 0..1。
-#: ⚠️ `se` / `ZenPivotCnt` 2026-10-28 从 60min 契约**移到日族**（D74）：
-#: `se` 是**日收盘**的样本熵；`ZenPivotCnt` 是 60min 中枢在当日 **15:00** 的取值。
+#: ⚠️ `se` / `ZenPivotCnt` **不在日族**（D78 撤销 D74）：60min 族承载，
+#: 见 `HOUR_EXTRA_COLUMNS`。
 DAY_COLUMNS: Tuple[str, ...] = (
     'zDLagMajR', 'zPLagMajR',
     'zDLagWekR',
@@ -62,9 +62,15 @@ DAY_COLUMNS: Tuple[str, ...] = (
     'm9tMajR', 'm9tLagMajR',
     'm9tWekR', 'm9tLagWekR',
     'rTrePrcMajD', 'rTreLagMajR', 'rTreSlopMajD',
-    *RENKO_DAY_COLUMNS,
-    AKA.SAMPLE_ENTROPY, ZEN.PIVOT_COUNT,
+    # ChipDist（日频，960 根日线窗口；D78）：÷ 当日 close 的比值
+    AKA.COST5_PRICE_DUMMY, AKA.COST15_PRICE_DUMMY,
+    AKA.COST85_PRICE_DUMMY, AKA.COST95_PRICE_DUMMY,
 )
+
+#: 60min 族里**复用日行计算**的列（日族全部 14 列，用户 2026-10-30）：
+#: 它们在 `day_core` 已算过，60min 行按「盘中=上一交易日、15:00=当日」采样，
+#: 不重复算一遍。名字保留独立元组，避免以后日族加减列时静默改变 60min 契约。
+DAY_SAMPLE_COLUMNS: Tuple[str, ...] = DAY_COLUMNS
 
 #: 15min minor 信号（老树 `calc_zen_wavelet_reality_minor` 的 rename 表）。
 MINOR_COLUMNS: Tuple[str, ...] = (
@@ -82,27 +88,54 @@ MINOR_COLUMNS: Tuple[str, ...] = (
 #: 冷启动列的唯一下游仍是 60min 快照，合并进同一张表，避免两张表两套真相。
 HOUR_ZEN_COLUMNS: Tuple[str, ...] = (
     'zDLagR', 'zPLagR', 'zDLagMinR', 'zPLagMinR',
+    ZEN.PIVOT_TIMING_LAG,          # ZenPivotLag：距离开中枢的 lag（CZSC）
 )
 #: coldstart 子集（模型层实际读取、纯 K 线可算；不含东财/同花顺/massive）。
 #: 合并了旧 `reality_features` 的日尺度列（`STAGE/BST/m9t`）。
 #: ⚠️ 旧 `M9T_LAG` / `m9tLag` **已删除**：库里全为 None、review 无生产者；
 #: 老树 REAL 常量 `m9tLagR` 仅保留定义，不落库（D67）。
 COLDSTART_COLUMNS: Tuple[str, ...] = (
-    'stage', 'bstStgBf', 'epStgBf',
+    'bstStgBf', 'epStgBf',
     FLD.GARIDENT_PRICE_DUMMY, 'garPCount', 'garPClr', 'garPAnchor', 'garSLag',
-    'm9t', 'm9tMaj',
+    'm9tMaj',
     'poly9pwr3Maj',
-    FLD.FBPROPHET_LB_DUMMY, FLD.FBPROPHET_UB_DUMMY, 'prophetClrNorm',
     FLD.FBPROPHET_LB_MAJOR_DUMMY, FLD.FBPROPHET_UB_MAJOR_DUMMY, 'prophetClrNormMaj',
 )
-#: `se` / `ZenPivotCnt` **已移出 60min 契约**（D74）：改由日族承载，
-#: 日频一行一值；60min 不再写这两列。
+#: 60min 额外两列（D78 从日族**改回 60min**，撤销 D74）：
+#: `se` = 60min 收盘价的样本熵（15:00 日频、最后 ≤2160 根、round 3，盘内因果 ffill）；
+#: `ZenPivotCnt` = 截至当前 bar 已确认的缠论中枢个数（`causal_pivot_count`）。
+HOUR_EXTRA_COLUMNS: Tuple[str, ...] = (AKA.SAMPLE_ENTROPY, ZEN.PIVOT_COUNT)
+
+#: ChipDist 的筹码成本列（D78 补全）：只落 **÷close 的比值**（D49）；
+#: 绝对值由 attach 的 `restore_price_columns` 乘回。ChipDist **前缀稳定**，
+#: 每码整条 60min 序列算一次即可（实测 ≈2s/码）。
+HOUR_CHIP_COLUMNS: Tuple[str, ...] = (
+    AKA.COST5_PRICE_DUMMY, AKA.COST15_PRICE_DUMMY,
+    AKA.COST85_PRICE_DUMMY, AKA.COST95_PRICE_DUMMY,
+)
+
+#: 60min **原生**特征组（D78）：算法不变，输入换成 60min 的 2160 根窗口，
+#: 每个交易日 15:00 算一次（用户 2026-10-30：交易日尾部按 60min 实际时间算）。
+#: 与日频版（`m9tMaj` / `poly9MajD` / `rTrePrcMajD` / `prophet*Maj*`）区分。
+HOUR_NATIVE_COLUMNS: Tuple[str, ...] = (
+    'stage',                                                 # STAGE（60min 原生）
+    FLD.MAGIC_NINE_TURNS, FLD.MAGIC_NINE_TURNS_TIMING_LAG,   # m9t / m9tLag
+    'poly9D', 'poly9NorR',                                   # Poly9 原生
+    'rTrePrcD', 'rTreLagR', 'rTreSlopD',                     # RegTree 原生
+    FLD.FBPROPHET_LB_DUMMY, FLD.FBPROPHET_UB_DUMMY,          # Prophet 原生
+    'prophetClrNorm',
+)
 
 #: ⚠️ `m9tBsl` / `m9tBslLag` 暂不纳入：它们需要 compact 特征
 #: （MACD_ZERO_TIMING_LAG / DEA/DIF/POLY9/MAPOWER30 的 major norm）那一整条链，
 #: 尚未搬。用户 2026-10-19 最终口径列的是「M9T」，先落 raw/major。
+#: 60min 行是**一体化特征行**（用户 2026-10-30）：zen/minor + coldstart +
+#: `se`/`ZenPivotCnt` + **Renko 全族（60min K 线上 as-of 计算）**
+#: + Poly9/RegTree（复用日行，按日采样）。
 HOUR_COLUMNS: Tuple[str, ...] = (HOUR_ZEN_COLUMNS + MINOR_COLUMNS +
-                                 COLDSTART_COLUMNS)
+                                 COLDSTART_COLUMNS + HOUR_EXTRA_COLUMNS +
+                                 RENKO_DAY_COLUMNS + DAY_SAMPLE_COLUMNS +
+                                 HOUR_NATIVE_COLUMNS)
 
 #: 15min minor 的**完整**输出（老树 `calc_zen_wavelet_reality_minor` 的 19 列）：
 #: 2 个 zen + 17 个 minor。

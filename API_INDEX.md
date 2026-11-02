@@ -92,6 +92,16 @@ Prophet 价格区间（旧树 FBPROPHET_* 四列）—— 只搬算术，落库�
 | f | `magic_nine_jit_status()` | 排障用：numba 版本 + jit 是否真的开了（DISABLE_JIT 环境变量会关掉它）。 |
 | f | `calc_magic_nine_turns_np_vXs_jit(truthPrice)` | 收盘价序列 → 神奇九转标记（float32，与输入等长）。 |
 
+### `mainstream_timing`
+Mainstream「全局智能仓位」的逐股输入（纯计算，不连库）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `broadcast_daily_to_60min(daily, index60)` | 日线序列 → 60min 网格：交易日 D 的值落到 D 当天 4 根 bar。 `[dt]` |
+| f | `calc_zen_dash_dummy(ohlc, code, max_bi_count)` | zDLagD：缠论笔方向 → calc_event_timing_lag。 |
+| f | `calc_zen_dash_asof(ohlc, code, window, max_bi_count)` | 逐 bar as-of 的 zDLagD。 |
+| f | `calc_prelude_before(features, window)` | 补 QuadPreUprBf / QuadPreEpBf 两列（旧树 analysis/mainstream.py:348-360）。 `[dt]` |
+
 ### `peak`
 鲁棒性极值点识别（PEAK_POINT）—— 基于方差统计与 ZSCORE 排序。
 
@@ -131,6 +141,14 @@ Poly9 家族的编排层 —— 把 rolling_poly9_v2 / mapower 串成指标列�
 | f | `calc_polynomial9_norm_vXIs(features, annual)` | POLYNOMIAL9_NORM —— MA 均线多头排列能量强度（0..1）。 |
 | f | `calc_polynomial9_weekly_vXIs(ohlc_data, features, annual, freq)` | 周线 POLYNOMIAL9 → POLYNOMIAL9_WEEKLY（poly9Wek）。 |
 
+### `position`
+「策略仓位控制」的 Dempster–Shafer 合成（纯计算，不连库）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `calc_position_series(n, bull, bear, eps)` | 逐 bar 的 D-S 仓位（向量化版 calc_position_ds）。 `[dt]` |
+| f | `calc_position_ds(upr, ep, zd, eps)` | 一个 bar 的横截面 → D-S 仓位字典。 `[dt]` |
+
 ### `quadrant_coef`
 上升系数 QUADRANT_UPRISING_I_COEF_DUMMY（QUprICoefD）—— 解耦后的编排。
 
@@ -157,14 +175,16 @@ Poly9 家族的编排层 —— 把 rolling_poly9_v2 / mapower 串成指标列�
 | f | `kdj(hight, low, close, fastk_period, slowk_matype, slowk_period, slowd_period)` | KDJ → np.c_[K, D, J] —— 逐字搬自老树 base.py:2550（走 talib.STOCH）。 |
 | f | `calc_four_quadrant_boost(code, features, ohlc_data, annual, market_type)` | 最牛四量图， |
 | f | `calc_quadrant_leverage_macd_timing_lag(features)` | QLevMACDLagD —— 四象限杠杆能量 × MACD 的合成 timing-lag。 |
+| f | `calc_quadrant_downrisk_major(code, ohlc_day, index60, annual)` | QuadDwnRskLagMaj —— 日线下行风险 lag，广播到 60min 后再编码。 |
 | f | `calc_bs_star_down(ohlc)` | BSStarDwn —— 只搬星线死叉那一段（老树 analysis/base.py:2429 的子集）。 `[dt]` |
 | f | `calc_bs_signals(ohlc, features)` | 买/卖线 + 星线（老树 analysis/base.py:2429 的纯函数版）。 |
 | f | `calc_quadrant_stardown_count(features)` | 4QuadStDwnCnt —— 一条 calc_energy（老树 models/mainstream.py:515-520）。 |
 | f | `calc_quadrant_powerline_uprisal_lag(features)` | QLevPwrlnUprLag —— 老树 models/mainstream.py:530 + :544 两条。 |
 | f | `calc_quadrant_zen_dash_count(features)` | 4QuadZenDCnt —— 一条 calc_energy（老树 analysis/mainstream.py:180-188）。 |
 | f | `calc_quadrant_bs_trunk_timing_lag(features)` | QuadBsTuk / QuadBsTukLag —— 买卖星线结构与 MACD lag 的合成。 |
-| f | `calc_mainstream_feats(ohlc, features)` | 主力资金吸筹 —— 产出 MsLeadinBf / MsLeadinx3Bf / MsLeadinx5Bf。 |
-| f | `calc_mainstream_leadout_feats(ohlc, features)` | 主力派发/出货（下跌指示）—— :func:calc_mainstream_feats 的镜像。 |
+| f | `fold_high_price(close)` | 股价折叠：> 10 的股价取 log10(close)，≤ 10 原样返回。 `[dt]` |
+| f | `calc_mainstream_feats(ohlc, features, fold)` | 主力资金吸筹 —— 产出 MsLeadinBf / MsLeadinx3Bf / MsLeadinx5Bf。 |
+| f | `calc_mainstream_leadout_feats(ohlc, features, fold)` | 主力派发/出货（下跌指示）—— :func:calc_mainstream_feats 的镜像。 |
 | f | `calc_bs_before(features)` | 8 个 BS*Bf* —— 买卖/星线信号的「距上一次」计数（Timeline_duration）。 |
 | f | `calc_pivot_timing_lag(features)` | ZenPivotLag —— 距出中枢（ZenPivotZD 变 NaN）以来的 lag。 |
 | f | `available()` | numba 在不在。 |
@@ -528,6 +548,13 @@ ChartScan（CV 图形识别）的两条 CLI 入口 —— --scan / --server。
 | f | `run_watchdog(args)` |  |
 | f | `run_stop(args)` |  |
 
+### `mainstream`
+--strategy mainstream —— 全市场「全局智能仓位」（Dempster–Shafer）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `run_mainstream_cli(args)` |  |
+
 ### `metadata_align`
 --metadata-align —— stock_reality_feat_day 对 K 线的覆盖率报告（只读；internal 命令）。
 
@@ -694,9 +721,9 @@ GolemQ Constants Module
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
-| f | `mongo44_uri(uri, port)` | 8.3 的 uri → 4.4 的 uri（同主机，端口换成 port）。 `[dt]` |
-| f | `client44(uri, port)` | 4.4 的 MongoClient。kwargs 直通 pymongo.MongoClient。 |
-| f | `db44(name, uri, port)` | 4.4 上名为 name 的库句柄（如 'golemq' / 'quantaxis'）。 |
+| f | `mongo44_uri(uri)` | 4.4 的 uri：显式参数优先，否则读 config.ini 的 [MONGODB44] uri。 `[dt]` |
+| f | `client44(uri)` | 4.4 的 MongoClient。kwargs 直通 pymongo.MongoClient。 |
+| f | `db44(name, uri)` | 4.4 上名为 name 的库句柄（如 'golemqq' / 'quantaxis'）。 |
 
 ### `mongo`
 
@@ -1123,6 +1150,7 @@ stock_reality_feat_day —— 日频元数据的统一落点。
 |:--|:--|:--|
 | f | `reality_feat_name(family, market_type)` | (族, 市场类型) → 集合名。 `[dt]` |
 | f | `reality_feat_rows(features, family, created_at, write_nulls)` | CV 结果帧 → *_reality_feat_* 文档列表。纯函数（不碰 DB）。 `[dt]` |
+| f | `save_position_series(df, market_type, db, verbose, echo)` | 「全局智能仓位」序列 → stock_/index_massive_position_60min。 |
 | f | `save_reality_feat(features, family, market_type, verbose, echo, created_at, write_nulls, db)` | 取数（其实只组行）→ upsert_fields 落 golemq_stock_cn。 |
 | f | `restore_price_columns(df, close, columns)` | 把存成比值的价格列乘回 close，还原价格量纲。纯函数。 |
 | f | `fetch_reality_feat(codes, start, end, family, market_type, restore_price, close, db, columns)` | 读回 *_reality_feat_*；空结果返回 None（不是空帧）。 |
@@ -1427,6 +1455,21 @@ CompactPipeline —— 从 8.3 读 60min + day，算 calc_compact_features。
 | f | `CompactPipeline.run_code(code, as_of)` |  |
 | f | `run_compact(eval_range, codes, pct_of_cores, offset, verbose)` | 解析 scope → 逐码算 compact → 返回 (results, stats)。不写库。 |
 
+## GolemQ.pipeline.mainstream
+
+### `pipeline`
+Mainstream 管线（8.3）—— 目前只含「全局智能仓位」一段。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `MainstreamPipeline` | 全市场 Mainstream 聚合（当前只有仓位段）。 |
+| f | `MainstreamPipeline.code_features(code, as_of)` | 单码 → 60min 特征帧（含 QuadPreUprBf / QuadPreEpBf / zDLagD）。 |
+| f | `MainstreamPipeline.code_masks(code, as_of)` | 单码 → (ts, bull, bear) 三个等长数组（只含可判定 bar）。 |
+| f | `MainstreamPipeline.run_code(code)` |  |
+| f | `MainstreamPipeline.market_timeline(as_of)` |  |
+| f | `MainstreamPipeline.run_market(codes, as_of, pool_size)` | 全市场横截面 → 每根 60min bar 的仓位行。 |
+| f | `run_mainstream(eval_range, codes, as_of, pct_of_cores, lookback_days, verbose)` | 解析 scope → 逐片算 → 返回 (仓位 DataFrame, 统计)。 |
+
 ## GolemQ.pipeline.review
 
 ### `coldstart`
@@ -1460,7 +1503,8 @@ ReviewPipeline —— 逐码、逐快照、因果的 review 批处理管线。
 | f | `ReviewPipeline.market_type_of(code)` |  |
 | f | `ReviewPipeline.run_code(code)` |  |
 | f | `build_default_steps()` |  |
-| f | `run_review(eval_range, codes, pct_of_cores, families, force, dry_run, verbose, offset, from_date, recheck_days, limit)` | 解析 scope → 逐码跑 → 返回 (CodeResult 列表, 统计)。 |
+| f | `shard_codes(codes, spec)` | 按 md5(code) % N == i-1 取第 i 片（1-based），保持原顺序。 `[dt]` |
+| f | `run_review(eval_range, codes, pct_of_cores, families, force, dry_run, verbose, offset, from_date, recheck_days, limit, shard)` | 解析 scope → 逐码跑 → 返回 (CodeResult 列表, 统计)。 |
 
 ### `runtime`
 Runtime API：在内存里算 review 特征，零 DB 写。
@@ -1479,15 +1523,20 @@ Runtime API：在内存里算 review 特征，零 DB 写。
 |:--|:--|:--|
 | f | `day_core_step(ctx, targets)` | day 唯一一趟：day 特征 + coldstart（M9T/Poly9 共享，Prophet 逐日）。 |
 | f | `daily_snapshot_step(ctx, targets)` | 取样：day_core 已经算好，这里不再重算。 |
+| f | `day_sample_step(ctx, targets)` | 把 day_core 已算好的 Poly9/RegTree 采样到 60min 目标（D78）。 |
 | f | `build_daily_steps()` |  |
 
-### `day_extra`
-日族额外两列：日频样本熵 se + 15:00 取样的 ZenPivotCnt（D74）。
+### `hour_extra`
+60min 额外两列：样本熵 se + 因果中枢计数 ZenPivotCnt（D78，撤销 D74）。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
-| f | `sample_entropy_daily(day, dates)` | 每个目标日的日收盘样本熵（round(..., 3)）；不足 2 个点 / antropy 缺失 ⇒ NaN。 |
-| f | `pivot_counts(ohlc, cutoffs, code)` | 截至每个 cutoffs 时刻已确认的中枢个数（int32）；失败返回 NaN。 |
+| f | `sample_entropy_by_day(ohlc, targets)` | 返回 15:00 bar 的 (timestamps, se)；只算调用方已切好的帧。 |
+| f | `pivot_counts(ohlc, targets, code)` | 截至当日 15:00、用最近 2160 根 60min 算出的中枢个数；失败返回 NaN。 |
+| f | `renko_by_day(ohlc, targets)` | 每个目标：用 ≤T 的最近一个 15:00 快照、2160 根窗口跑一次 Renko。 |
+| f | `native_by_day(ohlc, targets)` | 每个交易日 15:00：用 ≤T 的 2160 根 60min 算一遍 60min 原生特征。 |
+| f | `pivot_stats(ohlc, targets, code)` | 每个目标：ZenPivotCnt + ZenPivotLag（2160 根 as-of 窗口）。 |
+| f | `chip_cost_by_day(day, targets, code, turnover)` | ChipDist：960 根日线窗口、逐日 as-of，返回成本价（绝对价）四列。 |
 
 ### `minor`
 15min minor 信号 —— 老树 calc_zen_wavelet_reality_minor 的完整 19 列。
@@ -1902,6 +1951,22 @@ analysis/poly9.py（Poly9 编排层）与老树的逐值对拍。
 | f | `TestNormGate.test_not_written_below_gate()` | 闸不满足 ⇒ 不写该列（不是写 0）。 |
 | f | `TestNormGate.test_gate_boundary_is_strict()` | 判据是 > 不是 >=：annual == 200 不算。 |
 
+### `test_position`
+「全局智能仓位」纯函数：D-S 合成、日→60min 广播、前奏计数。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestPositionDS` |  |
+| f | `TestPositionDS.test_three_way_split()` |  |
+| f | `TestPositionDS.test_forced_clear_at_618()` | 做空占比 100% ⇒ 强制清仓；60% 不触发。 |
+| f | `TestPositionDS.test_nan_counts_as_omega()` | NaN 参与比较恒 False ⇒ 落入 Ω（与旧树一致，不提前剔除）。 |
+| f | `TestPositionDS.test_empty()` |  |
+| f | `TestPositionDS.test_series_matches_per_bar()` |  |
+| C | `TestBroadcast` |  |
+| f | `TestBroadcast.test_multiindex_index60()` |  |
+| f | `TestBroadcast.test_prelude_requires_columns()` |  |
+| f | `TestBroadcast.test_prelude_masks()` |  |
+
 ### `test_quadrant`
 analysis/quadrant_jit.py（四量图 + 6 指标）的正确性测试。
 
@@ -1920,6 +1985,8 @@ analysis/quadrant_jit.py（四量图 + 6 指标）的正确性测试。
 | f | `TestMainstreamLeadout.test_six_columns_and_non_empty()` |  |
 | f | `TestMainstreamLeadout.test_entry_and_shakeout_are_disjoint()` |  |
 | f | `TestMainstreamLeadout.test_causal_prefix_invariance()` | 只喂前 300 根与喂全 400 根，前 300 行逐值相同（不看未来）。 |
+| f | `TestMainstreamLeadout.test_fold_only_folds_price_above_ten()` | 折叠法：close > 10 才取 log10，≤ 10 原样（用户 2026-10-29）。 |
+| f | `TestMainstreamLeadout.test_fold_unlocks_high_price_signals()` | 高价股（合成 close≈100）不折时 0 次，折后 > 0 次 —— 量纲缺陷的直接证据。 |
 | f | `TestMainstreamLeadout.test_mirror_is_not_the_original()` | HIGH 侧 ≠ LOW 侧 —— 否则「镜像」只是复制了一份吸筹。 |
 | C | `TestDecoupled` | 用户 2026-10-11：「尽可能解耦，越少增加引用和管线越好」。 |
 | f | `TestDecoupled.test_module_source_has_no_quantaxis_or_db()` | 按 AST 查，不按文本 —— docstring 里故意写着这些名字（解释丢掉了什么）。 |
@@ -1981,7 +2048,7 @@ analysis/reality_attach.py 的附加口径测试（mock DB，不连库）。
 | C | `TestAttachRealityFeats` |  |
 | f | `TestAttachRealityFeats.test_coldstart_uses_previous_available_day()` |  |
 | f | `TestAttachRealityFeats.test_review_m9t_lag_columns_are_not_in_contract()` |  |
-| f | `TestAttachRealityFeats.test_day_extra_is_attached_from_review()` |  |
+| f | `TestAttachRealityFeats.test_hour_extra_is_attached_from_60min()` | D78：se / ZenPivotCnt 来自 60min 表，按时间戳精确 join（不 ffill）。 |
 | f | `TestAttachRealityFeats.test_garident_bands_restored_by_anchor_close()` |  |
 | f | `TestAttachRealityFeats.test_chartscan_is_exact_join_not_ffill()` |  |
 | f | `TestAttachRealityFeats.test_prophet_gap_is_ffilled()` |  |
@@ -3197,14 +3264,16 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | C | `TestRatioColumns` | 价格导出的列必须是 close 相对量，不能是绝对价位（复权断层）。 |
 | f | `TestRatioColumns.test_day_price_columns_are_ratios()` |  |
 | f | `TestRatioColumns.test_renko_dummies_are_in_contract_and_restorable()` | 价格列只能以 *D 进契约，且必须在还原表里 —— 三处共用一份定义。 |
-| f | `TestRatioColumns.test_day_renko_price_columns_are_ratios()` | Renko 的价格量纲列落 *D 比值；方向/时序列原样。D70/D72。 |
+| f | `TestRatioColumns.test_hour_renko_is_asof_window_and_ratios()` | 60min Renko：逐日 as-of 2160 窗口，价格列落 *D 比值。 |
 | C | `TestMinorStep` |  |
 | f | `TestMinorStep.test_columns_and_prefix_stability()` |  |
 | C | `TestZen` |  |
 | f | `TestZen.test_prefix_stability()` |  |
-| C | `TestDayExtra` | D74：se / ZenPivotCnt 已移到日族，60min 不再产出。 |
-| f | `TestDayExtra.test_columns_and_causality()` |  |
-| f | `TestDayExtra.test_prefix_stability()` |  |
+| C | `TestHourExtra` | D78：se / ZenPivotCnt 回到 60min 族，逐 bar 产出（撤销 D74）。 |
+| f | `TestHourExtra.test_columns_and_counts()` |  |
+| f | `TestHourExtra.test_pivot_count_is_asof_2160_window()` | ZenPivotCnt = 只用 ≤T 的最近 2160 根、从头建 CZSC 的计数。 |
+| f | `TestHourExtra.test_se_only_uses_1500_and_ffills_intraday()` | SE 只在 15:00 算；盘中沿用上一交易日 15:00（因果 ffill）。 |
+| f | `TestHourExtra.test_future_bars_do_not_change_history()` |  |
 | C | `TestCausalPivotCount` |  |
 | f | `TestCausalPivotCount.test_counts_only_after_confirmation()` |  |
 | C | `TestColdstart` |  |
@@ -3229,6 +3298,11 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `TestRestorePrice.test_ratio_columns_multiply_back_by_close()` |  |
 | C | `TestRuntimeNoWrites` |  |
 | f | `TestRuntimeNoWrites.test_zero_writes()` |  |
+| C | `TestShardCodes` | --review-shard 的分片口径：并集=全集、两两不交、可复现。 |
+| f | `TestShardCodes.test_partition_is_complete_and_disjoint()` |  |
+| f | `TestShardCodes.test_deterministic()` |  |
+| f | `TestShardCodes.test_empty_spec_returns_all()` |  |
+| f | `TestShardCodes.test_bad_spec_raises()` |  |
 | C | `TestCLI` |  |
 | f | `TestCLI.test_parse_review()` |  |
 | C | `TestReviewCliDefaults` | --strategy review 的命令语义、scope 必填、pct 默认明示。 |
@@ -3240,6 +3314,7 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `TestReviewCliDefaults.test_eval_is_one_global_option()` | --eval 是全局唯一选项：--review 与 --scan 读同一个 eval_scope。 |
 | f | `TestReviewCliDefaults.test_force_and_from_are_global()` | --force / --from 是通用修饰符，不跟 review 绑定。 |
 | f | `TestReviewCliDefaults.test_force_and_from_reach_run_review()` |  |
+| f | `TestReviewCliDefaults.test_internal_review_shard_reaches_run_review()` | --review-shard 只在 internal parser；值必须透传给 run_review。 |
 | f | `TestReviewCliDefaults.test_eval_accepts_codes_as_second_argument()` | --eval 的第二参数可以是逗号分隔代码；没有独立的 --review-codes。 |
 | f | `TestReviewCliDefaults.test_eval_parses_code_name_lines()` | PowerShell here-string：每行 代码<TAB>名称，名称里的数字不能误取。 |
 | f | `TestReviewCliDefaults.test_eval_unknown_text_is_usage_error()` |  |

@@ -11,9 +11,10 @@
 ====
 * **60min coldstart 列**（`COLDSTART_COLUMNS`）：日派生连续量。先按日取最后值，
   再按**上一可用交易日**映射；周末/节后首日盘中不会整列变空。
-* **day 列**（`DAY_COLUMNS`，含 `_REAL` 与 2026-10-28 移入的 `se` / `ZenPivotCnt`）：
-  按 `_map_causal` 映射；盘中用上一可用交易日，15:00 只认当日行
-  （当日缺行保持 NaN，不做值 ffill）。
+* **60min 额外列**（`HOUR_EXTRA_COLUMNS` = `se` / `ZenPivotCnt`，D78 回归 60min）：
+  **按时间戳精确 join**（与特征帧同为 60min，不需要映射/ffill）。
+* **day 列**（`DAY_COLUMNS`）：按 `_map_causal` 映射；盘中用上一可用交易日，
+  15:00 只认当日行（当日缺行保持 NaN，不做值 ffill）。
 * **ChartScan** 三族时间线：事件型稀疏数据，**精确时间戳 join**（15min 用
   `merge_asof` 取当前 60min bar 之前最后一个已完成值），不 ffill。
 * **`DEA_NORM_WEK`**：新 review 契约没有这列；由日线 → 周线 DEA 归一（mapower
@@ -39,7 +40,12 @@ from GolemQ.analysis.timeseries import weekly_ohlc
 from GolemQ.core.constants import AKA, FIELD as FLD
 from GolemQ.markets.StockCN.reality_save import (PRICE_RATIO_COLUMNS,
                                                  fetch_reality_feat)
-from GolemQ.pipeline.review.contract import COLDSTART_COLUMNS, DAY_COLUMNS
+from GolemQ.pipeline.review.contract import (COLDSTART_COLUMNS, DAY_COLUMNS,
+                                             HOUR_CHIP_COLUMNS,
+                                             HOUR_EXTRA_COLUMNS,
+                                             HOUR_NATIVE_COLUMNS,
+                                             HOUR_ZEN_COLUMNS,
+                                             RENKO_DAY_COLUMNS)
 
 __all__ = ['DEA_NORM_WEEKLY', 'attach_reality_feats']
 
@@ -90,7 +96,36 @@ def _attach_60min(features: pd.DataFrame, r60: Optional[pd.DataFrame],
             mapped[col] = _map_causal(daily[col], features.index)
         features = pd.concat([features, mapped], axis=1)
         loaded['60min_cold'] = cold
-    # `se` / `ZenPivotCnt` 已改由日族承载（D74），随 `_attach_day` 映射。
+    # `se` / `ZenPivotCnt`：60min 行原生列（D78 撤销 D74），精确时间戳 join。
+    extra = [c for c in HOUR_EXTRA_COLUMNS
+             if c in r60.columns and c not in features.columns]
+    if extra:
+        features = features.join(r60[extra], how='left')
+        loaded['60min_extra'] = extra
+    # zen 组（含 ZenPivotLag，D78 补全）：精确时间戳 join
+    zen = [c for c in HOUR_ZEN_COLUMNS
+           if c in r60.columns and c not in features.columns]
+    if zen:
+        features = features.join(r60[zen], how='left')
+        loaded['60min_zen'] = zen
+    # ChipDist 四列（cost*PrzD，还原由 PRICE_RATIO_COLUMNS 负责）
+    chip = [c for c in HOUR_CHIP_COLUMNS
+            if c in r60.columns and c not in features.columns]
+    if chip:
+        features = features.join(r60[chip], how='left')
+        loaded['60min_chip'] = chip
+    # 60min 原生组（STAGE/M9T/Poly9/RegTree/Prophet，D78）：精确时间戳 join
+    nat = [c for c in HOUR_NATIVE_COLUMNS
+           if c in r60.columns and c not in features.columns]
+    if nat:
+        features = features.join(r60[nat], how='left')
+        loaded['60min_native'] = nat
+    # Renko 14：60min 行原生列（D78），精确时间戳 join
+    renko = [c for c in RENKO_DAY_COLUMNS
+             if c in r60.columns and c not in features.columns]
+    if renko:
+        features = features.join(r60[renko], how='left')
+        loaded['60min_renko'] = renko
     # ChartScan 是稀疏事件：精确时间戳 join
     chart = [c for c in _CHART_COLS_60
              if c in r60.columns and c not in features.columns]
@@ -104,8 +139,14 @@ def _attach_day(features: pd.DataFrame, rd: Optional[pd.DataFrame],
                 loaded: Dict[str, list]) -> pd.DataFrame:
     if rd is None:
         return features
+    # ⚠️ **已经由 60min 组贴上的列不再取日表的**（与 `_attach_60min` 同一条
+    # 「不覆盖已有列」纪律）。最典型是 ChipDist 四列：两张表都可能存
+    # `cost*PrzD`，而 60min 的比值是 ÷**本 bar close**、日表是 ÷当日 close，
+    # 贴到 60min 行后必须用 60min 那份。不加这个过滤，`features.join(addd)`
+    # 会直接抛 `columns overlap but no suffix specified`（实测 510300 / 000711）。
     want = [c for c in (*DAY_COLUMNS, 'ClsMaj', 'ConfidenceMaj',
-                        'CoordinatesMaj', 'ChartScaned') if c in rd.columns]
+                        'CoordinatesMaj', 'ChartScaned')
+            if c in rd.columns and c not in features.columns]
     addd = pd.DataFrame(index=features.index)
     for col in want:
         s = rd[col].copy()
