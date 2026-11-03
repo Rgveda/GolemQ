@@ -81,12 +81,19 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 `pipeline/review/pipeline.py`，`tools/backfill_hour_extra.py` 改用同一函数）。
 
 进度（2026-11-03）：缺口实测 **3,140 只股票**（`etc` 3,013 + `fast` 127；ETF 1,716 本轮不含）。
-码表 `_review_missing_all.txt` 按 `shard_codes` md5 分 3 片
-（`_review_shard1/2/3.txt` = 1,043 / 1,072 / 1,025）。**Babel 已启动 shard 1**
-（`_review_shard1.log`，9 并发，单码 4h 超时）；Gilgamesh/Nightwatcher 用
-`_run_review_shard.cmd 2|3` 启动。冒烟（002380 / 002400，`--from 2026-10-20`）
-真写正常：40 行/码，`ZenPivotCnt`/`renkoSbar`/`zDLagR` 均落库。单码 800 天约
-36–40 分钟；3 机 × 9 并发估算 2–3 天。跑完按「码表 − 有 `zDLagR` 的码」生成重跑表。
+初版按 md5 均分 1,043/1,072/1,025，实测 Babel(18 核)/Gilgamesh(32 核)/Nightwatcher(160 核)
+能力差太大，Babel 会成 8–9 天长尾 ⇒ 按 **9:16:61** 权重重分片：
+`_review_rebal1/2/3.txt` = **329 / 584 / 2,227**（Babel / Gilgamesh / Nightwatcher），
+三台预计 ~70h 同时收口。冒烟（002380 / 002400，`--from 2026-10-20`）真写正常：
+40 行/码，`ZenPivotCnt`/`renkoSbar`/`zDLagR` 均落库。
+
+⚠️ 远端启动方式（2026-11-03 实测）：WinRM 当前账户可登录，但**双跳**访问不了
+`\\rgveda` 共享；已把代码（commit `a3dbc1c`）以 zip 复制到两台本地
+`C:\Users\azai\GQ_review_20261103`，用 WMI `Win32_Process.Create` 脱离会话启动。
+日志在**各机本地** `_review_rebal{1,2,3}.log`（不是 Y:）。Nightwatcher 上另有一个
+既有的 `--strategy compact`（56 workers）+ MongoDB，review 只跑 **61 workers 一份**，
+不再加并发。实测单码约 **1.9h**（800 天窗口 / 2,100 行，比早先注释的 36–40 分钟慢）。
+跑完按「码表 − 有 `zDLagR` 的码」生成重跑表；`audit_review_nan.py` 抽检。
 
 #### 回填结束后第一件事：消除补数与 `--review` 的**编排**平行实现（2026-10-31 挂账）
 
