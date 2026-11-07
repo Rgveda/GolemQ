@@ -29,7 +29,9 @@ CZSC_MAX_BI = 512
 _DAY_END = dtime(15, 0)
 
 __all__ = ['SE_WINDOW', 'sample_entropy_by_day', 'pivot_counts',
-           'renko_by_day', 'native_by_day', 'pivot_stats', 'chip_cost_by_day']
+           'renko_by_day', 'native_by_day', 'pivot_stats', 'chip_cost_by_day',
+           'build_hour_extra_frame', 'build_chip_frame',
+           'chip_ratios_from_abs', 'sample_day_frame']
 
 
 def sample_entropy_by_day(ohlc: pd.DataFrame, targets=None):
@@ -397,3 +399,175 @@ def chip_cost_by_day(day: pd.DataFrame, targets, code: str, turnover=None):
     days = pd.DatetimeIndex(sorted(by_day))
     return days, pd.DataFrame([by_day[d] for d in days], index=days,
                               columns=list(cols))
+
+
+# --------------------------------------------------------------------------- #
+# 共享映射层（review step 与 backfill 工具**同一份**，别再各写一遍）
+# --------------------------------------------------------------------------- #
+def _target_positions(days, targets):
+    """`days` 是**已排序**的「最后可用快照」轴；返回每个 target 的 `<=` 位置。"""
+    days = pd.DatetimeIndex(pd.to_datetime(days))
+    cut = pd.DatetimeIndex(pd.to_datetime(targets))
+    if len(days) == 0:
+        return np.full(len(cut), -1, dtype=int), days
+    return days.searchsorted(cut, side='right') - 1, days
+
+
+def map_last_scalar(days, values, targets):
+    """把按日快照的 1-D 值映射到 target（每个 target 取 `<=` 的最后一个）。"""
+    pos, _ = _target_positions(days, targets)
+    vals = np.asarray(values, dtype=float)
+    out = np.full(len(pos), np.nan)
+    ok = (pos >= 0) & (pos < len(vals))
+    out[ok] = vals[pos[ok]]
+    return out
+
+
+def map_last_rows(days, frame, targets):
+    """把按日快照的 2-D 帧映射到 target（逐行取 `<=` 的最后一个）。"""
+    pos, _ = _target_positions(days, targets)
+    ncols = 0 if frame is None else len(frame.columns)
+    out = np.full((len(pos), ncols), np.nan)
+    if frame is None or len(frame) == 0 or ncols == 0:
+        return out
+    vals = frame.to_numpy(dtype=float)
+    ok = (pos >= 0) & (pos < len(vals))
+    out[ok] = vals[pos[ok]]
+    return out
+
+
+def map_price_rows(days, frame, targets, close_by_ts, price_columns):
+    """同 :func:`map_last_rows`，但 `price_columns` 按**目标行 close** 转比值。"""
+    out = map_last_rows(days, frame, targets)
+    if frame is None or len(frame) == 0 or len(out) == 0:
+        return out
+    cols = list(frame.columns)
+    price_pos = [j for j, c in enumerate(cols) if c in price_columns]
+    if not price_pos:
+        return out
+    for i, T in enumerate(pd.DatetimeIndex(pd.to_datetime(targets))):
+        cT = close_by_ts.get(pd.Timestamp(T), np.nan)
+        if not (cT and np.isfinite(cT)):
+            out[i, price_pos] = np.nan
+        else:
+            out[i, price_pos] = out[i, price_pos] / cT
+    return out
+
+
+def _close_by_ts(ohlc: pd.DataFrame):
+    if ohlc is None or len(ohlc) == 0:
+        return pd.Series(dtype=float)
+    idx = pd.DatetimeIndex(pd.to_datetime(ohlc.index.get_level_values(0)))
+    vals = pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce').to_numpy()
+    s = pd.Series(vals, index=idx)
+    # 重复 bar 只保留最后一根（与 tool 的 `~duplicated(keep='last')` 一致）
+    return s[~s.index.duplicated(keep='last')]
+
+
+def build_hour_extra_frame(ohlc: pd.DataFrame, targets, code: str) -> pd.DataFrame:
+    """`se` + `ZenPivotCnt/Lag` + Renko 14 + 60min 原生 10 列的**唯一构造器**。
+
+    口径与 `steps/zen.py::zen_snapshots_step`、`tools/backfill_hour_extra.py`
+    完全一致；两边都调这里，禁止再各自写 searchsorted 映射。
+    """
+    from GolemQ.pipeline.review.contract import (HOUR_NATIVE_COLUMNS,
+                                                 RENKO_DAY_COLUMNS,
+                                                 RENKO_PRICE_DUMMIES)
+    targets = pd.DatetimeIndex(pd.to_datetime(targets))
+    idx = pd.MultiIndex.from_arrays(
+        [targets, [str(code)] * len(targets)], names=['ts', 'code'])
+    frame = pd.DataFrame(index=idx)
+
+    se_days, se_vals = sample_entropy_by_day(ohlc, targets)
+    frame['se'] = map_last_scalar(se_days, se_vals, targets)
+
+    piv_days, piv_df = pivot_stats(ohlc, targets, code)
+    piv = map_last_rows(piv_days, piv_df, targets)
+    for j, c in enumerate(piv_df.columns):
+        frame[c] = piv[:, j]
+
+    close_by_ts = _close_by_ts(ohlc)
+    rk_days, rk_df = renko_by_day(ohlc, targets)
+    rk = map_price_rows(rk_days, rk_df, targets, close_by_ts,
+                        {d for _b, d in RENKO_PRICE_DUMMIES})
+    for j, c in enumerate(RENKO_DAY_COLUMNS):
+        frame[c] = rk[:, j]
+
+    nat_days, nat_df = native_by_day(ohlc, targets)
+    nat = map_last_rows(nat_days, nat_df, targets)
+    for j, c in enumerate(HOUR_NATIVE_COLUMNS):
+        frame[c] = nat[:, j]
+    return frame
+
+
+def chip_ratios_from_abs(chip_abs, targets, close_by_ts,
+                         code: str = '') -> pd.DataFrame:
+    """绝对成本（按日）→ 每个 target 的 `cost*PrzD` 比值（÷目标行 close）。
+
+    `chip_abs` 的 key 是**归一化日**；target 取 `<=` 它的最后一个有 chip 的日，
+    与 tool 的 `chip_days.searchsorted(targets, side='right') - 1` 同口径。
+    """
+    from GolemQ.pipeline.review.contract import HOUR_CHIP_COLUMNS
+    targets = pd.DatetimeIndex(pd.to_datetime(targets))
+    idx = pd.MultiIndex.from_arrays(
+        [targets, [str(code)] * len(targets)], names=['ts', 'code'])
+    vals = np.full((len(targets), len(HOUR_CHIP_COLUMNS)), np.nan)
+    if chip_abs:
+        days = pd.DatetimeIndex(sorted({pd.Timestamp(d).normalize()
+                                        for d in chip_abs}))
+        pos = days.searchsorted(targets.normalize(), side='right') - 1
+        srcs = ('cost5Prz', 'cost15Prz', 'cost85Prz', 'cost95Prz')
+        for i, p in enumerate(pos):
+            if p < 0:
+                continue
+            cT = (close_by_ts.get(pd.Timestamp(targets[i]), np.nan)
+                  if close_by_ts is not None else np.nan)
+            if not (cT and np.isfinite(cT)):
+                continue
+            row = chip_abs[days[p]]
+            for k, src in enumerate(srcs):
+                v = row.get(src, np.nan)
+                vals[i, k] = (v / cT) if np.isfinite(v) else np.nan
+    return pd.DataFrame(vals, index=idx, columns=list(HOUR_CHIP_COLUMNS))
+
+
+def build_chip_frame(day: pd.DataFrame, targets, code: str,
+                     turnover=None, close_by_ts=None) -> pd.DataFrame:
+    """ChipDist 绝对成本 → 60min 目标行的 `HOUR_CHIP_COLUMNS`（唯一入口）。"""
+    days, chip_df = chip_cost_by_day(day, targets, code, turnover=turnover)
+    chip_abs = {pd.Timestamp(d).normalize(): chip_df.loc[d].to_dict()
+                for d in days}
+    return chip_ratios_from_abs(chip_abs, targets, close_by_ts, code=code)
+
+
+def sample_day_frame(cache, targets, close_by_ts=None, chip_abs=None):
+    """把按日缓存的日族行采样到 target（15:00 只认当日，盘中认上一交易日）。
+
+    `cache` 的 key 是归一化日，value 是列名→值；`chip_abs` 可选，给了就按
+    `chip_ratios_from_abs` 写 `cost*PrzD`（不再把日表的 ÷日close 值带到 60min）。
+    """
+    from GolemQ.pipeline.review.contract import (DAY_SAMPLE_COLUMNS,
+                                                 HOUR_CHIP_COLUMNS)
+    targets = pd.DatetimeIndex(pd.to_datetime(targets))
+    idx = pd.MultiIndex.from_arrays(
+        [targets, [''] * len(targets)], names=['ts', 'code'])
+    nan_row = {c: np.nan for c in DAY_SAMPLE_COLUMNS}
+    dates = pd.DatetimeIndex(sorted({pd.Timestamp(d).normalize()
+                                     for d in (cache or {})}))
+    rows = []
+    for T in targets:
+        d = T.normalize()
+        if T.time() >= _DAY_END:
+            key = d if d in (cache or {}) else None
+        else:
+            pos = int(dates.searchsorted(d, side='left')) - 1
+            key = dates[pos] if pos >= 0 else None
+        row = (cache or {}).get(key, nan_row) if key is not None else nan_row
+        rows.append({c: row.get(c, np.nan) for c in DAY_SAMPLE_COLUMNS})
+    out = pd.DataFrame(rows, index=idx, columns=list(DAY_SAMPLE_COLUMNS))
+    if chip_abs:
+        chip = chip_ratios_from_abs(chip_abs, targets, close_by_ts)
+        for c in HOUR_CHIP_COLUMNS:
+            if c in out.columns:
+                out[c] = chip[c].to_numpy()
+    return out

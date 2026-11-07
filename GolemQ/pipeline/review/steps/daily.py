@@ -217,9 +217,10 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
                 [pd.Timestamp(t) + pd.Timedelta(hours=15) for t in need_dates])
             _days_c, _chip_df = chip_cost_by_day(
                 day_all, _tgt, ctx.code, turnover=_tr[_AKA.TURNOVER])
-            for i, _t in enumerate(_tgt):
-                if i < len(_chip_df):
-                    chip_abs[pd.Timestamp(_t).normalize()] = _chip_df.iloc[i].to_dict()
+            # ⚠️ 必须按返回的 `_days_c` 对齐；`chip_df` 可能比 `_tgt` 短
+            # （短历史/缺换手率），按下标 enumerate 会把后面的值错位。
+            for _d in _days_c:
+                chip_abs[pd.Timestamp(_d).normalize()] = _chip_df.loc[_d].to_dict()
     except Exception:               # noqa: BLE001 ChipDist 失败留空
         chip_abs = {}
 
@@ -283,13 +284,10 @@ def day_sample_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFra
     口径与 `coldstart_step` 相同：15:00 用当日行；盘中用**上一交易日**行
     （当日的日线要到收盘才成立）。
     """
+    from GolemQ.pipeline.review.steps.hour_extra import sample_day_frame
+
     cache = ctx.outputs.get('_day_sample_rows') or {}
     chip_abs = ctx.outputs.get('_chip_abs_rows') or {}
-    dates = sorted(cache)
-    nan_row = {c: np.nan for c in DAY_SAMPLE_COLUMNS}
-    # chip 列：日表存的是「÷当日 close」的比值；60min 行要存「÷本 bar close」，
-    # 所以这里用缓存的**绝对成本**按目标行 close 重新归一。
-    _chip_src = {d: s for d, s in _CHIP_SRC if d in DAY_SAMPLE_COLUMNS}
     _close60 = {}
     _src60 = ctx.frames.get('60min')
     if _src60 is not None and len(_src60):
@@ -297,29 +295,14 @@ def day_sample_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFra
             pd.DatetimeIndex(pd.to_datetime(
                 _src60.index.get_level_values(0))),
             pd.to_numeric(_src60[AKA.CLOSE], errors='coerce')))
-    rows, idx = [], []
-    for t in (targets if targets is not None else []):
-        t = pd.Timestamp(t)
-        d = t.normalize()
-        if t.time() >= pd.Timestamp('15:00').time():
-            key = d
-        else:
-            prev = [x for x in dates if x < d]
-            key = prev[-1] if prev else None
-        row = cache.get(key, nan_row)
-        vals = {c: row.get(c, np.nan) for c in DAY_SAMPLE_COLUMNS}
-        _ca = chip_abs.get(key)
-        _c60 = _close60.get(t, np.nan)
-        if _ca and _c60 and np.isfinite(_c60):
-            for _dst, _src in _chip_src.items():
-                _v = _ca.get(_src, np.nan)
-                vals[_dst] = (_v / _c60) if np.isfinite(_v) else np.nan
-        rows.append([vals[c] for c in DAY_SAMPLE_COLUMNS])
-        idx.append((t, ctx.code))
-    return pd.DataFrame(
-        rows,
-        index=pd.MultiIndex.from_tuples(idx, names=['ts', 'code']),
-        columns=list(DAY_SAMPLE_COLUMNS))
+    out = sample_day_frame(cache, targets, close_by_ts=_close60,
+                           chip_abs=chip_abs)
+    # 共享构造器的 code 维留空；这里补回真实 code（review 写库按 (ts, code)）
+    if len(out):
+        out.index = pd.MultiIndex.from_arrays(
+            [pd.DatetimeIndex(pd.to_datetime(out.index.get_level_values(0))),
+             [ctx.code] * len(out)], names=['ts', 'code'])
+    return out
 
 
 def build_daily_steps() -> List[FeatureStep]:

@@ -33,10 +33,9 @@ _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
-from GolemQ.pipeline.review.steps.hour_extra import (native_by_day,
-                                                     pivot_stats,
-                                                     renko_by_day,
-                                                     sample_entropy_by_day)
+from GolemQ.pipeline.review.steps.hour_extra import (
+    build_chip_frame, build_hour_extra_frame,
+    sample_day_frame as _sample_day_frame)
 
 #: 目标行标记：有 `zDLagR` 的 60min 行才算 review 写过（CV-only 行不算）。
 _MARKER = 'zDLagR'
@@ -73,7 +72,11 @@ def target_datetimes(code: str, since: str = '') -> pd.DatetimeIndex:
 
 
 def day_sample_frame(code: str, targets: pd.DatetimeIndex):
-    """从日表采样日族 14 列（15:00=当日、盘中=上一交易日）。"""
+    """从日表采样日族 14 列（15:00=当日、盘中=上一交易日）。
+
+    映射本身走 `hour_extra.sample_day_frame`，与 review 的 `day_sample_step`
+    同一份实现；chip 四列由调用方用 `_chip_frame` 独立计算，这里留 NaN。
+    """
     from GolemQ.markets.StockCN.reality_save import reality_feat_name
     from GolemQ.pipeline.review.contract import DAY_SAMPLE_COLUMNS
     name = reality_feat_name('day', _market_type(code))
@@ -85,71 +88,51 @@ def day_sample_frame(code: str, targets: pd.DatetimeIndex):
                               proj))
     if not docs:
         return None
-    df = pd.DataFrame(docs)
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.drop_duplicates('date').set_index('date').sort_index()
-    idx = df.index
-    d = pd.DatetimeIndex(targets).normalize()
-    pos = np.where(pd.DatetimeIndex(targets).time >= pd.Timestamp('15:00').time(),
-                   idx.searchsorted(d, side='right') - 1,
-                   idx.searchsorted(d, side='left') - 1)
-    out = pd.DataFrame(index=pd.MultiIndex.from_arrays(
-        [targets, [str(code)] * len(targets)], names=['ts', 'code']),
-        columns=list(DAY_SAMPLE_COLUMNS), dtype=float)
-    ok = pos >= 0
-    # 日表里还没有的列（例如 chip 尚未回填）留 NaN；chip 由调用方独立计算
-    for c in DAY_SAMPLE_COLUMNS:
-        if c not in df.columns:
-            continue
-        vals = df[c].to_numpy(dtype=float)
-        out[c] = np.where(ok, vals[np.clip(pos, 0, len(vals) - 1)], np.nan)
+    df = pd.DataFrame(docs).drop_duplicates('date')
+    cache = {}
+    for _, row in df.iterrows():
+        d = pd.Timestamp(row['date']).normalize()
+        cache[d] = {c: row.get(c, np.nan) for c in DAY_SAMPLE_COLUMNS}
+    out = _sample_day_frame(cache, targets)
+    if len(out):
+        out.index = pd.MultiIndex.from_arrays(
+            [pd.DatetimeIndex(pd.to_datetime(out.index.get_level_values(0))),
+             [str(code)] * len(out)], names=['ts', 'code'])
     return out
 
 
 def _chip_frame(market, code: str, targets: pd.DatetimeIndex,
-                close_ts: pd.Series) -> pd.DataFrame:
+                close_ts) -> pd.DataFrame:
     """只算 ChipDist 四列（60min 行，÷本 bar close）。
 
-    抽出来是为了 `--chip-only` 能跳过 se/pivot/renko/native —— 898 个码的
-    chip 回填不需要把已经有的列再算一遍。
+    算法与 review 的 `day_core`/`day_sample_step` 同源：`build_chip_frame`
+    是 `hour_extra.py` 里的唯一入口。
     """
     from GolemQ.core.constants import AKA as _AKA
     from GolemQ.markets.StockCN.refdata import (
         GQ_fetch_stock_reality_feat_day)
     from GolemQ.pipeline.review.contract import HOUR_CHIP_COLUMNS
-    from GolemQ.pipeline.review.steps.hour_extra import chip_cost_by_day
 
-    idx = pd.MultiIndex.from_arrays(
-        [targets, [str(code)] * len(targets)], names=['ts', 'code'])
-    vals = np.full((len(targets), len(HOUR_CHIP_COLUMNS)), np.nan)
+    empty = pd.DataFrame(
+        np.full((len(targets), len(HOUR_CHIP_COLUMNS)), np.nan),
+        index=pd.MultiIndex.from_arrays(
+            [targets, [str(code)] * len(targets)], names=['ts', 'code']),
+        columns=list(HOUR_CHIP_COLUMNS))
     try:
         dres, _ = market.get_kline_price_v3(
             code, start=ANCHOR, end=str(targets.max().date()),
             realtime=False, verbose=False)
         day = None if dres is None else getattr(dres, 'data', None)
-        if day is not None and len(day) >= 30:
-            _tr = GQ_fetch_stock_reality_feat_day(
-                str(code), start=str(day.index.get_level_values(0)[0].date()),
-                end=str(targets.max().date()), columns=[_AKA.TURNOVER])
-            turnover = None if (_tr is None or len(_tr) == 0) else _tr[_AKA.TURNOVER]
-            if turnover is not None:
-                chip_days, chip_df = chip_cost_by_day(
-                    day, targets, str(code), turnover=turnover)
-                if len(chip_days):
-                    p = chip_days.searchsorted(targets, side='right') - 1
-                    for i, pp in enumerate(p):
-                        if pp < 0:
-                            continue
-                        cT = close_ts.get(targets[i], np.nan)
-                        if not (cT and np.isfinite(cT)):
-                            continue
-                        rowc = chip_df.iloc[pp]
-                        for k, src in enumerate(('cost5Prz', 'cost15Prz',
-                                                 'cost85Prz', 'cost95Prz')):
-                            vals[i, k] = rowc.get(src, np.nan) / cT
+        if day is None or len(day) < 30:
+            return empty
+        _tr = GQ_fetch_stock_reality_feat_day(
+            str(code), start=str(day.index.get_level_values(0)[0].date()),
+            end=str(targets.max().date()), columns=[_AKA.TURNOVER])
+        turnover = None if (_tr is None or len(_tr) == 0) else _tr[_AKA.TURNOVER]
+        return build_chip_frame(day, targets, str(code),
+                                turnover=turnover, close_by_ts=close_ts)
     except Exception:               # noqa: BLE001 单码失败留空
-        pass
-    return pd.DataFrame(vals, index=idx, columns=list(HOUR_CHIP_COLUMNS))
+        return empty
 
 
 def compute_frame(code: str, targets: pd.DatetimeIndex,
@@ -165,9 +148,7 @@ def compute_frame(code: str, targets: pd.DatetimeIndex,
     from GolemQ import get_active_market
     from GolemQ.pipeline.review.contract import (DAY_SAMPLE_COLUMNS,
                                                  HOUR_CHIP_COLUMNS,
-                                                 HOUR_NATIVE_COLUMNS,
-                                                 RENKO_DAY_COLUMNS,
-                                                 RENKO_PRICE_DUMMIES)
+                                                 RENKO_DAY_COLUMNS)
     market = get_active_market()
     res, _ = market.get_kline_price_min(
         code, start=ANCHOR, end=str(targets.max().date()) + ' 23:59:59',
@@ -177,64 +158,15 @@ def compute_frame(code: str, targets: pd.DatetimeIndex,
         return pd.DataFrame()
     ohlc = ohlc[~ohlc.index.duplicated(keep='last')].sort_index()
 
-    idx = pd.MultiIndex.from_arrays([targets, [str(code)] * len(targets)],
-                                    names=['ts', 'code'])
-    frame = pd.DataFrame(index=idx)
     close_ts = pd.Series(
         pd.to_numeric(ohlc['close'], errors='coerce').to_numpy(),
         index=pd.DatetimeIndex(pd.to_datetime(ohlc.index.get_level_values(0))))
     if chip_only:
         return _chip_frame(market, code, targets, close_ts)
 
-    se_days, se_vals = sample_entropy_by_day(ohlc, targets)
-    piv_days, piv_df = pivot_stats(ohlc, targets, code)
-    se = np.full(len(targets), np.nan)
-    if len(se_days):
-        p = se_days.searchsorted(targets, side='right') - 1
-        ok = p >= 0
-        se[ok] = se_vals[p[ok]]
-    frame['se'] = se
-    piv = np.full((len(targets), 2), np.nan)
-    if len(piv_days):
-        p = piv_days.searchsorted(targets, side='right') - 1
-        for i, pp in enumerate(p):
-            if pp >= 0:
-                piv[i] = piv_df.iloc[pp].to_numpy(dtype=float)
-    frame = pd.concat([frame, pd.DataFrame(
-        piv, index=idx, columns=['ZenPivotCnt', 'ZenPivotLag'])], axis=1)
-
-    # Renko：2160 as-of 快照；价格列按目标行 close 转 *D
-    rk_days, rk_df = renko_by_day(ohlc, targets)
-    dummy = {d: b for b, d in RENKO_PRICE_DUMMIES}
-    rk_vals = np.full((len(targets), len(RENKO_DAY_COLUMNS)), np.nan)
-    if len(rk_days):
-        p = rk_days.searchsorted(targets, side='right') - 1
-        for i, pp in enumerate(p):
-            if pp < 0:
-                continue
-            snap = rk_df.iloc[pp]
-            cT = close_ts.get(targets[i], np.nan)
-            for k, col in enumerate(RENKO_DAY_COLUMNS):
-                v = snap.get(col, np.nan)
-                if col in dummy:
-                    rk_vals[i, k] = v / cT if (cT and np.isfinite(cT)) else np.nan
-                else:
-                    rk_vals[i, k] = v
-    frame = pd.concat([frame, pd.DataFrame(
-        rk_vals, index=idx, columns=list(RENKO_DAY_COLUMNS))], axis=1)
-
-    # 60min 原生组：STAGE / M9T / Poly9 / RegTree / Prophet（每日 15:00 快照）
-    nat_days, nat_df = native_by_day(ohlc, targets)
-    nat_vals = np.full((len(targets), len(HOUR_NATIVE_COLUMNS)), np.nan)
-    if len(nat_days):
-        p = nat_days.searchsorted(targets, side='right') - 1
-        for i, pp in enumerate(p):
-            if pp >= 0:
-                nat_vals[i] = nat_df.iloc[pp].to_numpy(dtype=float)
-    frame = pd.concat([frame, pd.DataFrame(
-        nat_vals, index=idx, columns=list(HOUR_NATIVE_COLUMNS))], axis=1)
-
-    # ChipDist：960 根日线窗口、逐日 as-of（调用层补 adj 缩放；≈0.9s/天）
+    # se/pivot/Renko/M9T：与 review `zen_snapshots_step` **同一构造器**
+    frame = build_hour_extra_frame(ohlc, targets, code)
+    # ChipDist：同一 `build_chip_frame`（绝对成本 ÷ 本 bar close）
     frame = pd.concat([frame, _chip_frame(market, code, targets, close_ts)],
                       axis=1)
 

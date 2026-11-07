@@ -20,19 +20,14 @@ import numpy as np
 import pandas as pd
 
 from GolemQ.analysis.zen import calc_zen_timing_lag
-from GolemQ.core.constants import AKA
 from GolemQ.core.constants import FIELD as FLD
 from GolemQ.pipeline.review.contract import (HOUR_EXTRA_COLUMNS,
                                              HOUR_NATIVE_COLUMNS,
                                              HOUR_ZEN_COLUMNS,
                                              MINOR_15MIN_COLUMNS,
                                              MINOR_COLUMNS,
-                                             RENKO_DAY_COLUMNS,
-                                             RENKO_PRICE_DUMMIES)
-from GolemQ.pipeline.review.steps.hour_extra import (native_by_day,
-                                                     pivot_stats,
-                                                     renko_by_day,
-                                                     sample_entropy_by_day)
+                                             RENKO_DAY_COLUMNS)
+from GolemQ.pipeline.review.steps.hour_extra import build_hour_extra_frame
 from GolemQ.pipeline.review.steps.minor import minor_features
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_DAILY,
                                    slice_asof)
@@ -46,9 +41,6 @@ WINDOW15 = 2160
 ZEN_COLUMNS = (HOUR_ZEN_COLUMNS + MINOR_COLUMNS + HOUR_EXTRA_COLUMNS +
                RENKO_DAY_COLUMNS + HOUR_NATIVE_COLUMNS)
 _NAN_MINOR = np.full(len(MINOR_COLUMNS), np.nan)
-_RENKO_BASE_OF = {dummy: base for base, dummy in RENKO_PRICE_DUMMIES}
-_NAN_RENKO = np.full(len(RENKO_DAY_COLUMNS), np.nan)
-_NAN_NATIVE = np.full(len(HOUR_NATIVE_COLUMNS), np.nan)
 
 
 def _zen_last(ohlc: pd.DataFrame):
@@ -67,17 +59,9 @@ def zen_snapshots_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.Data
     minute_rows = {}
     src60 = ctx.frame('60min')
     src15 = ctx.frame('15min')
-    # `hour_extra` 并进这一趟（D78）：SE 只算 15:00，pivot 计数一次算到 targets。
+    # `hour_extra` 并进这一趟（D78）：SE/pivot/Renko/M9T 的映射统一走共享构造器。
     ohlc60 = slice_asof(src60, ctx.as_of)
-    se_days, se_vals = sample_entropy_by_day(ohlc60, targets)
-    piv_days, piv_df = pivot_stats(ohlc60, targets, ctx.code)
-    # Renko 14 + M9T 2：60min 原生，2160 根 as-of 窗口（与 se 同口径）
-    rk_days, rk_df = renko_by_day(ohlc60, targets)
-    nat_days, nat_df = native_by_day(ohlc60, targets)
-    close_by_ts = pd.Series(
-        pd.to_numeric(ohlc60[AKA.CLOSE], errors='coerce').to_numpy(),
-        index=pd.DatetimeIndex(pd.to_datetime(
-            ohlc60.index.get_level_values(0)))) if len(ohlc60) else pd.Series(dtype=float)
+    extra = build_hour_extra_frame(ohlc60, targets, ctx.code)
     for _i, T in enumerate(targets):
         T = pd.Timestamp(T)
         d60, p60 = _zen_last(slice_asof(src60, T, WINDOW60))
@@ -98,38 +82,14 @@ def zen_snapshots_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.Data
                 d15 = r.get('zDLagMinR', np.nan)
                 p15 = r.get('zPLagMinR', np.nan)
                 minor_vals = np.array([r.get(c, np.nan) for c in MINOR_COLUMNS])
-        se = np.nan
-        if len(se_days):
-            pos = int(se_days.searchsorted(T, side='right')) - 1
-            if pos >= 0:
-                se = se_vals[pos]
-        piv_cnt = piv_lag = np.nan
-        if len(piv_days):
-            pos = int(piv_days.searchsorted(T, side='right')) - 1
-            if pos >= 0:
-                piv_cnt = piv_df.iloc[pos, 0]
-                piv_lag = piv_df.iloc[pos, 1]
-        # Renko：快照里的价格列按**本目标行** close 转 *D（restore 时乘回一致）
-        rk_vals = _NAN_RENKO
-        if len(rk_days):
-            p = int(rk_days.searchsorted(T, side='right')) - 1
-            if p >= 0:
-                snap = rk_df.iloc[p]
-                cT = close_by_ts.get(T, np.nan)
-                vals = []
-                for col in RENKO_DAY_COLUMNS:
-                    v = snap.get(col, np.nan)
-                    if col in _RENKO_BASE_OF:
-                        # 快照里 `*D` 列放的是绝对价，这里转比值
-                        vals.append(v / cT if (cT and np.isfinite(cT)) else np.nan)
-                    else:
-                        vals.append(v)
-                rk_vals = np.array(vals, dtype=float)
-        nat_vals = _NAN_NATIVE
-        if len(nat_days):
-            p = int(nat_days.searchsorted(T, side='right')) - 1
-            if p >= 0:
-                nat_vals = nat_df.iloc[p].to_numpy(dtype=float)
+        # 共享构造器已按 target 完成 se/pivot/Renko/M9T 的 as-of 映射；
+        # 这里只取第 _i 行，禁止再写一份 searchsorted。
+        ex = extra.iloc[_i]
+        se = ex['se']
+        piv_cnt = ex['ZenPivotCnt']
+        piv_lag = ex['ZenPivotLag']
+        rk_vals = ex[list(RENKO_DAY_COLUMNS)].to_numpy(dtype=float)
+        nat_vals = ex[list(HOUR_NATIVE_COLUMNS)].to_numpy(dtype=float)
         rows.append([d60, p60, d15, p15, piv_lag, *minor_vals, se, piv_cnt,
                      *rk_vals, *nat_vals])
         idx.append((T, ctx.code))
