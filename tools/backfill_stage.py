@@ -69,11 +69,12 @@ def _table(code: str) -> str:
 def stage_rows_for(code: str):
     """单码 → `[(time_stamp, stage), ...]`（当日 4 根共用 15:00 的 stage）。"""
     from GolemQ import get_active_market
+    from GolemQ.markets.StockCN.date_utils import GQ_util_last_trade_as_of
     from GolemQ.pipeline.review.coldstart import calc_stage_series
 
     m = get_active_market()
     res, _ = m.get_kline_price_min(code, start=ANCHOR,
-                                   end=str(pd.Timestamp.now().date()) + ' 23:59:59',
+                                   end=str(GQ_util_last_trade_as_of().date()) + ' 23:59:59',
                                    frequency='60min', realtime=False)
     f60 = None if res is None else getattr(res, 'data', None)
     if f60 is None or len(f60) < 300:

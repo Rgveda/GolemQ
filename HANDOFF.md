@@ -95,6 +95,30 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 不再加并发。实测单码约 **1.9h**（800 天窗口 / 2,100 行，比早先注释的 36–40 分钟慢）。
 跑完按「码表 − 有 `zDLagR` 的码」生成重跑表；`audit_review_nan.py` 抽检。
 
+进度（2026-11-07）：其余两机停止；三片剩余码合并为 `_review_resume3.txt`
+（**1,605 码**，含 Gilgamesh 未跑完的 161 码），在 Nightwatcher 本机重启
+`tools/run_review_shard.py ... --pct-of-cores 50 --review-timeout 14400`
+（Windows joblib 上限 **61 workers**），日志 `_review_resume3.log`。
+已完成的行由 `missing_targets` 自动跳过；本轮只跑 review，不再启动另外两机。
+
+#### ChipDist 四列（2026-11-06 修复）
+
+* 根因：`hour_extra.chip_cost_by_day` 遇到 960 日窗口内**任一天**缺换手率就
+  整段 `continue` ⇒ 该码 `cost*PrzD` 四列全空（000711 的 2023-12-15 即如此）。
+  已改为**剔除缺日**，不再整段跳过。
+* `tools/backfill_hour_extra.py` 的断点探针漏了 `HOUR_CHIP_COLUMNS`，已补；
+  存量 **60min 缺 898 码 / day 缺 2,605 码**（review 3,934 码）。
+* 补 60min：`python tools/backfill_hour_extra.py --apply --workers 8`
+  （或 `--shard i/3` 三机）；该工具只写 60min，day 列需另跑。
+* 进度（2026-11-07）：两机 `--apply --chip-only` 分片 —
+  **50.204 Gilgamesh** 主分片完成 `ok=364 / skipped=1598 / error=0 /
+  rows=688,947`（3h39m）；**50.38 Babel** 卡在慢码，已停止，剩余 60 个
+  转到 Gilgamesh 补跑，结果 `ok=58 / error=0 / rows=81,089`。
+  全库仍缺 **23** 个码：均为日线 <30 根或换手率 <30 天（如 001381 日线 5 根、
+  920799 换手率仅 20 天），需先补 turnover 才能算 chip，不是回填进程问题。
+  日志 `_chip_only_shard{1,2}.log`、`_chip_rescue61.log`。
+* **正在跑的 review 进程加载的是旧代码**，收尾后仍需 backfill 一遍。
+
 #### 回填结束后第一件事：消除补数与 `--review` 的**编排**平行实现（2026-10-31 挂账）
 
 两侧**算法本体已共用**（`pipeline/review/steps/hour_extra.py` 的
@@ -215,6 +239,26 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 改为交易日 **15:00** ⇒ 选当天**最晚**的检出；日频与非交易日保持原行为
 （`_closest_anchor`，新增 4 条用例）。全量 **900 条测试全绿**。
 
+### ChartScan 日线 Maj 过期被 `ChartScaned` 掩盖（2026-11-06 查明并修复）
+
+**现象**：000711 的日线 `ClsMaj` 在 **2026-09-22** 后不再更新；
+`Class`/`ClsMin` 仍在更新，脚本每天跑也没断。
+
+**根因**：`calc_ChartScaned_persistence` 在 `ChartScaned` 存在时，把
+`all_nat_maj` 覆盖成 `recent['ChartScaned'].isna().all()`。分钟扫描写进日族的
+`ChartScaned=2` 让日线 Maj 被永久判成“已扫”，**`CoordinatesMaj` 过期被忽略**；
+又没有 0/1 行 ⇒ `recent_list=[]` ⇒ `mode=0`，客户端根本不发任务。
+
+**修复（2026-11-06）**：
+* 三套坐标各看各的：`Coordinates` / `CoordinatesMaj` / `CoordinatesMin`；
+* `ChartScaned` 只用于找 0/1 的盘中末端，不再覆盖 `all_nat_maj`；
+* 只有 Maj/Min 过期、基础 60min 坐标仍新时 ⇒ **mode 2 尾巴扫描**（最近交易日），
+  不整段重扫 1,008 天。
+
+**验证**：000711 → `all_nat_maj=True`、`recent=[2026-11-06]`、`mode=2`；
+600519 / 000001 → 仍 `mode=0`（Maj 新鲜）。新增 2 条回归用例：
+`ChartScaned=2 + Maj 过期 → mode 2`、`Maj 新鲜 → mode 0`；全量 **1,062 条 OK**。
+
 **仍未做**：同一根未走完的 bar 每个 pass 会重复扫（无「bar 未前进就跳过」的判断）。
 
 ### XGBoost 迁移（**D61 / D62**）—— ✅ 框架 + compact 生产者，⏳ 训练/落库未做
@@ -279,6 +323,31 @@ mainstream-credits 等模型函数；牛股诊股数据也未搬。
   2026 年 7 月内有 31 根零仓位（07-01 起），见 D79。
 * 事件列（D79 增补）：`PosFull` / `PosFullOnset` / `PosReClear`（清仓暴击，
   ≤4 根内二次清仓）；基准指数默认用**科创50 + 创业板指**，沪深300 仅历史对照。
+
+### QuadrantGear / Mainstream 特征 DAG（D80）—— ✅ 已接入 mainstream
+
+* `analysis/feature_flow.py`：Apache Hamilton（发行包 `apache-hamilton` 1.90，
+  导入名 `hamilton`）列级 DAG。节点：
+  `q60/q15/qd → pwrln(_minor/_major) → qlev_frame → qlev_macd_lag`、
+  `q60/qd → quad_downrisk(_major)`、`zd_lag → prelude_frame`、
+  `ms60/ms_day → ms_leadout(_maj)`、`bs_day → 4 个 BS*BfMaj`，
+  终点 `QuadGear0` / `QuadGear0Bf`（`@extract_columns`）。
+* `MainstreamPipeline.code_features` 已切到 `driver.execute`；新增纯计算方法
+  `_features_from_frames`（三帧进、不取数）。`zDLagD` 只在 prelude 被请求时执行。
+* `calc_quadrant_downrisk_major(..., feat_day=...)` 复用 `qd` ⇒ 日线四象限只算一次；
+  一次 `execute` 内 `calc_four_quadrant_boost` 的 `annual={1008,4032,252}` 各一次。
+* 2026-11-06 第五行改为 `Bu>Sel | QLevCharmOBf<QLev`（**不含 Charm_I**）；
+  新增 `calc_quadrant_leverage_charm` 与 `charm_frame` 节点，Charm_I 只保留
+  为独立特征。000711 01-23 全部 4 根触发；01-22 仍卡在第 3 行
+  （`Bu < QLev`）。
+* 验证：`test_feature_flow.py` 8 条（含与旧手写链逐值对拍）；真实 600519 /
+  as_of=2026-11-04 冒烟 **3.4s / 4,248 行 / 15 列**，`code_masks` 正常；
+  全量 **1,059 条 OK（skipped=1）**。
+* examples 三图已加 `QuadGear0Bf == 0` 的**橙色半透明**触发带
+  （`examples/_gear_bands.py`，默认开；60min 口径）。
+* **下一步**：跨运行缓存（`.with_cache()`）未开启；`--review` / `--compact`
+  不接入 Hamilton（review 已有 `FeatureStep` DAG；compact 是固定 37 列单函数）。
+* 依赖声明在 `cli/bootstrap.py::MIN_PACKAGES`（`hamilton>=1.90`）。
 
 ### OmniPathUpR1Coef* 链（2026-11-02 盘点，待移植）
 

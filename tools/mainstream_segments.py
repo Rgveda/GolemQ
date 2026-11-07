@@ -32,9 +32,7 @@ if _REPO not in sys.path:
 
 from GolemQ import get_active_market
 from GolemQ.analysis.indicators import calc_macd_qa
-from GolemQ.analysis.quadrant_jit import (
-    calc_mainstream_feats, calc_mainstream_leadout_feats,
-)
+from GolemQ.analysis.quadrant_jit import calc_mainstream_feats
 from GolemQ.core.constants import AKA, FIELD as FLD
 from GolemQ.models.alias import LTT
 
@@ -64,7 +62,6 @@ def load_feats(code: str, freq: str, fold: bool):
     feats = pd.DataFrame(index=ohlc.index)
     feats[FLD.MACD] = calc_macd_qa(
         pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce'))[2].to_numpy()
-    feats = calc_mainstream_leadout_feats(ohlc, feats, fold=fold)
     feats = calc_mainstream_feats(ohlc, feats, fold=fold)
     ts = pd.DatetimeIndex(ohlc.index.get_level_values(0))
     close = pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce').to_numpy()

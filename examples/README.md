@@ -22,6 +22,17 @@ streamlit run examples/app_pivot.py
 侧边栏可选：股票代码 / **K 线频率（1、5、15、30、60min）** / 是否显示箱体 / 是否显示
 GG-DD 延伸边界 / 是否加长历史。
 
+⚠️ 可叠加 **Mainstream leadin / leadout 触发标记**：`*_BEFORE < 1e-12`
+（吸筹绿三角 / 派发红倒三角）。**60min 图用日线 MAJOR**（`MsLeadinBfMaj` /
+`MsLeadoutBfMaj`，贴在 15:00 bar），**非 60min 用本频**；标记放在
+**Prophet LB 下方 / UB 上方**（缺 Prophet 时用 low/high 外扩 1%），不压 K 线。
+两族都由 `calc_mainstream_feats` 一次算出（D73）；高价股可勾选 **fold**
+（`close > 10` 取 `log10`），否则 leadout 几乎不触发。
+
+⚠️ 侧边栏还可叠加 **QuadGear0 触发区段**：`QuadGear0Bf == 0` 处画**橙色半透明**
+竖带。信号固定按 **60min / 15min / 日线** 三频计算，所以低频率图按触发时间画带、
+日线图按整日画；计算在 `examples/_gear_bands.py`，三个示例共用。
+
 ### 这条链上有什么
 
 | 环节 | 落点 | 说明 |
@@ -109,6 +120,14 @@ streamlit run examples/app_pivot_renko.py
 ⚠️ **RENKO 只在 60min 可用**：review 的 Renko 14 列只落 `*_reality_feat_60min`
 （D78）。其它频率下 RENKO 开关被禁用、指标卡显示 `—`，页内只显示中枢/笔。
 
+⚠️ 侧边栏还可叠加 **Mainstream leadin / leadout 触发标记**：`*_BEFORE < 1e-12`
+（吸筹绿三角 / 派发红倒三角）。**60min 用日线 MAJOR**，非 60min 用本频；
+标记放在 **Prophet LB 下方 / UB 上方**，不压 K 线；高价股可勾选 **fold**。
+
+⚠️ 侧边栏还可叠加 **QuadGear0 触发区段**：`QuadGear0Bf == 0` 处画**橙色半透明**
+竖带（60min 口径；低频率按触发时间、日线按整日）。计算在
+`examples/_gear_bands.py`，三个示例共用。
+
 ### 它要回答的问题
 
 **两条互不相干的方法，在同一张图上说了什么。**
@@ -193,6 +212,14 @@ streamlit run examples/app_pivot_renko_coef.py
 
 ⚠️ RENKO 两条砖界与 `app_pivot_renko.py` 完全一致：来自 `*_reality_feat_60min`
 （review 的 as-of 落库值，**无后视镜**），只在 60min 可用，本页**不重算**。
+
+⚠️ Mainstream leadin / leadout 触发标记与 `app_pivot_renko.py` 相同：
+`*_BEFORE < 1e-12` 处画标记（60min 用日线 MAJOR，非 60min 用本频），
+放在 Prophet LB 下方 / UB 上方，两族都由 `calc_mainstream_feats` 一次算出（D73）。
+
+⚠️ 侧边栏还可叠加 **QuadGear0 触发区段**：`QuadGear0Bf == 0` 处画**橙色半透明**
+竖带（60min 口径；低频率按触发时间、日线按整日）。计算在
+`examples/_gear_bands.py`，三个示例共用。
 
 ### 上升系数怎么算（**自包含**那条路，2026-10-19 搬）
 

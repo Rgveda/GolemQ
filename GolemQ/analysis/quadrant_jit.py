@@ -19,7 +19,7 @@
 `QLevMACDLagD`          :func:`calc_quadrant_leverage_macd_timing_lag`  `analysis/base.py:2171-2188`
 `ZenPivotLag`           :func:`calc_pivot_timing_lag`                 `analysis/zen_pivot.py:859`
 `QuadBsTukLag`          :func:`calc_quadrant_bs_trunk_timing_lag`      `analysis/quad_gear.py:648`
-`MsLeadinBf`/`x3`/`x5`  :func:`calc_mainstream_feats`                 `analysis/base.py:2638-2676`
+`MsLeadin*` / `MsLeadout*`  :func:`calc_mainstream_feats`            `analysis/base.py:2638-2676` + D73 镜像
 6 个 `BS*Bf*`            :func:`calc_bs_before`                        `base.py:2488` + `models/mainstream.py:1417`
 `BSStarDwn`             :func:`calc_bs_star_down`                     `base.py:2429`（**只搬星线段**）
 `4QuadStDwnCnt`         :func:`calc_quadrant_stardown_count`          `models/mainstream.py:515`
@@ -84,6 +84,11 @@ __all__ = [
     'kdj',
     'calc_four_quadrant_boost',
     'calc_quadrant_leverage_macd_timing_lag',
+    'calc_quadrant_leverage_charm',
+    'calc_quadrant_leverage_negative_timing_lag',
+    'calc_omnipath_leverage_baseline_timing_lag',
+    'calc_fbprophet_lb_uprising_timing_lag',
+    'calc_lineareg_wavelet_uprising_timing_lag',
     'calc_bs_signals',
     'calc_bs_star_down',
     'calc_quadrant_stardown_count',
@@ -91,7 +96,7 @@ __all__ = [
     'calc_quadrant_zen_dash_count',
     'calc_quadrant_bs_trunk_timing_lag',
     'calc_mainstream_feats',
-    'calc_mainstream_leadout_feats',
+    'calc_mainstream_major_feats',
     'calc_bs_before',
     'calc_pivot_timing_lag',
 ]
@@ -553,8 +558,264 @@ def calc_quadrant_leverage_macd_timing_lag(features: pd.DataFrame) -> pd.DataFra
     return features
 
 
-def calc_quadrant_downrisk_major(code: str, ohlc_day: pd.DataFrame,
-                                 index60, annual: int = 252) -> pd.Series:
+def calc_quadrant_leverage_charm(features: pd.DataFrame) -> pd.DataFrame:
+    """`QLevCharmOBf` / `QLevCharmIBf` —— QuadGear0 第五行的两个 OR 辅助分支。
+
+    两者共用四条前置：
+
+    .. code-block:: text
+
+        QLevMACDLagD > 0
+        QuadDwnRskLagMaj < 0
+        (QuadDwnRskLagMaj + QuadDwnRskLag) < 0
+        (QuadDwnRskLagMaj + QLevMACDLagD) < 0
+
+    * **O**：再加 `COST15_PRICE > CLOSE`；
+    * **I**：再加 `QuadDwnRskLag > 0` 且 `QLevPwrlnUprLag >= QuadDwnRskLag`。
+
+    输出是 `Timeline_duration(np.where(cond, 1, 0))`（0 = 当日触发）。
+    ⚠️ `COST15_PRICE` 若缺失会抛 KeyError；调用方应先把 review 的
+    `cost15PrzD` 还原成绝对价（或给 `ohlc` 附上该列）。
+    """
+    need = (LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY,
+            LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR,
+            LTT.QUADRANT_DOWNRISK_TIMING_LAG,
+            LTT.QUADRANT_LEVERAGE_POWERLINE_UPRISING_TIMING_LAG,
+            AKA.COST15_PRICE, AKA.CLOSE)
+    missing = [c for c in need if c not in features.columns]
+    if missing:
+        raise KeyError(f'calc_quadrant_leverage_charm 缺列: {missing}')
+
+    q = features[LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY]
+    dwn_maj = features[LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR]
+    dwn = features[LTT.QUADRANT_DOWNRISK_TIMING_LAG]
+    pwr = features[LTT.QUADRANT_LEVERAGE_POWERLINE_UPRISING_TIMING_LAG]
+
+    common = ((q > 1e-12) & (dwn_maj < -1e-12)
+              & ((dwn_maj + dwn) < -1e-12)
+              & ((dwn_maj + q) < -1e-12))
+    charm_o = common & (features[AKA.COST15_PRICE] > features[AKA.CLOSE])
+    charm_i = common & (dwn > 1e-12) & (pwr >= dwn)
+
+    features[LTT.QUADRANT_LEVERAGE_CHARM_O_BEFORE] = Timeline_duration(
+        np.where(charm_o, 1, 0))
+    features[LTT.QUADRANT_LEVERAGE_CHARM_I_BEFORE] = Timeline_duration(
+        np.where(charm_i, 1, 0))
+    return features
+
+
+def calc_fbprophet_lb_uprising_timing_lag(
+        features: pd.DataFrame) -> pd.DataFrame:
+    """`fbpLUpRsgLagDmy` —— 旧树 `fbprophet.py:197/233` 的**降级版**。
+
+    旧式 candidate 还带 MANIFEST/POLY9/METAPHASE/REGTREE 过滤，DUMMY 还 OR
+    了 `CVaR_PEAK_PRICE_TIMING_LAG`；这些输入新树没有 producer。本实现只保留
+    主条件 `prophetLbMaj > prophetLb`，并令 DUMMY = timing lag。
+
+    需要 `prophetLbMaj` / `prophetLb`（review attach 后是无后缀绝对价；
+    compact 单独没有 Prophet 列 ⇒ 会抛 KeyError，由调用方降级）。
+
+    >>> f = pd.DataFrame({
+    ...     FLD.FBPROPHET_LB_MAJOR: [2, 2, 1],
+    ...     FLD.FBPROPHET_LB: [1, 1, 2]})
+    >>> calc_fbprophet_lb_uprising_timing_lag(
+    ...     f)[FLD.FBPROPHET_LB_UPRISING_TIMING_LAG_DUMMY].tolist()
+    [1, 2, -1]
+    """
+    need = (FLD.FBPROPHET_LB_MAJOR, FLD.FBPROPHET_LB)
+    missing = [c for c in need if c not in features.columns]
+    if missing:
+        raise KeyError(f'fbpLUpRsgLagDmy 缺列: {missing}')
+    up = features[FLD.FBPROPHET_LB_MAJOR] > features[FLD.FBPROPHET_LB]
+    features[FLD.FBPROPHET_LB_UPRISING_CANDIDATE] = np.where(up, 1.0, np.nan)
+    lag = calc_event_timing_lag(np.where(up, 1, -1))
+    features[FLD.FBPROPHET_LB_UPRISING_TIMING_LAG] = lag
+    features[FLD.FBPROPHET_LB_UPRISING_TIMING_LAG_DUMMY] = lag
+    return features
+
+
+def calc_lineareg_wavelet_uprising_timing_lag(
+        features: pd.DataFrame) -> pd.DataFrame:
+    """`LnarWavUprLagCand` —— 旧树 `models/rail.py:2230` 的**降级版**。
+
+    旧式 `CHOSEN_TRIGGER_EXPECTED_LINEAREG_LB` 依赖
+    `MASSIVE_XGB_ECHO_UPRISING_BEFORE`；XGB echo 缺失时它退化为
+    `CHOSEN_TRIGGER_LB_MAJOR = ATR_LB_MAJOR.ffill()`。本实现直接用
+    `ATR_LB_MAJOR < close`，优先 major、缺则回落 `ATR_LB`。
+
+    >>> f = pd.DataFrame({FLD.ATR_LB_MAJOR: [1, 1, 5],
+    ...                   AKA.CLOSE: [2, 2, 2]})
+    >>> calc_lineareg_wavelet_uprising_timing_lag(
+    ...     f)[LTT.LINEAREG_WAVELET_UPRISING_TIMING_LAG_CANDIDATE].tolist()
+    [1, 2, -1]
+    """
+    col = (FLD.ATR_LB_MAJOR if FLD.ATR_LB_MAJOR in features.columns
+           else FLD.ATR_LB)
+    if col not in features.columns:
+        raise KeyError(f'LnarWavUprLagCand 缺列: {FLD.ATR_LB_MAJOR}/{FLD.ATR_LB}')
+    if AKA.CLOSE not in features.columns:
+        raise KeyError(f'LnarWavUprLagCand 缺列: {AKA.CLOSE}')
+    features[LTT.LINEAREG_WAVELET_UPRISING_TIMING_LAG_CANDIDATE] = \
+        calc_event_timing_lag(np.where(
+            features[col] < features[AKA.CLOSE], 1, -1))
+    return features
+
+
+def calc_omnipath_leverage_baseline_timing_lag(
+        features: pd.DataFrame) -> pd.DataFrame:
+    """`OmniPathLeverBslLag` —— 旧树 `analysis/base.py:1008-1014`。
+
+    必需输入（均为 compact 现在能产出的列）：
+    `DIF_NORM_TIMING_LAG_MAJOR` / `DEA_NORM_TIMING_LAG_MAJOR` /
+    `MTM_NORM_TIMING_LAG_MAJOR` / `3QUprLag`。
+
+    可选输入（缺失时对应项**降级**，不是静默 NaN）：
+    * `fbpLUpRsgLagDmy`（`FBPROPHET_LB_UPRISING_TIMING_LAG_DUMMY`）——
+      缺：DIF 分支只保留 `3QUprLag + DIF` 这一项；
+    * `LnarWavUprLagCand`（`LINEAREG_WAVELET_UPRISING_TIMING_LAG_CANDIDATE`）——
+      缺：DEA/MTM 分支去掉 `candidate + lag >= 0` 因子。
+
+    >>> f = pd.DataFrame({
+    ...     FLD.DIF_NORM_TIMING_LAG_MAJOR: [1, 1, 1],
+    ...     FLD.DEA_NORM_TIMING_LAG_MAJOR: [0, 0, 0],
+    ...     FLD.MTM_NORM_TIMING_LAG_MAJOR: [0, 0, 0],
+    ...     LTT.THREE_QUADRANT_UPRISING_TIMING_LAG: [1, 1, 1]})
+    >>> calc_omnipath_leverage_baseline_timing_lag(
+    ...     f)[TRD.OMNIPATH_LEVERAGE_BASELINE_TIMING_LAG].tolist()
+    [1, 2, 3]
+
+    **只做算术，不写库、不被管线调用**（与 `calc_mainstream_feats` 同）。
+    """
+    need = (FLD.DIF_NORM_TIMING_LAG_MAJOR, FLD.DEA_NORM_TIMING_LAG_MAJOR,
+            FLD.MTM_NORM_TIMING_LAG_MAJOR,
+            LTT.THREE_QUADRANT_UPRISING_TIMING_LAG)
+    missing = [c for c in need if c not in features.columns]
+    if missing:
+        raise KeyError(f'OmniPathLeverBslLag 缺列: {missing}')
+    dif = features[FLD.DIF_NORM_TIMING_LAG_MAJOR]
+    dea = features[FLD.DEA_NORM_TIMING_LAG_MAJOR]
+    mtm = features[FLD.MTM_NORM_TIMING_LAG_MAJOR]
+    three = features[LTT.THREE_QUADRANT_UPRISING_TIMING_LAG]
+    if FLD.FBPROPHET_LB_UPRISING_TIMING_LAG_DUMMY not in features.columns:
+        try:
+            features = calc_fbprophet_lb_uprising_timing_lag(features)
+        except KeyError:
+            pass
+    if LTT.LINEAREG_WAVELET_UPRISING_TIMING_LAG_CANDIDATE not in features.columns:
+        try:
+            features = calc_lineareg_wavelet_uprising_timing_lag(features)
+        except KeyError:
+            pass
+    fbp = features.get(FLD.FBPROPHET_LB_UPRISING_TIMING_LAG_DUMMY)
+    lnar = features.get(LTT.LINEAREG_WAVELET_UPRISING_TIMING_LAG_CANDIDATE)
+
+    dif_ok = (dif > 0.00168) & (dif >= dea)
+    if fbp is not None:
+        dif_ok = dif_ok & (((three + dif) >= 0) | ((fbp + dif) >= 0))
+    else:
+        dif_ok = dif_ok & ((three + dif) >= 0)
+    if lnar is not None:
+        dea_ok = (dea > 0.00168) & ((lnar + dea) >= 0)
+        mtm_ok = (mtm > 0.00168) & ((lnar + mtm) >= 0)
+    else:
+        dea_ok = (dea > 0.00168)
+        mtm_ok = (mtm > 0.00168)
+    cond = dif_ok | dea_ok | mtm_ok
+    features[TRD.OMNIPATH_LEVERAGE_BASELINE_TIMING_LAG] = calc_event_timing_lag(
+        np.where(cond, 1, -1))
+    return features
+
+
+def calc_quadrant_leverage_negative_timing_lag(
+        features: pd.DataFrame) -> pd.DataFrame:
+    """`QLevMACDLagD` 的**结构反函数**（新树自造；用户 2026-11-03 点名）。
+
+    做法同 `calc_mainstream_feats` 的吸筹/派发镜像：
+    **换输入/条件结构**，不是对正列取负（`-QLevMACDLagD` 那种不算）。
+
+    * 上行能量 `powerline + 3.78 > 0.00168` → 下行 `powerline - 4.18 < -0.00168`；
+    * 上行 `EngLagD = event_lag(EngD > 1.6e-5 ? +1 : -1)` →
+      下行 `EngNegLagD = event_lag(EngNegD < -1.6e-5 ? -1 : +1)`；
+    * 上行 `(inner_major + EngLagD) > 1e-12` →
+      下行 `(inner_major_neg + EngNegLagD) < -1e-12`；
+    * 最后 `event_lag(cond ? -1 : +1)`。
+
+    **门控（2026-11-03 补）**：旧树第二趟用
+    `(QLevEngLagD > 0.000168) & (OmniPathLeverBslLag + QLevEngLagD > 4.000168)
+    & (raw_neg > -4.168)` 把负列重置为 +1（`base.py:2200-2203`）。新树已用
+    :func:`calc_omnipath_leverage_baseline_timing_lag` 补出 baseline（compact 的
+    `difNormLagMaj` / `deaNormLagMaj` / `mtmNormLagMaj` + `3QUprLag`）。
+
+    ⚠️ **旧门控单独用不窄**：`raw_neg > -4.168` 只重置负段前 4 根，600519 实测
+    1,945（比无门控 1,852 还宽）。因此最终门控是
+    `旧门控 | (QLevMACDLagD > 4)` —— 正列连涨 4 根以上时强制回正；
+    实测 600519 负段 **700**、000711 **474**，仍**包含全部**正列负段。
+
+    >>> f = pd.DataFrame({
+    ...     LTT.QUADRANT_POWERLINE_MINOR: [-5.0] * 3,
+    ...     LTT.QUADRANT_POWERLINE: [-5.0] * 3,
+    ...     LTT.QUADRANT_POWERLINE_MAJOR: [-5.0] * 3,
+    ...     FLD.MACD_DELTA_MAJOR: [-1.0] * 3})
+    >>> calc_quadrant_leverage_negative_timing_lag(
+    ...     f)[LTT.QUADRANT_LEVERAGE_NEGATIVE_TIMING_LAG].tolist()
+    [-1, -2, -3]
+
+    **只做算术，不写库、不被管线调用**（与 `calc_mainstream_feats` 同）。
+    """
+    features = calc_quadrant_leverage_macd_timing_lag(features)
+    features = features.reindex(
+        columns=list(set([
+            *features.columns,
+            *[LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_MINOR,
+              LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE,
+              LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_MAJOR,
+              LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_DUMMY,
+              LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_NEGATIVE_DUMMY,
+              LTT.QUADRANT_LEVERAGE_NEGATIVE_TIMING_LAG]])))
+    features[LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_MINOR] = calc_energy(np.where(
+        ((features[LTT.QUADRANT_POWERLINE_MINOR] - 4.18) < -0.00168),
+        (features[LTT.QUADRANT_POWERLINE_MINOR] - 4.18), 0)) / 16
+    features[LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE] = calc_energy(np.where(
+        ((features[LTT.QUADRANT_POWERLINE] - 4.18) < -0.00168),
+        (features[LTT.QUADRANT_POWERLINE] - 4.18), 0)) / 4
+    features[LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_MAJOR] = calc_energy(np.where(
+        ((features[LTT.QUADRANT_POWERLINE_MAJOR] - 4.18) < -0.00168),
+        (features[LTT.QUADRANT_POWERLINE_MAJOR] - 4.18), 0))
+    features[LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_DUMMY] = (
+        features[LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_MINOR] +
+        features[LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE] +
+        features[LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_MAJOR])
+    features[LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_NEGATIVE_DUMMY] = \
+        calc_event_timing_lag(np.where(
+            (features[LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_DUMMY] < -0.0000168),
+            -1, 1))
+    # 旧树第二趟门控（base.py:2200-2203）：优先用 OmniPathLeverBslLag；
+    # 核心列缺失时退化为 `QLevMACDLagD > 4` 代理。
+    try:
+        features = calc_omnipath_leverage_baseline_timing_lag(features)
+        eng = features[LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY]
+        raw_neg = features[LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_NEGATIVE_DUMMY]
+        reset = ((eng > 0.000168) &
+                 ((features[TRD.OMNIPATH_LEVERAGE_BASELINE_TIMING_LAG] + eng)
+                  > 4.000168) &
+                 (raw_neg > -4.168))
+        # ⚠️ 旧门控本体只重置**负段前 4 根**（`raw_neg > -4.168`），单独用不窄
+        # （600519 实测 1,945）；与 `QLevMACDLagD > 4` 并联后才收窄到 700。
+        reset = reset | (features[
+            LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY] > 4)
+    except KeyError:
+        reset = features[LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY] > 4
+    sig = np.where(reset, 1, np.where(
+        features[LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_DUMMY] < -0.0000168,
+        -1, 1))
+    features[LTT.QUADRANT_LEVERAGE_NEGATIVE_TIMING_LAG] = calc_event_timing_lag(
+        sig)
+    return features
+
+
+def calc_quadrant_downrisk_major(code: str, ohlc_day: pd.DataFrame | None,
+                                 index60, annual: int = 252, *,
+                                 feat_day: pd.DataFrame | None = None) -> pd.Series:
     """`QuadDwnRskLagMaj` —— 日线下行风险 lag，广播到 60min 后再编码。
 
     旧树：`GolemQ_old/models/mainstream.py:1163`（日线 `calc_four_quadrant_boost`,
@@ -568,13 +829,19 @@ def calc_quadrant_downrisk_major(code: str, ohlc_day: pd.DataFrame,
 
     :param ohlc_day: 单只标的日线 OHLC（`calc_four_quadrant_boost` 需要 open/high/low/close）
     :param index60: 目标 60min 时间索引
+    :param feat_day: 已算好的日线四象限帧（含 `QuadDwnRskLag`）。给了它就不
+        再跑 `calc_four_quadrant_boost` —— `feature_flow` 让 `qd` 节点只算一次。
+        `feat_day` 与 `ohlc_day` 至少给一个；两者都给时以 `feat_day` 为准。
     """
     from GolemQ.analysis.mainstream_timing import broadcast_daily_to_60min
 
-    feat = pd.DataFrame(index=ohlc_day.index)
-    feat = calc_four_quadrant_boost(code=code, features=feat,
-                                    ohlc_data=ohlc_day, annual=annual)
-    daily = feat[LTT.QUADRANT_DOWNRISK_TIMING_LAG]
+    if feat_day is None:
+        if ohlc_day is None:
+            raise ValueError('calc_quadrant_downrisk_major 需要 ohlc_day 或 feat_day')
+        feat_day = calc_four_quadrant_boost(
+            code=code, features=pd.DataFrame(index=ohlc_day.index),
+            ohlc_data=ohlc_day, annual=annual)
+    daily = feat_day[LTT.QUADRANT_DOWNRISK_TIMING_LAG]
     v = broadcast_daily_to_60min(daily, index60)
     return pd.Series(
         calc_event_timing_lag(np.where(v.to_numpy() > 1e-19, 1, -1)),
@@ -896,10 +1163,15 @@ def _mainstream_before(ohlc: pd.DataFrame, features: pd.DataFrame,
 
 def calc_mainstream_feats(ohlc: pd.DataFrame, features: pd.DataFrame,
                           fold: bool = False) -> pd.DataFrame:
-    """主力资金吸筹 —— 产出 `MsLeadinBf` / `MsLeadinx3Bf` / `MsLeadinx5Bf`。
+    """主力资金**吸筹 + 派发** —— 一次产出两族各 6 列。
 
-    逐字搬自老树 `analysis/base.py:2569-2687`（VAR1..VAR5 → Entry/Shakeout 链，
-    加 KDJ_J / MACD 两个判据）。
+    * 吸筹 `MsLeadin*`：逐字搬自老树 `analysis/base.py:2569-2687`
+      （VAR1..VAR5 → Entry/Shakeout 链，加 KDJ_J / MACD 两个判据）；
+    * 派发 `MsLeadout*`：同一套 `_mainstream_pressure` / `_mainstream_before`
+      内核的 HIGH 侧镜像（D73，新树自造）。
+
+    ⚠️ 用户 2026-11-05：两族都归本函数；不再单独保留
+    `calc_mainstream_leadout_feats`（平行的公开入口只会分叉）。
 
     ⚠️ **一处刻意偏离**：老树在 `if LTT.BS_BUY_BEFORE not in features.columns:` 时
     会调 `calc_bs_signals(...)`（星线检测链）**顺带产出 BS_* 列**。那条链不在本模块
@@ -939,38 +1211,10 @@ def calc_mainstream_feats(ohlc: pd.DataFrame, features: pd.DataFrame,
         ohlc, features, features[LTT.MAINSTREAM_LEADIN_ENTRY],
         features[LTT.MAINSTREAM_LEADIN_SHAKEOUT], rising=True,
         mult=5, first=0.832, fold=fold)
-    return features
 
-
-def calc_mainstream_leadout_feats(ohlc: pd.DataFrame,
-                                  features: pd.DataFrame,
-                                  fold: bool = False) -> pd.DataFrame:
-    """主力**派发/出货**（下跌指示）—— :func:`calc_mainstream_feats` 的镜像。
-
-    **新树自造**（老树没有这个指标）：把吸筹口径的
-    `LOW / LLV(LOW,33) / 向下偏离` 换成 `HIGH / HHV(HIGH,33) / 向上偏离`，
-    KDJ 与 MACD 判据同步反向；系数（0.618 / 0.382 / 0.168 / 3 / 5 / 0.832）
-    逐字镜像，便于与原指标并排比较。
-
-    产出 6 列（与 `MAINSTREAM_LEADIN_*` 一一对应）：
-
-    ==============================  ==================================
-    `MsLeadoutVar5`                 镜像 VAR5（高位抛压强度）
-    `MsLeadoutEntry`                派发：VAR5 环比**上升**的一段
-    `MsLeadoutSko`                  反抽：VAR5 环比**下降**的一段
-    `MsLeadoutBf` / `x3Bf` / `x5Bf` `Timeline_duration`（0 = 刚触发）
-    ==============================  ==================================
-
-    ⚠️ **原样镜像，未校准**（用户 2026-10-29 决定退回 D73 口径）：
-    `ENTRY > close*0.618` 是绝对价位量纲，高价股几乎不触发 —— 这是已知的
-    老公式缺陷。本函数只做算术，**不写库、不被管线调用**。
-
-    `fold=True` ⇒ 阈值里的 `close` 走 :func:`fold_high_price`（股价 > 10 折成
-    `log10`），价格量纲不再压死高价股。**默认 `False`**（与 D73 逐字镜像一致）。
-    """
-    features = _ensure_kdj(ohlc, features)
-
-    # "计算主力派发指标"（VAR1..VAR5 的高位镜像）
+    # ---- 主力派发（LEADOUT）：与吸筹同一趟、同一套 `_mainstream_*` 内核 ----
+    # 用户 2026-11-05：leadin / leadout 都归 `calc_mainstream_feats`，不再单独
+    # 留公开入口（平行的公开入口只会分叉）。
     var5, distrib, rebound = _mainstream_pressure(ohlc, 'high')
     features = features.reindex(
         columns=list(set([
@@ -996,6 +1240,26 @@ def calc_mainstream_leadout_feats(ohlc: pd.DataFrame,
         features[LTT.MAINSTREAM_LEADOUT_SHAKEOUT], rising=False,
         mult=5, first=0.832, fold=fold)
     return features
+
+
+def calc_mainstream_major_feats(ohlc_day: pd.DataFrame,
+                                fold: bool = False) -> pd.DataFrame:
+    """日线 MAJOR 版：在**日线帧**上跑 `calc_mainstream_feats`，额外产出
+    `MsLeadinBfMaj` / `MsLeadoutBfMaj` 两个常量列。
+
+    示例页把这两列按日期贴到 60min 的 15:00 bar 上做标记（D73）；本函数只做
+    算术 + 改名，不写库。`fold` 与基础版同义。
+    """
+    if ohlc_day is None or len(ohlc_day) == 0:
+        return pd.DataFrame()
+    from GolemQ.analysis.indicators import calc_macd_qa
+    f = pd.DataFrame(index=ohlc_day.index)
+    f[FLD.MACD] = calc_macd_qa(
+        pd.to_numeric(ohlc_day[AKA.CLOSE], errors='coerce'))[2]
+    out = calc_mainstream_feats(ohlc_day, f, fold=fold)
+    out[LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR] = out[LTT.MAINSTREAM_LEADIN_BEFORE]
+    out[LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR] = out[LTT.MAINSTREAM_LEADOUT_BEFORE]
+    return out
 
 
 def calc_bs_before(features: pd.DataFrame) -> pd.DataFrame:

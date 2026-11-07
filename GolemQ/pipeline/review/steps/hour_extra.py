@@ -372,7 +372,13 @@ def chip_cost_by_day(day: pd.DataFrame, targets, code: str, turnover=None):
         if turnover is not None:
             w[FLD.TURNOVER_RATE] = turnover.reindex(w.index)
             if w[FLD.TURNOVER_RATE].isna().any():
-                continue
+                # ⚠️ 缺**个别交易日**换手率时，从窗口里剔除那一天，不要整段
+                # `continue`。960 根窗口少 1~2 天对成本分布影响可忽略；整段
+                # 跳过会让该码所有 target 都没有 cost*PrzD（000711 因为
+                # 2023-12-15 缺换手率，2026 年的四个成本列全空）。
+                w = w[w[FLD.TURNOVER_RATE].notna()]
+                if len(w) < 30:
+                    continue
         close = pd.to_numeric(w[AKA.CLOSE], errors='coerce')
         rng = float(close.max() - close.min())
         adj = (100.0 if rng > 648 else 50.0 if rng > 262 else

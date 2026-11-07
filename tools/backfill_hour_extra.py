@@ -1,5 +1,5 @@
 # coding: utf-8
-"""给已有 review **60min 行**补 `se` / `ZenPivotCnt`（D78：从日族改回 60min）。
+"""给已有 review **60min 行**补 `se` / `ZenPivotCnt` / `ChipDist` 四列。
 
 口径与 `pipeline/review/steps/zen.py` 完全一致（直接复用
 `steps/hour_extra.py` 的 `sample_entropy_by_day` / `pivot_counts`）：
@@ -106,12 +106,61 @@ def day_sample_frame(code: str, targets: pd.DatetimeIndex):
     return out
 
 
+def _chip_frame(market, code: str, targets: pd.DatetimeIndex,
+                close_ts: pd.Series) -> pd.DataFrame:
+    """只算 ChipDist 四列（60min 行，÷本 bar close）。
+
+    抽出来是为了 `--chip-only` 能跳过 se/pivot/renko/native —— 898 个码的
+    chip 回填不需要把已经有的列再算一遍。
+    """
+    from GolemQ.core.constants import AKA as _AKA
+    from GolemQ.markets.StockCN.refdata import (
+        GQ_fetch_stock_reality_feat_day)
+    from GolemQ.pipeline.review.contract import HOUR_CHIP_COLUMNS
+    from GolemQ.pipeline.review.steps.hour_extra import chip_cost_by_day
+
+    idx = pd.MultiIndex.from_arrays(
+        [targets, [str(code)] * len(targets)], names=['ts', 'code'])
+    vals = np.full((len(targets), len(HOUR_CHIP_COLUMNS)), np.nan)
+    try:
+        dres, _ = market.get_kline_price_v3(
+            code, start=ANCHOR, end=str(targets.max().date()),
+            realtime=False, verbose=False)
+        day = None if dres is None else getattr(dres, 'data', None)
+        if day is not None and len(day) >= 30:
+            _tr = GQ_fetch_stock_reality_feat_day(
+                str(code), start=str(day.index.get_level_values(0)[0].date()),
+                end=str(targets.max().date()), columns=[_AKA.TURNOVER])
+            turnover = None if (_tr is None or len(_tr) == 0) else _tr[_AKA.TURNOVER]
+            if turnover is not None:
+                chip_days, chip_df = chip_cost_by_day(
+                    day, targets, str(code), turnover=turnover)
+                if len(chip_days):
+                    p = chip_days.searchsorted(targets, side='right') - 1
+                    for i, pp in enumerate(p):
+                        if pp < 0:
+                            continue
+                        cT = close_ts.get(targets[i], np.nan)
+                        if not (cT and np.isfinite(cT)):
+                            continue
+                        rowc = chip_df.iloc[pp]
+                        for k, src in enumerate(('cost5Prz', 'cost15Prz',
+                                                 'cost85Prz', 'cost95Prz')):
+                            vals[i, k] = rowc.get(src, np.nan) / cT
+    except Exception:               # noqa: BLE001 单码失败留空
+        pass
+    return pd.DataFrame(vals, index=idx, columns=list(HOUR_CHIP_COLUMNS))
+
+
 def compute_frame(code: str, targets: pd.DatetimeIndex,
-                  verbose: bool = False) -> pd.DataFrame:
+                  verbose: bool = False,
+                  chip_only: bool = False) -> pd.DataFrame:
     """按 targets 算 60min 一体化行里的**增量列**。
 
     一次算完：`se` + `ZenPivotCnt` + Renko 14 + M9T 2（60min 原生，2160 as-of）
     + 日族 14（从日表采样，不重算 Poly9/RegTree）。
+
+    ``chip_only=True``：只算 `HOUR_CHIP_COLUMNS` 四列，跳过上面全部列。
     """
     from GolemQ import get_active_market
     from GolemQ.pipeline.review.contract import (DAY_SAMPLE_COLUMNS,
@@ -131,6 +180,11 @@ def compute_frame(code: str, targets: pd.DatetimeIndex,
     idx = pd.MultiIndex.from_arrays([targets, [str(code)] * len(targets)],
                                     names=['ts', 'code'])
     frame = pd.DataFrame(index=idx)
+    close_ts = pd.Series(
+        pd.to_numeric(ohlc['close'], errors='coerce').to_numpy(),
+        index=pd.DatetimeIndex(pd.to_datetime(ohlc.index.get_level_values(0))))
+    if chip_only:
+        return _chip_frame(market, code, targets, close_ts)
 
     se_days, se_vals = sample_entropy_by_day(ohlc, targets)
     piv_days, piv_df = pivot_stats(ohlc, targets, code)
@@ -152,9 +206,6 @@ def compute_frame(code: str, targets: pd.DatetimeIndex,
     # Renko：2160 as-of 快照；价格列按目标行 close 转 *D
     rk_days, rk_df = renko_by_day(ohlc, targets)
     dummy = {d: b for b, d in RENKO_PRICE_DUMMIES}
-    close_ts = pd.Series(
-        pd.to_numeric(ohlc['close'], errors='coerce').to_numpy(),
-        index=pd.DatetimeIndex(pd.to_datetime(ohlc.index.get_level_values(0))))
     rk_vals = np.full((len(targets), len(RENKO_DAY_COLUMNS)), np.nan)
     if len(rk_days):
         p = rk_days.searchsorted(targets, side='right') - 1
@@ -184,40 +235,8 @@ def compute_frame(code: str, targets: pd.DatetimeIndex,
         nat_vals, index=idx, columns=list(HOUR_NATIVE_COLUMNS))], axis=1)
 
     # ChipDist：960 根日线窗口、逐日 as-of（调用层补 adj 缩放；≈0.9s/天）
-    chip = np.full((len(targets), len(HOUR_CHIP_COLUMNS)), np.nan)
-    try:
-        from GolemQ.markets.StockCN.refdata import (
-            GQ_fetch_stock_reality_feat_day)
-        from GolemQ.pipeline.review.steps.hour_extra import chip_cost_by_day
-        from GolemQ.core.constants import AKA as _AKA
-        dres, _ = market.get_kline_price_v3(
-            code, start=ANCHOR, end=str(targets.max().date()),
-            realtime=False, verbose=False)
-        day = None if dres is None else getattr(dres, 'data', None)
-        if day is not None and len(day) >= 30:
-            _tr = GQ_fetch_stock_reality_feat_day(
-                str(code), start=str(day.index.get_level_values(0)[0].date()),
-                end=str(targets.max().date()), columns=[_AKA.TURNOVER])
-            turnover = None if (_tr is None or len(_tr) == 0) else _tr[_AKA.TURNOVER]
-            if turnover is not None:
-                chip_days, chip_df = chip_cost_by_day(
-                    day, targets, str(code), turnover=turnover)
-                if len(chip_days):
-                    p = chip_days.searchsorted(targets, side='right') - 1
-                    for i, pp in enumerate(p):
-                        if pp < 0:
-                            continue
-                        cT = close_ts.get(targets[i], np.nan)
-                        if not (cT and np.isfinite(cT)):
-                            continue
-                        rowc = chip_df.iloc[pp]
-                        for k, src in enumerate(('cost5Prz', 'cost15Prz',
-                                                 'cost85Prz', 'cost95Prz')):
-                            chip[i, k] = rowc.get(src, np.nan) / cT
-    except Exception:               # noqa: BLE001
-        pass
-    frame = pd.concat([frame, pd.DataFrame(
-        chip, index=idx, columns=list(HOUR_CHIP_COLUMNS))], axis=1)
+    frame = pd.concat([frame, _chip_frame(market, code, targets, close_ts)],
+                      axis=1)
 
     # 日族采样（不重算）。⚠️ chip 4 列**必须排除**：它们上面已按 60min 行 close
     # 算好，日表里的同名比值（÷当日 close）不能覆盖它。
@@ -237,28 +256,45 @@ def compute_frame(code: str, targets: pd.DatetimeIndex,
 
 
 def backfill_code(code: str, apply: bool, since: str = '',
-                  verbose: bool = False, redo: bool = False) -> dict:
+                  verbose: bool = False, redo: bool = False,
+                  chip_only: bool = False) -> dict:
     """补一个码；返回统计。异常不抛出（单码失败不该拖垮整批）。
 
     `apply=True` 且 `redo=False` 时**跳过已经有 `se` 的码**（断点续跑）。
     """
     try:
-        if apply and not redo:
-            from GolemQ.markets.StockCN.reality_save import reality_feat_name
-            name = reality_feat_name('60min', _market_type(code))
-            # 只有**全部新列**都已有值才算完成（旧版只写了 se/piv，不能跳过）
-            probe = {'code': str(code), 'se': {'$ne': None},
-                     'ZenPivotCnt': {'$ne': None},
-                     'renkoSbar': {'$ne': None},
-                     'poly9D': {'$ne': None},
-                     'rTrePrcD': {'$ne': None},
-                     'poly9MajD': {'$ne': None}}
-            if _db()[name].find_one(probe, {'_id': 1}):
-                return {'code': code, 'status': 'skipped'}
         targets = target_datetimes(code, since=since)
         if len(targets) == 0:
             return {'code': code, 'status': 'no_targets'}
-        frame = compute_frame(code, targets, verbose=verbose)
+        if apply and not redo:
+            from GolemQ.markets.StockCN.reality_save import reality_feat_name
+            from GolemQ.pipeline.review.contract import HOUR_CHIP_COLUMNS
+            name = reality_feat_name('60min', _market_type(code))
+            # 只有**全部新列**都已有值才算完成（旧版只写了 se/piv，不能跳过）。
+            # ⚠️ 2026-11-06：补上 ChipDist 四列 —— 此前 probe 漏了它们，
+            # 导致「se/piv/renko 都有、cost*PrzD 全空」的码被误判为完成，
+            # 全库 898 个码因此没补上（000711 就是其中之一）。
+            if chip_only:
+                # chip 可能只有部分日期已补（000711 01-22/23 就是手工补的），
+                # 不能用 find_one；按「target 行数 vs 已有 cost15PrzD 行数」判。
+                q = {'code': str(code), 'cost15PrzD': {'$ne': None}}
+                if since:
+                    q['datetime'] = {'$gte': str(since)}
+                if _db()[name].count_documents(q) >= len(targets):
+                    return {'code': code, 'status': 'skipped'}
+            else:
+                probe = {'code': str(code), 'se': {'$ne': None},
+                         'ZenPivotCnt': {'$ne': None},
+                         'renkoSbar': {'$ne': None},
+                         'poly9D': {'$ne': None},
+                         'rTrePrcD': {'$ne': None},
+                         'poly9MajD': {'$ne': None}}
+                for c in HOUR_CHIP_COLUMNS:
+                    probe[c] = {'$ne': None}
+                if _db()[name].find_one(probe, {'_id': 1}):
+                    return {'code': code, 'status': 'skipped'}
+        frame = compute_frame(code, targets, verbose=verbose,
+                              chip_only=chip_only)
         if frame.empty:
             return {'code': code, 'status': 'no_kline'}
         stats = {'code': code, 'status': 'ok', 'rows': len(frame)}
@@ -338,6 +374,8 @@ def main(argv=None):
                         help='清理日表的 Renko 14 列（D78：Renko 只落 60min）')
     parser.add_argument('--redo', action='store_true',
                         help='重算已有 se 的码（默认跳过 = 断点续跑）')
+    parser.add_argument('--chip-only', action='store_true',
+                        help='只补 ChipDist 四列（跳过 se/pivot/renko/native）')
     parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args(argv)
 
@@ -363,12 +401,12 @@ def main(argv=None):
         from joblib import Parallel, delayed
         results = Parallel(n_jobs=args.workers, backend='loky')(
             delayed(backfill_code)(c, args.apply, args.since, args.verbose,
-                                   args.redo)
+                                   args.redo, args.chip_only)
             for c in codes)
     else:
         for i, c in enumerate(codes, 1):
             r = backfill_code(c, args.apply, args.since, args.verbose,
-                              args.redo)
+                              args.redo, args.chip_only)
             results.append(r)
             if i % 100 == 0:
                 print(f'  … {i}/{len(codes)}  ({time.time() - t0:.0f}s)')

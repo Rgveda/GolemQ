@@ -285,7 +285,7 @@ class TestFormulaWiring(unittest.TestCase):
 
 
 class TestMainstreamLeadout(unittest.TestCase):
-    """`calc_mainstream_leadout_feats` —— 吸筹的镜像（D73，新树自造）。"""
+    """`calc_mainstream_feats` 的 leadout 族 —— 吸筹的镜像（D73，新树自造）。"""
 
     @staticmethod
     def _ohlc(n=400, seed=7):
@@ -304,7 +304,7 @@ class TestMainstreamLeadout(unittest.TestCase):
         ohlc, idx = self._ohlc()
         f = pd.DataFrame(index=idx)
         f[_C.FIELD.MACD] = np.random.default_rng(1).standard_normal(len(idx))
-        out = NEW.calc_mainstream_leadout_feats(ohlc, f)
+        out = NEW.calc_mainstream_feats(ohlc, f)
         for col in (LTT.MAINSTREAM_LEADOUT_VAR5,
                     LTT.MAINSTREAM_LEADOUT_ENTRY,
                     LTT.MAINSTREAM_LEADOUT_SHAKEOUT,
@@ -322,7 +322,7 @@ class TestMainstreamLeadout(unittest.TestCase):
         ohlc, idx = self._ohlc(seed=11)
         f = pd.DataFrame(index=idx)
         f[_C.FIELD.MACD] = np.random.default_rng(2).standard_normal(len(idx))
-        out = NEW.calc_mainstream_leadout_feats(ohlc, f)
+        out = NEW.calc_mainstream_feats(ohlc, f)
         both = ((out[LTT.MAINSTREAM_LEADOUT_ENTRY] != 0) &
                 (out[LTT.MAINSTREAM_LEADOUT_SHAKEOUT] != 0))
         self.assertFalse(both.any())
@@ -333,8 +333,8 @@ class TestMainstreamLeadout(unittest.TestCase):
         macd = np.random.default_rng(3).standard_normal(len(idx))
         f_full = pd.DataFrame({_C.FIELD.MACD: macd}, index=idx)
         f_head = f_full.iloc[:300].copy()
-        full = NEW.calc_mainstream_leadout_feats(ohlc, f_full)
-        head = NEW.calc_mainstream_leadout_feats(ohlc.iloc[:300].copy(), f_head)
+        full = NEW.calc_mainstream_feats(ohlc, f_full)
+        head = NEW.calc_mainstream_feats(ohlc.iloc[:300].copy(), f_head)
         for col in (LTT.MAINSTREAM_LEADOUT_VAR5, LTT.MAINSTREAM_LEADOUT_ENTRY,
                     LTT.MAINSTREAM_LEADOUT_SHAKEOUT,
                     LTT.MAINSTREAM_LEADOUT_BEFORE,
@@ -357,8 +357,8 @@ class TestMainstreamLeadout(unittest.TestCase):
         ohlc, idx = self._ohlc(seed=7)
         f = pd.DataFrame(index=idx)
         f[_C.FIELD.MACD] = np.random.default_rng(1).standard_normal(len(idx))
-        raw = NEW.calc_mainstream_leadout_feats(ohlc, f.copy())
-        folded = NEW.calc_mainstream_leadout_feats(ohlc, f.copy(), fold=True)
+        raw = NEW.calc_mainstream_feats(ohlc, f.copy())
+        folded = NEW.calc_mainstream_feats(ohlc, f.copy(), fold=True)
         self.assertEqual(int((raw[LTT.MAINSTREAM_LEADOUT_BEFORE] == 0).sum()), 0)
         self.assertGreater(
             int((folded[LTT.MAINSTREAM_LEADOUT_BEFORE] == 0).sum()), 0)
@@ -369,7 +369,7 @@ class TestMainstreamLeadout(unittest.TestCase):
         f = pd.DataFrame(index=idx)
         f[_C.FIELD.MACD] = np.random.default_rng(4).standard_normal(len(idx))
         leadin = NEW.calc_mainstream_feats(ohlc, f.copy())
-        leadout = NEW.calc_mainstream_leadout_feats(ohlc, f.copy())
+        leadout = NEW.calc_mainstream_feats(ohlc, f.copy())
         self.assertFalse(np.allclose(
             leadin[LTT.MAINSTREAM_LEADIN_VAR5].fillna(0),
             leadout[LTT.MAINSTREAM_LEADOUT_VAR5].fillna(0)))

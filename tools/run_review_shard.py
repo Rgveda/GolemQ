@@ -1,5 +1,12 @@
 # coding: utf-8
-"""按**代码清单文件**跑 `--review`（多机回填用的短命令行启动器）。
+"""按**代码清单文件**跑 `--review`（多机**冷启动缺码**回填的短命令行启动器）。
+
+⚠️ **补已有码的 review 尾巴不要用本工具。** 代码清单只含「完全没有 review
+行」的冷启动码；已 review 过的码（如 000711）不在清单里，会被漏掉。补尾巴
+直接跑 scope 级 review（`persistence.missing_targets` 会自动只算缺的 bar）：
+
+    python -m GolemQ.cli --review --eval all
+    python -m GolemQ.cli --review --eval 000711
 
 为什么不直接把代码塞进 `--eval`：完整 `etc+fast` 缺口有 3,140 个 6 位代码，
 拼成一行约 22 KB，超过 `cmd.exe` 的 8,191 字符上限；分 3 片后每片仍有 7 KB
@@ -31,7 +38,8 @@ if _REPO not in sys.path:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description='按代码文件跑 review（多机回填）')
-    p.add_argument('file', help='每行一个 6 位代码的 UTF-8 文件')
+    p.add_argument('file', help='每行一个 6 位代码的 UTF-8 文件（仅冷启动缺码；'
+                                '补尾巴请用 --review --eval <scope>）')
     p.add_argument('--pct-of-cores', type=float, default=0.5,
                    help='CPU 百分比（>1）或比例（0~1）；默认 0.5')
     p.add_argument('--review-timeout', type=int, default=4 * 60 * 60,

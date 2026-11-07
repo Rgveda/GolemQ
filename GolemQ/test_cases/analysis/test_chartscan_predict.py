@@ -324,6 +324,58 @@ class TestPersistenceReadsAcrossFamilies(unittest.TestCase):
         self.assertIn('Coordinates', out.columns)
         self.assertIn('CoordinatesMin', out.columns)
 
+    @staticmethod
+    def _recent_frame(maj_current: bool):
+        # ⚠️ 必须用**最后一个交易日**，不能用墙上时间：周末 `_last_day` 落在
+        # 周六时，`reindex` 会补一根空行，`ChartScaned=2` 被误判成 recent_list。
+        from GolemQ.markets.StockCN.date_utils import GQ_util_get_last_day
+        today = pd.Timestamp(GQ_util_get_last_day()).normalize()
+        dates = pd.bdate_range(today - pd.Timedelta(days=10), today)
+        idx = pd.MultiIndex.from_product([dates, ['000711']],
+                                         names=['date', 'code'])
+        ms = [d.timestamp() * 1000 for d in dates]
+        return today, pd.DataFrame({
+            'Coordinates': ms,
+            'CoordinatesMin': ms,
+            'CoordinatesMaj': ms if maj_current else np.nan,
+            'ChartScaned': 2,
+        }, index=idx)
+
+    def test_chartscanned2_but_maj_stale_is_mode_2(self):
+        """ChartScaned=2 只说明扫过；CoordinatesMaj 过期时仍要排尾巴扫描。
+
+        旧实现把 `all_nat_maj` 覆盖成 `ChartScaned.isna().all()` ⇒ 000711
+        的 `ClsMaj` 在 2026-09-22 后断掉（mode=0，脚本每天跑也不补）。
+        """
+        from GolemQ.analysis.cv import predict
+        today, frame = self._recent_frame(maj_current=False)
+        with mock.patch('GolemQ.markets.StockCN.reality_save.fetch_reality_feat',
+                        return_value=frame), \
+                mock.patch.object(predict, '_last_day', return_value=today):
+            meta = predict.calc_ChartScaned_persistence(
+                '000711', market_type='stock_cn', ret_metadata=True)
+            req = predict.calc_ChartScaned_persistence(
+                '000711', market_type='stock_cn')
+
+        self.assertFalse(meta[0], '基础 60min 坐标是新的')
+        self.assertTrue(meta[1], '日线 Maj 坐标应被判为过期')
+        self.assertFalse(meta[2], '15min 坐标是新的')
+        self.assertTrue(meta[3], '应给出尾巴扫描日期')
+        self.assertEqual(req[2], 2, '只补尾巴，不应 mode=0 或全扫')
+        self.assertEqual(pd.Timestamp(req[3]).normalize(), today)
+        self.assertEqual(pd.Timestamp(req[4]).normalize(), today)
+
+    def test_chartscanned2_with_current_maj_stays_mode_0(self):
+        """Maj 也新鲜时不要无谓重扫。"""
+        from GolemQ.analysis.cv import predict
+        today, frame = self._recent_frame(maj_current=True)
+        with mock.patch('GolemQ.markets.StockCN.reality_save.fetch_reality_feat',
+                        return_value=frame), \
+                mock.patch.object(predict, '_last_day', return_value=today):
+            req = predict.calc_ChartScaned_persistence(
+                '000711', market_type='stock_cn')
+        self.assertEqual(req[2], 0)
+
 
 class TestHeadlessRendering(unittest.TestCase):
     """⚠️ 多线程服务端 + matplotlib **GUI 后端** = 每个标的都静默渲染失败。

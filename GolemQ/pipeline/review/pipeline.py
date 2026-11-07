@@ -20,6 +20,7 @@ from typing import Dict, Iterable, List, Optional, Sequence
 import pandas as pd
 
 from GolemQ.core.constants import MARKET_TYPE
+from GolemQ.markets.StockCN.date_utils import GQ_util_last_trade_as_of
 from GolemQ.pipeline.base import BasePipeline, CodeResult
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, StepRunner,
                                    TIER_DAILY, TIER_RUNTIME, target_times)
@@ -201,7 +202,7 @@ class ReviewPipeline(BasePipeline):
     # ------------------------------------------------------------------ #
     def run_code(self, code: str, **kwargs) -> CodeResult:
         as_of = pd.Timestamp(kwargs.get('as_of') or self.options.offset or
-                             pd.Timestamp.now())
+                             GQ_util_last_trade_as_of())
         market_type = self.market_type_of(code)
         families = tuple(self.options.families)
         # 「库名不外泄」：pipeline 不拼库名，只从 **Active Market** 取实例，

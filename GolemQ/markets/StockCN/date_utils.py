@@ -76,6 +76,16 @@ def GQ_util_get_last_day(ts: dt = None, n: int = 0) -> dt:
     return tradedate_until_today[-1]
 
 
+def GQ_util_last_trade_as_of() -> pd.Timestamp:
+    """最后一个交易日 **15:00**（批处理/回填的默认截止时间）。
+
+    与 `GQ_util_get_last_day()` 的区别只在时间部分：后者是 00:00，直接拿它
+    当 `as_of` 会把当日 15:00 的 bar 排除在外。所有 batch/review/backfill
+    的默认截止都走这里，**不要**再写 `pd.Timestamp.now()` 或硬编码日期。
+    """
+    return pd.Timestamp(GQ_util_get_last_day()) + pd.Timedelta(hours=15)
+
+
 def GQ_util_if_tradetime(
     _time=dt.now(), market=MARKET_TYPE.STOCK_CN, code=None
 ):

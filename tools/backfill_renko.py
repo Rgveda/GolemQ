@@ -33,6 +33,7 @@ if _REPO not in sys.path:
 from GolemQ import get_active_market
 from GolemQ.analysis.renko_jit import (available,
                                        renko_trend_cross_func_jit)
+from GolemQ.markets.StockCN.date_utils import GQ_util_last_trade_as_of
 from GolemQ.core.constants import AKA
 from GolemQ.markets.StockCN.reality_save import (reality_feat_name,
                                                  save_reality_feat)
@@ -171,7 +172,7 @@ def main():
         print('没有代码：用 --codes 或 --partial')
         return 2
 
-    as_of = pd.Timestamp(args.as_of) if args.as_of else pd.Timestamp.now()
+    as_of = pd.Timestamp(args.as_of) if args.as_of else GQ_util_last_trade_as_of()
     print('{} {} 个代码 as_of={} apply={}'.format(
         'PARTIAL' if args.partial else 'CODES', len(codes), as_of, args.apply))
     t0 = time.time()

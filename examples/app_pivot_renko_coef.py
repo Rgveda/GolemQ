@@ -56,6 +56,9 @@ import sys
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+_EX = os.path.dirname(os.path.abspath(__file__))
+if _EX not in sys.path:
+    sys.path.insert(0, _EX)
 
 import numpy as np
 import pandas as pd
@@ -70,9 +73,14 @@ from GolemQ.analysis.pivot import (
     bi_confirm_map, bi_list_to_points, calc_pivots, classify_pivots,
     pivots_to_df, plot_pivots_plotly,
 )
+from GolemQ.analysis.compact import _map_causal
+from GolemQ.analysis.quadrant_jit import (calc_mainstream_feats,
+                                          calc_mainstream_major_feats)
 from GolemQ.analysis.reality_attach import attach_reality_feats
 from GolemQ.core.constants import AKA, FIELD as FLD
 from GolemQ.models.alias import LTT
+
+from _gear_bands import add_gear_bands, gear_o_before
 
 FREQS = {
     'day': (Freq.D, 'day', 900),
@@ -115,6 +123,16 @@ with st.sidebar:
     show_signal = st.checkbox("RENKO：RENKO_BAR 信号", value=True,
                               disabled=not _renko_freq_ok)
     show_coef = st.checkbox("上升系数", value=True)
+
+    st.divider()
+    show_leadin = st.checkbox("Mainstream：吸筹 leadin 触发", value=True)
+    show_leadout = st.checkbox("Mainstream：派发 leadout 触发", value=True)
+    fold_mainstream = st.checkbox(
+        "高价股折叠（fold）", value=False,
+        help="D73：阈值按绝对价位算，>10 元的高价股未折叠时 leadout 几乎不触发")
+    show_gear_o = st.checkbox(
+        "QuadGear0：橙色触发区段", value=True,
+        help="QuadGear0Bf == 0（O 档触发）；信号固定为 60min 口径")
 
     st.divider()
     st.caption("RENKO 列来自 `*_reality_feat_60min`（`--review` 的 as-of 产出），"
@@ -191,7 +209,6 @@ def _macd_cross_sx_before(ohlc):
 
 def _leadin_x5(ohlc):
     """15min 的 `MsLeadinx5Bf`（新树 `analysis/quadrant_jit.py::calc_mainstream_feats`）。"""
-    from GolemQ.analysis.quadrant_jit import calc_mainstream_feats
     feats = pd.DataFrame(index=ohlc.index)
     feats[FLD.MACD] = _qa_macd(ohlc)[2].to_numpy()
     feats = calc_mainstream_feats(ohlc, feats)
@@ -297,8 +314,9 @@ def _calc_coef(code: str, ohlc, bi_list):
 
 
 @st.cache_data(show_spinner=False, ttl=600)
-def load(symbol: str, frequency: str, long_history: bool):
-    """取数 → RENKO 特征 → czsc 分笔 → 中枢 → （若已生产）上升系数。"""
+def load(symbol: str, frequency: str, long_history: bool,
+         fold_mainstream: bool = False):
+    """取数 → RENKO 特征 → czsc 分笔 → 中枢 → （若已生产）上升系数 + Mainstream。"""
     freq_enum, kind, lookback_days = FREQS[frequency]
     market = get_active_market()
     if kind == 'day':
@@ -314,6 +332,25 @@ def load(symbol: str, frequency: str, long_history: bool):
     ohlc = d.data.tail(MAX_BARS)
     if ohlc.empty:
         return pd.DataFrame(), name, None
+
+    # ---- Mainstream 吸筹/派发（两族都在 `calc_mainstream_feats` 里算）----
+    _f = pd.DataFrame(index=ohlc.index)
+    _f[FLD.MACD] = _qa_macd(ohlc)[2]
+    ms = calc_mainstream_feats(ohlc, _f, fold=fold_mainstream)
+
+    # 60min 图另取日线算 MAJOR 版；非 60min 用本频
+    ms_major = None
+    if frequency == '60min':
+        _ts0 = pd.Timestamp(pd.to_datetime(
+            ohlc.index.get_level_values(0)).min())
+        _dstart = str((_ts0 - pd.Timedelta(days=900)).date())
+        _res, _ = market.get_kline_price_v3(
+            symbol, start=_dstart, end=str(pd.Timestamp.now().date()),
+            realtime=True, verbose=False)
+        _day = None if _res is None else getattr(_res, 'data', None)
+        if _day is not None and len(_day):
+            ms_major = calc_mainstream_major_feats(
+                _day, fold=fold_mainstream)
 
     # ---- RENKO 列：attach `*_reality_feat_60min`（as-of，无后视镜）----
     # ⚠️ 只读落库值，**不**在页面上跑 `renko_trend_cross_func` —— 那是整段历史
@@ -356,11 +393,12 @@ def load(symbol: str, frequency: str, long_history: bool):
                          'high': [b.high for b in bars],
                          'low': [b.low for b in bars],
                          'close': [b.close for b in bars]}), name, (
-        feats, pivots, cls, bi_points, coef, coef_err, renko_ok, renko_err)
+        feats, pivots, cls, bi_points, coef, coef_err, renko_ok, renko_err,
+        ms, ms_major)
 
 
 try:
-    df, name, bundle = load(symbol, frequency, long_history)
+    df, name, bundle = load(symbol, frequency, long_history, fold_mainstream)
 except Exception as exc:                            # noqa: BLE001
     st.error(f"数据加载失败：{exc}")
     st.stop()
@@ -372,7 +410,32 @@ if bundle is None or df.empty:
     st.warning(f"{symbol} 的 K 线不足 30 根 —— 三条方法都算不出来。")
     st.stop()
 
-feats, pivots, cls, bi_points, coef, coef_err, renko_ok, renko_err = bundle
+feats, pivots, cls, bi_points, coef, coef_err, renko_ok, renko_err, ms, \
+    ms_major = bundle
+
+gear_bf = gear_o_before(symbol) if show_gear_o else None
+
+_use_major = (frequency == '60min' and ms_major is not None
+              and len(ms_major) > 0)
+
+
+def _major_values(major_col):
+    """日线 MAJOR 列按日期因果映射到当前 60min 帧（15:00 用当日）。"""
+    s = pd.to_numeric(ms_major[major_col], errors='coerce').copy()
+    s.index = pd.DatetimeIndex(
+        pd.to_datetime(s.index.get_level_values(0))).normalize()
+    s = s.groupby(level=0).last()
+    return _map_causal(s, ms.index).to_numpy()
+
+
+def _trigger_mask(col, major_col):
+    if _use_major and major_col in ms_major.columns:
+        ts = pd.DatetimeIndex(pd.to_datetime(df['dt']))
+        return ((ts.hour == 15) & (ts.minute == 0)
+                & (_major_values(major_col) < 1e-12))
+    if col not in ms.columns:
+        return np.zeros(len(df), dtype=bool)
+    return pd.to_numeric(ms[col], errors='coerce').to_numpy() < 1e-12
 
 
 def _last_int(col: str):
@@ -417,6 +480,17 @@ if renko_ok:
 else:
     st.caption(f"标的：{_label} · {frequency} · 末个中枢：**{_last_kind}** · "
                "RENKO 列不可用（见下方说明）")
+
+_li = int(_trigger_mask(LTT.MAINSTREAM_LEADIN_BEFORE,
+                        LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR).sum())
+_lo = int(_trigger_mask(LTT.MAINSTREAM_LEADOUT_BEFORE,
+                        LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR).sum())
+_mode = '日线 MAJOR' if _use_major else '本频'
+st.caption(f"Mainstream（{_mode}）：leadin {_li} 次 / leadout {_lo} 次"
+           f"（fold={fold_mainstream}；标记在 Prophet LB 下方 / UB 上方）")
+if _lo == 0 and not fold_mainstream:
+    st.info("leadout 触发为 0：D73 的阈值按绝对价位算，>10 元的高价股"
+            "未折叠时几乎不触发；勾选侧边栏「高价股折叠（fold）」再看。")
     if renko_err:
         st.warning(f"attach `*_reality_feat_60min` 失败：`{renko_err}`")
     elif frequency != RENKO_FREQ:
@@ -434,6 +508,13 @@ fig.add_trace(go.Candlestick(
     increasing_line_color='red', increasing_fillcolor='red',
     decreasing_line_color='green', decreasing_fillcolor='green',
     name='K线'))
+
+# QuadGear0 触发区段（橙色）
+if show_gear_o and gear_bf is not None:
+    _runs = add_gear_bands(fig, gear_bf, frequency=frequency)
+    if _runs:
+        st.caption(f"橙色背景：`QuadGear0Bf < 1e-12`（O 档触发，"
+                   f"{len(_runs)} 段；60min 口径）")
 
 if show_bi:
     fig.add_trace(go.Scatter(
@@ -472,6 +553,47 @@ if renko_ok and show_signal and FLD.RENKO_TREND in feats.columns:
             fig.add_trace(go.Scatter(
                 x=df['dt'][m], y=close[m], mode='markers', name=nm,
                 marker=dict(symbol=sym, size=8, color=col, opacity=0.75)))
+
+# Mainstream leadin / leadout：60min 用日线 MAJOR，非 60min 用本频
+def _marker_y(side):
+    """标记 y：吸筹在 Prophet LB / low 下方，派发在 UB / high 上方。"""
+    close = pd.to_numeric(df['close'], errors='coerce').to_numpy(float)
+    low = pd.to_numeric(df['low'], errors='coerce').to_numpy(float)
+    high = pd.to_numeric(df['high'], errors='coerce').to_numpy(float)
+    lb = np.full(len(df), np.nan)
+    ub = np.full(len(df), np.nan)
+    if frequency == '60min' and feats is not None:
+        for name, arr in (('prophetLb', lb), ('prophetUb', ub)):
+            if name in feats.columns:
+                arr[:] = pd.to_numeric(feats[name], errors='coerce').to_numpy()
+    pad = np.maximum(close * 0.01, (ub - lb) * 0.15)
+    pad = np.where(np.isfinite(pad) & (pad > 0), pad, close * 0.01)
+    if side == 'up':
+        base = np.maximum(np.where(np.isfinite(ub), ub, high), high)
+        return base + pad
+    base = np.minimum(np.where(np.isfinite(lb), lb, low), low)
+    return base - pad
+
+
+def _add_mainstream_triggers(col, major_col, label, color, symbol, side):
+    mask = _trigger_mask(col, major_col)
+    if mask.any():
+        y = _marker_y(side)
+        fig.add_trace(go.Scatter(
+            x=df['dt'].to_numpy()[mask], y=y[mask],
+            mode='markers', name=label,
+            marker=dict(symbol=symbol, size=10, color=color,
+                        line=dict(width=1, color='white'))))
+
+
+if show_leadin:
+    _add_mainstream_triggers(
+        LTT.MAINSTREAM_LEADIN_BEFORE, LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR,
+        'leadin（吸筹）', '#2ca02c', 'triangle-up', 'down')
+if show_leadout:
+    _add_mainstream_triggers(
+        LTT.MAINSTREAM_LEADOUT_BEFORE, LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR,
+        'leadout（派发）', '#d62728', 'triangle-down', 'up')
 
 # ---- 上升系数：**叠在主图的副轴**上（matplotlib 的 `ax3 = ax1.twinx()` 对应 Plotly 的 `yaxis='y2'`）----
 # 参考 `OneWaveQuant/.../calc_4quad_poolcoef-bs-stage-of-zen.ipynb`：
@@ -536,3 +658,19 @@ with st.expander("RENKO 特征明细（末 200 行）"):
         st.dataframe(feats[cols].tail(200), width='stretch')
     else:
         st.caption("当前频率没有 Renko 落库列（只有 60min 表有）。")
+
+with st.expander("Mainstream leadin / leadout 明细（末 200 行）"):
+    _detail = ms_major if _use_major else ms
+    _ms_cols = [c for c in (
+        LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR, LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR,
+        LTT.MAINSTREAM_LEADIN_VAR5, LTT.MAINSTREAM_LEADIN_ENTRY,
+        LTT.MAINSTREAM_LEADIN_SHAKEOUT, LTT.MAINSTREAM_LEADIN_BEFORE,
+        LTT.MAINSTREAM_LEADINx3_BEFORE, LTT.MAINSTREAM_LEADINx5_BEFORE,
+        LTT.MAINSTREAM_LEADOUT_VAR5, LTT.MAINSTREAM_LEADOUT_ENTRY,
+        LTT.MAINSTREAM_LEADOUT_SHAKEOUT, LTT.MAINSTREAM_LEADOUT_BEFORE,
+        LTT.MAINSTREAM_LEADOUTx3_BEFORE, LTT.MAINSTREAM_LEADOUTx5_BEFORE,
+    ) if _detail is not None and c in _detail.columns]
+    if _ms_cols:
+        st.dataframe(_detail[_ms_cols].tail(200), width='stretch')
+    else:
+        st.caption("没有 Mainstream 列（数据不足）。")

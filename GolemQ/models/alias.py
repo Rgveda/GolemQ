@@ -13,6 +13,12 @@ class LTT:
     QUADRANT_ZEN_DASH_COUNT = '4QuadZenDCnt'
     ONE_QUADRANT_UPRISING_TIMING_LAG_MAJOR = '1QUprLagMaj'
     QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY = 'QLevMACDLagD'
+    #: QuadGear0 第五行的两个 Charm 辅助分支（2026-11-06 用户定；新树自造）。
+    QUADRANT_LEVERAGE_CHARM_O_BEFORE = 'QLevCharmOBf'
+    QUADRANT_LEVERAGE_CHARM_I_BEFORE = 'QLevCharmIBf'
+    #: `QLevMACDLagD` 的**反函数**（新树自造；镜像其下行能量链）。
+    #: ⚠️ 用户原名 `..._NEGITIVE_...` 拼写错误，按 `NEGATIVE` 落。
+    QUADRANT_LEVERAGE_NEGATIVE_TIMING_LAG = 'QLevMACDLagNeg'
     QUADRANT_M9T_DEADPOOL_COUNT = '4QuadM9TDpCnt'
     QUADRANT_LEVERAGE_POWERLINE_UPRISING_TIMING_LAG = 'QLevPwrlnUprLag'
     TWO_QUADRANT_UPRISING_TIMING_LAG_MAJOR = '2QUprLagMaj'
@@ -49,6 +55,12 @@ class LTT:
     QUADRANT_LEVERAGE_ENERGY_MAJOR = 'QLevEngMaj'
     QUADRANT_LEVERAGE_ENERGY_DUMMY = 'QLevEngD'
     QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY = 'QLevEngLagD'
+    #: 下行（负）能量族 —— 旧树 `analysis/base.py:2189-2203` 的真值。
+    QUADRANT_LEVERAGE_ENERGY_NEGATIVE_MINOR = 'QLevEngNegMin'
+    QUADRANT_LEVERAGE_ENERGY_NEGATIVE = 'QLevEngNeg'
+    QUADRANT_LEVERAGE_ENERGY_NEGATIVE_MAJOR = 'QLevEngNegMaj'
+    QUADRANT_LEVERAGE_ENERGY_NEGATIVE_DUMMY = 'QLevEngNegD'
+    QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_NEGATIVE_DUMMY = 'QLevEngNegLagD'
     #: 星线死叉计数（老树 `models/alias.py:1168`；`models/mainstream.py:515` 产出）。
     QUADRANT_STARDOWN_COUNT = '4QuadStDwnCnt'
     QUADRANT_POWERLINE_LEADIN = '4QPwrlnLeIn'
@@ -68,6 +80,15 @@ class LTT:
     #: 「全局智能仓位」的两个前奏计数（旧树 `analysis/mainstream.py:348-360`）。
     QUADRANT_PRELUDE_UPRISING_BEFORE = 'QuadPreUprBf'
     QUADRANT_PRELUDE_ENDPOINT_BEFORE = 'QuadPreEpBf'
+    #: 旧树 `models/alias.py:1154` 的真值；**新树暂无 producer**
+    #: （用户 2026-11-05 计划重做，旧树生产/消费在 `analysis/mainstream.py:294/388`）。
+    QUADRANT_PRELUDE_PRE_BEFORE = 'QuadPrePreBf'
+    #: QuadrantGear（旧树 `analysis/quad_gear.py` 的重做；值沿用旧树 alias）。
+    QUADRANT_GEAR = 'QuadGear'
+    QUADRANT_GEAR_O = 'QuadGear0'
+    QUADRANT_GEAR_O_BEFORE = 'QuadGear0Bf'
+    #: 旧树 `models/alias.py:864` 的真值；`OmniPathLeverBslLag` 的可选输入。
+    LINEAREG_WAVELET_UPRISING_TIMING_LAG_CANDIDATE = 'LnarWavUprLagCand'
     QUADRANT_STATUS = 'QuadSt'
     CHOBITS = 'ChoBits'
     QUADRANT_CODEX = 'QuadCodex'
@@ -83,7 +104,7 @@ class LTT:
     MAINSTREAM_LEADIN_SHAKEOUT = 'MsLeadinSko'
     MAINSTREAM_LEADINx3_BEFORE = 'MsLeadinx3Bf'
     MAINSTREAM_LEADINx5_BEFORE = 'MsLeadinx5Bf'
-    #: 主力**派发/出货**（下跌指示）—— `calc_mainstream_leadout_feats` 的镜像族。
+    #: 主力**派发/出货**（下跌指示）—— `calc_mainstream_feats` 的镜像族。
     #: **新树自造**（老树没有），与 `MAINSTREAM_LEADIN_*` 一一对应；命名沿用老树
     #: `QUADRANT_POWERLINE_LEADOUT` 的 lead-out 习惯。尚未进 review 契约/落库。
     MAINSTREAM_LEADOUT_VAR5 = 'MsLeadoutVar5'
@@ -92,6 +113,9 @@ class LTT:
     MAINSTREAM_LEADOUT_BEFORE = 'MsLeadoutBf'
     MAINSTREAM_LEADOUTx3_BEFORE = 'MsLeadoutx3Bf'
     MAINSTREAM_LEADOUTx5_BEFORE = 'MsLeadoutx5Bf'
+    #: 日线 MAJOR 版（`calc_mainstream_major_feats` 在日线帧上算，示例里贴到 60min）。
+    MAINSTREAM_LEADIN_BEFORE_MAJOR = 'MsLeadinBfMaj'
+    MAINSTREAM_LEADOUT_BEFORE_MAJOR = 'MsLeadoutBfMaj'
     BS_REF_LINE = 'BSRefLn'
     BS_BORDER_LINE = 'BSBrdLn'
     BS_BUY = 'BSBu'
@@ -155,6 +179,8 @@ class TRD:
     OMNIPATH_UPRISING_I_COEF_CANDIDATE = 'OmniPathUpR1CoefCan'
     OMNIPATH_UPRISING_I_COEF_UPRISING_TIMING_LAG = 'OmniPathUpR1CoefLag'
     UNIVERSAL_CLEARANCE_ENERGY = 'UniClrEng'
+    #: 旧树 `analysis/base.py:1008` 的 baseline timing-lag（值逐字取自旧树）。
+    OMNIPATH_LEVERAGE_BASELINE_TIMING_LAG = 'OmniPathLeverBslLag'
 
 
 class ZEN:

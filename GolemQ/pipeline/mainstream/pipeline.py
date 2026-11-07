@@ -19,15 +19,9 @@ from typing import Iterable, List, Optional
 import numpy as np
 import pandas as pd
 
-from GolemQ.analysis.indicators import calc_macd_qa
-from GolemQ.analysis.mainstream_timing import (broadcast_daily_to_60min,
-                                               calc_prelude_before,
-                                               calc_zen_dash_causal)
 from GolemQ.analysis.position import calc_position_flags, calc_position_series
-from GolemQ.analysis.quadrant_jit import (calc_four_quadrant_boost,
-                                          calc_quadrant_downrisk_major,
-                                          calc_quadrant_leverage_macd_timing_lag)
 from GolemQ.core.constants import FIELD as FLD
+from GolemQ.markets.StockCN.date_utils import GQ_util_last_trade_as_of
 from GolemQ.models.alias import LTT
 from GolemQ.pipeline.base import BasePipeline, CodeResult
 
@@ -96,53 +90,62 @@ class MainstreamPipeline(BasePipeline):
         return f60, f15, fd
 
     # ------------------------------------------------------------------ #
+    def _features_from_frames(self, code: str, f60, f15, fd, *,
+                              window: Optional[int] = None):
+        """三帧 → 60min 特征帧。纯计算，不取数（供 `code_features` 与对拍）。
+
+        走 `analysis/feature_flow.py` 的 Hamilton DAG：`q60/q15/qd` 各算一次，
+        `quad_downrisk_major` 复用 `qd`，`zDLagD` 只在 prelude 被请求时执行。
+        """
+        if f60 is None or len(f60) < 262 or fd is None or len(fd) < 262:
+            return None
+        if f15 is None or len(f15) < 262:
+            return None
+
+        from GolemQ.analysis import feature_flow as ff
+        dr = ff.build_driver()
+        out = dr.execute(
+            ['pwrln', 'pwrln_minor', 'pwrln_major', 'macd_delta_major',
+             'qlev_frame', 'quad_downrisk', 'quad_downrisk_major',
+             'zd_lag', LTT.QUADRANT_PRELUDE_UPRISING_BEFORE,
+             LTT.QUADRANT_PRELUDE_ENDPOINT_BEFORE],
+            inputs={'code': str(code), 'ohlc60': f60, 'ohlc15': f15,
+                    'ohlc_day': fd,
+                    'window': int(window or self.zen_window)})
+        q = out['qlev_frame']
+        return pd.DataFrame({
+            LTT.QUADRANT_POWERLINE: out['pwrln'],
+            LTT.QUADRANT_POWERLINE_MINOR: out['pwrln_minor'],
+            LTT.QUADRANT_POWERLINE_MAJOR: out['pwrln_major'],
+            FLD.MACD_DELTA_MAJOR: out['macd_delta_major'],
+            LTT.QUADRANT_LEVERAGE_ENERGY_MINOR:
+                q[LTT.QUADRANT_LEVERAGE_ENERGY_MINOR],
+            LTT.QUADRANT_LEVERAGE_ENERGY: q[LTT.QUADRANT_LEVERAGE_ENERGY],
+            LTT.QUADRANT_LEVERAGE_ENERGY_MAJOR:
+                q[LTT.QUADRANT_LEVERAGE_ENERGY_MAJOR],
+            LTT.QUADRANT_LEVERAGE_ENERGY_DUMMY:
+                q[LTT.QUADRANT_LEVERAGE_ENERGY_DUMMY],
+            LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY:
+                q[LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_DUMMY],
+            LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY:
+                q[LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY],
+            LTT.QUADRANT_DOWNRISK_TIMING_LAG: out['quad_downrisk'],
+            LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR: out['quad_downrisk_major'],
+            FLD.ZEN_DASH_TIMING_LAG_DUMMY: out['zd_lag'],
+            LTT.QUADRANT_PRELUDE_UPRISING_BEFORE:
+                out[LTT.QUADRANT_PRELUDE_UPRISING_BEFORE],
+            LTT.QUADRANT_PRELUDE_ENDPOINT_BEFORE:
+                out[LTT.QUADRANT_PRELUDE_ENDPOINT_BEFORE],
+        }, index=f60.index)
+
     def code_features(self, code: str, as_of: Optional[pd.Timestamp] = None):
         """单码 → 60min 特征帧（含 `QuadPreUprBf` / `QuadPreEpBf` / `zDLagD`）。
 
         供 `code_masks` 与逐值对拍共用（不另写一套）。
         """
-        as_of = pd.Timestamp(as_of or pd.Timestamp.now())
+        as_of = pd.Timestamp(as_of or GQ_util_last_trade_as_of())
         f60, f15, fd = self._fetch(code, as_of)
-        if f60 is None or len(f60) < 262 or fd is None or len(fd) < 262:
-            return None
-        if f15 is None or len(f15) < 262:
-            return None
-        idx60 = _dt_index(f60.index)
-
-        q60 = calc_four_quadrant_boost(code=code,
-                                       features=pd.DataFrame(index=f60.index),
-                                       ohlc_data=f60, annual=1008)
-        q15 = calc_four_quadrant_boost(code=code,
-                                       features=pd.DataFrame(index=f15.index),
-                                       ohlc_data=f15, annual=4032)
-        qd = calc_four_quadrant_boost(code=code,
-                                      features=pd.DataFrame(index=fd.index),
-                                      ohlc_data=fd, annual=252)
-
-        p15 = q15[LTT.QUADRANT_POWERLINE]
-        p15.index = _dt_index(p15.index)
-        p15 = p15[~p15.index.duplicated(keep='last')]
-        minor = p15.reindex(idx60)
-
-        p_maj = broadcast_daily_to_60min(
-            pd.Series(qd[LTT.QUADRANT_POWERLINE].to_numpy(), index=qd.index),
-            idx60)
-        _, _, macd = calc_macd_qa(fd['close'])
-        mdelta = broadcast_daily_to_60min(macd.diff(1), idx60)
-
-        feat = pd.DataFrame(index=f60.index)
-        feat[LTT.QUADRANT_POWERLINE] = q60[LTT.QUADRANT_POWERLINE]
-        feat[LTT.QUADRANT_POWERLINE_MINOR] = minor.to_numpy()
-        feat[LTT.QUADRANT_POWERLINE_MAJOR] = p_maj.to_numpy()
-        feat[FLD.MACD_DELTA_MAJOR] = mdelta.to_numpy()
-        feat = calc_quadrant_leverage_macd_timing_lag(feat)
-        feat[LTT.QUADRANT_DOWNRISK_TIMING_LAG] = \
-            q60[LTT.QUADRANT_DOWNRISK_TIMING_LAG]
-        feat[LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR] = \
-            calc_quadrant_downrisk_major(code, fd, f60.index).to_numpy()
-        feat[FLD.ZEN_DASH_TIMING_LAG_DUMMY] = \
-            calc_zen_dash_causal(f60, code).to_numpy()
-        return calc_prelude_before(feat, window=self.zen_window)
+        return self._features_from_frames(code, f60, f15, fd)
 
     def code_masks(self, code: str, as_of: Optional[pd.Timestamp] = None):
         """单码 → `(ts, bull, bear)` 三个等长数组（只含可判定 bar）。
@@ -282,7 +285,7 @@ class MainstreamPipeline(BasePipeline):
     def run_market(self, codes: Iterable[str], as_of=None,
                    pool_size: int = 0) -> pd.DataFrame:
         """全市场横截面 → 每根 60min bar 的仓位行。"""
-        as_of = pd.Timestamp(as_of or pd.Timestamp.now())
+        as_of = pd.Timestamp(as_of or GQ_util_last_trade_as_of())
         codes = [str(c) for c in codes]
         timeline = self.market_timeline(as_of)
         chunks = [codes[i:i + CHUNK_SIZE] for i in range(0, len(codes), CHUNK_SIZE)]

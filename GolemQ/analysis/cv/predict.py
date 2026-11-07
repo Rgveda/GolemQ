@@ -225,14 +225,22 @@ def GQ_markup_ChartScaned(code, kline_data, market_type, verbose=False,
 
 
 def GQ_predict_ChartScanAI(code: str = '300085', market_type=MARKET_TYPE.STOCK_CN,
-                          freq: str = 'day', end_date=pd.to_datetime('2024-07-03'),
+                          freq: str = 'day', end_date=None,
                           chunk_size: int = CHUNK_SIZE, model=None,
                           if_fq: str = 'qfq', verbose: bool = False, db=None):
     """单标的 × 单频率：取数 → 出图 → YOLO → 挑最近 `end_date` 的框 → 落库。
 
     逐字搬自旧树 `charts.py:169-445`；上表那几处取数/复权/实时已换（见模块 docstring）。
+
+    ``end_date=None`` ⇒ 最后一个交易日 15:00；**不得**再写死日期。
     """
     from GolemQ.markets.StockCN.reality_save import save_reality_feat
+
+    if end_date is None:
+        from GolemQ.markets.StockCN.date_utils import GQ_util_last_trade_as_of
+        end_date = GQ_util_last_trade_as_of()
+    else:
+        end_date = pd.to_datetime(end_date)
 
     if verbose:
         print(f'Code: {code}', end_date, freq)
@@ -386,10 +394,13 @@ def calc_ChartScaned_persistence(ticker, market_type=MARKET_TYPE.STOCK_CN,
         all_nat_min = recent['CoordinatesMin'].isna().all()
         recent_list = []
         if 'ChartScaned' in stock_daily_feats.columns:
-            all_nat = recent['ChartScaned'].isna().all()
-            all_nat_maj = recent['ChartScaned'].isna().all()
+            # ⚠️ `ChartScaned` 只说明「这只码被扫过」，**不是**三套坐标都已更新。
+            # 分钟扫描会把它写进日族；若拿它覆盖 all_nat_maj，日线 Maj 会永久
+            # 被判成「已扫」——000711 的 ClsMaj 在 2026-09-22 后断掉、mode=0
+            # 就是这个原因。这里只用它找 0/1 的盘中末端。
             non = recent[(recent['ChartScaned'] != 1) & (recent['ChartScaned'] != 2)]
-            recent_list = sorted(non.index.get_level_values(level=0)) if not non.empty else False
+            recent_list = (sorted(non.index.get_level_values(level=0))
+                           if not non.empty else [])
     else:
         all_nat = all_nat_maj = all_nat_min = True
         recent_list = []
@@ -399,12 +410,19 @@ def calc_ChartScaned_persistence(ticker, market_type=MARKET_TYPE.STOCK_CN,
             (_if_tradetime() and (timedelta(days=-0.618) < (_last_day() - pd.to_datetime(end_date)) < timedelta(days=0.618))):
         recent_list = sorted([pd.to_datetime(end_date)])
 
+    # 只有 Maj/Min 过期（基础 60min 坐标是新的）⇒ 排尾巴扫描，不整段重扫。
+    if (all_nat_maj or all_nat_min) and not all_nat:
+        recent_list = sorted(set(
+            [pd.to_datetime(end_date)] + list(recent_list or [])))
+
     if ret_metadata:
         return all_nat, all_nat_maj, all_nat_min, recent_list
-    if all_nat or all_nat_maj or all_nat_min:
+    if all_nat:
         mode = 1
-    elif recent_list:
+    elif recent_list or all_nat_maj or all_nat_min:
         mode = 2
+        if not recent_list:
+            recent_list = [pd.to_datetime(end_date)]
     else:
         mode = 0
     return (ticker, market_type, mode,
@@ -427,13 +445,20 @@ def _coords_to_datetime(df: pd.DataFrame) -> pd.DataFrame:
 
 def calc_ChartScanAI_reality(ticker: str = '300085', market_type=MARKET_TYPE.STOCK_CN,
                              start_date=pd.to_datetime('2020-01-01'),
-                             end_date=pd.to_datetime('2024-07-03'),
+                             end_date=None,
                              enforce: bool = False, model=None, if_fq: str = 'qfq',
                              db=None):
     """编排：读回已扫状态 → 取日线 baseline → **逐日 × 三频率**跑预测。搬自 `:568-742`。
 
+    ``end_date=None`` ⇒ 最后一个交易日 15:00；**不得**再写死日期。
     :returns: `without_processing`（True = 这一趟什么都没跑）。
     """
+    if end_date is None:
+        from GolemQ.markets.StockCN.date_utils import GQ_util_last_trade_as_of
+        end_date = GQ_util_last_trade_as_of()
+    else:
+        end_date = pd.to_datetime(end_date)
+
     if not enforce:
         all_nat, all_nat_maj, all_nat_min, recent = calc_ChartScaned_persistence(
             ticker=ticker, market_type=market_type,

@@ -23,7 +23,7 @@ from GolemQ.analysis import quadrant_jit as Q
 from GolemQ.analysis.indicators import calc_macd_qa
 from GolemQ.analysis.pivot import calc_zen_dash_timing_lag
 from GolemQ.core.constants import AKA, FIELD as FLD
-from GolemQ.models.alias import LTT
+from GolemQ.models.alias import LTT, TRD
 
 
 def _idx(n, start='2025-01-06'):
@@ -164,6 +164,165 @@ class TestSecondOrBranch(unittest.TestCase):
         np.testing.assert_array_equal(
             out[LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY].to_numpy(),
             [-1, 1, 2, 3, 4, 5])
+
+
+class TestNegativeLeverageLag(unittest.TestCase):
+    """`QLevMACDLagD` 的结构反函数 —— 负能量/负 MACD 链（新树自造）。"""
+
+    @staticmethod
+    def _frame(n=6, down=True):
+        v = -5.0 if down else 5.0
+        return pd.DataFrame({
+            LTT.QUADRANT_POWERLINE_MINOR: [v] * n,
+            LTT.QUADRANT_POWERLINE: [v] * n,
+            LTT.QUADRANT_POWERLINE_MAJOR: [v] * n,
+            FLD.MACD_DELTA_MAJOR: [(-1.0 if down else 1.0)] * n,
+        }, index=_idx(n))
+
+    def test_down_trend_is_negative(self):
+        out = Q.calc_quadrant_leverage_negative_timing_lag(
+            self._frame(down=True))
+        for col in (LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_MINOR,
+                    LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE,
+                    LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_MAJOR,
+                    LTT.QUADRANT_LEVERAGE_ENERGY_NEGATIVE_DUMMY,
+                    LTT.QUADRANT_LEVERAGE_ENERGY_TIMING_LAG_NEGATIVE_DUMMY,
+                    LTT.QUADRANT_LEVERAGE_NEGATIVE_TIMING_LAG):
+            self.assertIn(col, out.columns)
+        np.testing.assert_array_equal(
+            out[LTT.QUADRANT_LEVERAGE_NEGATIVE_TIMING_LAG].to_numpy(),
+            [-1, -2, -3, -4, -5, -6])
+
+    def test_up_trend_defaults_positive(self):
+        out = Q.calc_quadrant_leverage_negative_timing_lag(
+            self._frame(down=False))
+        # 上行帧负能量不活跃 ⇒ 原始信号本来就是 +1；门控不改变结果
+        np.testing.assert_array_equal(
+            out[LTT.QUADRANT_LEVERAGE_NEGATIVE_TIMING_LAG].to_numpy(),
+            [1, 2, 3, 4, 5, 6])
+
+    def test_gate_resets_negative_when_positive_lag_gt4(self):
+        """门控：正列 > 4 时，负能量原始信号被强制回 +1。"""
+        f = pd.DataFrame({
+            LTT.QUADRANT_POWERLINE_MINOR: [0.0] * 6,
+            LTT.QUADRANT_POWERLINE: [0.0] * 6,
+            LTT.QUADRANT_POWERLINE_MAJOR: [0.0] * 6,
+            FLD.MACD_DELTA_MAJOR: [1.0] * 6,
+        }, index=_idx(6))
+        out = Q.calc_quadrant_leverage_negative_timing_lag(f)
+        np.testing.assert_array_equal(
+            out[LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY].to_numpy(),
+            [1, 2, 3, 4, 5, 6])
+        np.testing.assert_array_equal(
+            out[LTT.QUADRANT_LEVERAGE_NEGATIVE_TIMING_LAG].to_numpy(),
+            [-1, -2, -3, -4, 1, 2])
+
+    def test_is_structural_not_a_negation(self):
+        """不是 `-QLevMACDLagD`：负段可以多于正列负段，且包含正列负段的一部分。"""
+        f = pd.DataFrame({
+            LTT.QUADRANT_POWERLINE_MINOR: [0.0] * 6,
+            LTT.QUADRANT_POWERLINE: [0.0] * 6,
+            LTT.QUADRANT_POWERLINE_MAJOR: [0.0] * 6,
+            FLD.MACD_DELTA_MAJOR: [-1.0, -1.0, -1.0, 1.0, 1.0, 1.0],
+        }, index=_idx(6))
+        out = Q.calc_quadrant_leverage_negative_timing_lag(f.copy())
+        pos = Q.calc_quadrant_leverage_macd_timing_lag(
+            f.copy())[LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY]
+        neg = out[LTT.QUADRANT_LEVERAGE_NEGATIVE_TIMING_LAG]
+        np.testing.assert_array_equal(pos.to_numpy(), [-1, -2, -3, 1, 2, 3])
+        np.testing.assert_array_equal(neg.to_numpy(), [-1, -2, -3, -4, -5, -6])
+        self.assertFalse((neg == -pos).all())
+        self.assertGreater(int((neg < 0).sum()), int((pos < 0).sum()))
+        self.assertGreater(int(((neg < 0) & (pos < 0)).sum()), 0)
+
+    def test_missing_powerline_raises(self):
+        with self.assertRaises(KeyError):
+            Q.calc_quadrant_leverage_negative_timing_lag(
+                pd.DataFrame({FLD.MACD_DELTA_MAJOR: [0.0]}))
+
+
+class TestOmniPathBaseline(unittest.TestCase):
+    """`OmniPathLeverBslLag` —— 旧树 `base.py:1008` 的 baseline lag。"""
+
+    @staticmethod
+    def _frame(n=4):
+        return pd.DataFrame({
+            FLD.DIF_NORM_TIMING_LAG_MAJOR: [1] * n,
+            FLD.DEA_NORM_TIMING_LAG_MAJOR: [0] * n,
+            FLD.MTM_NORM_TIMING_LAG_MAJOR: [0] * n,
+            LTT.THREE_QUADRANT_UPRISING_TIMING_LAG: [1] * n,
+        }, index=_idx(n))
+
+    def test_dif_branch_runs(self):
+        out = Q.calc_omnipath_leverage_baseline_timing_lag(self._frame())
+        np.testing.assert_array_equal(
+            out[TRD.OMNIPATH_LEVERAGE_BASELINE_TIMING_LAG].to_numpy(),
+            [1, 2, 3, 4])
+
+    def test_missing_raises(self):
+        with self.assertRaises(KeyError):
+            Q.calc_omnipath_leverage_baseline_timing_lag(pd.DataFrame())
+
+
+class TestFbProphetLag(unittest.TestCase):
+    """`fbpLUpRsgLagDmy` 的降级 producer。"""
+
+    def test_up_flag_event_lag(self):
+        f = pd.DataFrame({
+            FLD.FBPROPHET_LB_MAJOR: [2, 2, 1],
+            FLD.FBPROPHET_LB: [1, 1, 2],
+        }, index=_idx(3))
+        out = Q.calc_fbprophet_lb_uprising_timing_lag(f)
+        np.testing.assert_array_equal(
+            out[FLD.FBPROPHET_LB_UPRISING_TIMING_LAG_DUMMY].to_numpy(),
+            [1, 2, -1])
+
+    def test_missing_raises(self):
+        with self.assertRaises(KeyError):
+            Q.calc_fbprophet_lb_uprising_timing_lag(pd.DataFrame())
+
+
+class TestLinearegWaveletLag(unittest.TestCase):
+    """`LnarWavUprLagCand` 的降级 producer。"""
+
+    def test_atr_lb_below_close(self):
+        f = pd.DataFrame({FLD.ATR_LB_MAJOR: [1, 1, 5],
+                          AKA.CLOSE: [2, 2, 2]}, index=_idx(3))
+        out = Q.calc_lineareg_wavelet_uprising_timing_lag(f)
+        np.testing.assert_array_equal(
+            out[LTT.LINEAREG_WAVELET_UPRISING_TIMING_LAG_CANDIDATE].to_numpy(),
+            [1, 2, -1])
+
+    def test_fallback_to_atr_lb(self):
+        f = pd.DataFrame({FLD.ATR_LB: [1, 1, 5],
+                          AKA.CLOSE: [2, 2, 2]}, index=_idx(3))
+        out = Q.calc_lineareg_wavelet_uprising_timing_lag(f)
+        np.testing.assert_array_equal(
+            out[LTT.LINEAREG_WAVELET_UPRISING_TIMING_LAG_CANDIDATE].to_numpy(),
+            [1, 2, -1])
+
+    def test_missing_raises(self):
+        with self.assertRaises(KeyError):
+            Q.calc_lineareg_wavelet_uprising_timing_lag(pd.DataFrame())
+
+
+class TestMainstreamMajor(unittest.TestCase):
+    """日线 MAJOR 版：`MsLeadinBfMaj` / `MsLeadoutBfMaj` 与基础列同值。"""
+
+    def test_major_columns_equal_base(self):
+        idx = _idx(160)
+        close = pd.Series(np.linspace(10, 12, len(idx)), index=idx)
+        ohlc = pd.DataFrame({
+            'open': close, 'high': close + 0.1, 'low': close - 0.1,
+            'close': close, 'volume': 1000.0,
+        }, index=idx)
+        out = Q.calc_mainstream_major_feats(ohlc)
+        for base, major in (
+                (LTT.MAINSTREAM_LEADIN_BEFORE, LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR),
+                (LTT.MAINSTREAM_LEADOUT_BEFORE, LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR)):
+            self.assertIn(major, out.columns)
+            np.testing.assert_array_equal(out[major].to_numpy(),
+                                          out[base].to_numpy())
 
 
 class TestMacdQA(unittest.TestCase):

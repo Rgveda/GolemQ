@@ -487,6 +487,13 @@ class FIELD(metaclass=_StubMeta):
     DEA_NORM_MAJOR = 'deaNormMaj'
     DIF_NORM_MAJOR = 'difNormMaj'
     MTM_NORM_MAJOR = 'mtmNormMaj'
+    #: 归一化 DIF/DEA/MTM 的「距上次金叉/死叉」时序（旧树
+    #: `features/base.py::calc_feature_event_timing_lag`）。旧值
+    #: `DIF_NORM_LAG_MAJ` / `DEA_NORM_LAG_MAJ` / `MTM_NORM_LAG_MAJ`；
+    #: 8.3 无存量，按新树伪驼峰命名。
+    DIF_NORM_TIMING_LAG_MAJOR = 'difNormLagMaj'
+    DEA_NORM_TIMING_LAG_MAJOR = 'deaNormLagMaj'
+    MTM_NORM_TIMING_LAG_MAJOR = 'mtmNormLagMaj'
     MAPOWER30_MAJOR = 'mpwr3Maj'
     MA5_MAJOR = 'maVMaj'
     MA10_MAJOR = 'maXMaj'
@@ -507,6 +514,10 @@ class FIELD(metaclass=_StubMeta):
     FBPROPHET_UB_DUMMY = 'prophetUbD'
     FBPROPHET_LB_MAJOR_DUMMY = 'prophetLbMajD'
     FBPROPHET_UB_MAJOR_DUMMY = 'prophetUbMajD'
+    #: 旧树 `utils/parameter.py:2651` 的真值；`OmniPathLeverBslLag` 的可选输入。
+    FBPROPHET_LB_UPRISING_TIMING_LAG_DUMMY = 'fbpLUpRsgLagDmy'
+    FBPROPHET_LB_UPRISING_CANDIDATE = 'FBP_L_UPRSG_CAN'
+    FBPROPHET_LB_UPRISING_TIMING_LAG = 'FBP_L_UPRSG_LAG'
     GARIDENT_PRICE = 'garP'
     GARIDENT_PRICE_DUMMY = 'garPD'
     GARIDENT_PRICE_COUNT = 'garPCount'
@@ -618,6 +629,9 @@ class FIELD(metaclass=_StubMeta):
     # 补齐前实测：本文件用到的 29 个名字在新树**全部抛 AttributeError**。
     # ------------------------------------------------------------------ #
     ATR_LB = 'atrLb'
+    #: 旧树 `utils/parameter.py:1706/1710` 的真值；`LnarWavUprLagCand` 的输入。
+    ATR_UB_MAJOR = 'ATR_UB_MAJ'
+    ATR_LB_MAJOR = 'ATR_LB_MAJ'
     COMBINE_DENSITY = 'combDensity'
     DEA_ZERO_TIMING_LAG = 'deaOLag'
     HMA10 = 'HMA10'

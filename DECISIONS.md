@@ -110,5 +110,6 @@
 | `D77` | 列名统一为伪驼峰：39 个老值改名 + 28 个保留 | 2026-10-28 | [decisions/D77.md](docs/decisions/D77.md) |
 | `D78` | 60min 一体化特征行 + 全量 as-of（撤销 D74） | 2026-10-30 | [decisions/D78.md](docs/decisions/D78.md) |
 | `D79` | Mainstream「全局智能仓位」移植：新树口径自洽，不逐值复刻 4.4 | 2026-11-01 | [decisions/D79.md](docs/decisions/D79.md) |
+| `D80` | QuadrantGear 特征改用 Apache Hamilton 列级 DAG | 2026-11-05 | [decisions/D80.md](docs/decisions/D80.md) |
 
 <!-- END GENERATED -->

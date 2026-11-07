@@ -79,6 +79,11 @@ MIN_PACKAGES = (
     ('numpy', '2.0'),
     ('pandas', '2.3'),
     ('polars', '1.24'),
+    # 2026-11-05：`analysis/feature_flow.py`（QuadrantGear 的列级 DAG）直接
+    # `import hamilton`。装的是 **apache-hamilton**（ASF 孵化版；原 sf-hamilton），
+    # 导入名仍是 `hamilton`；它的 `__version__` 是**元组**而不是字符串
+    # （`_parse_version` 为此加了 tuple 分支）。门槛 1.90 = 实测版本。
+    ('hamilton', '1.90'),
     # 下面三个是 2026-10-09 补的**主链路硬依赖**（全树出现次数：pymongo 9 / tqdm 8 /
     # pytdx 9）。此前 `pyproject.toml` **不声明任何运行期依赖**，所以这里是全树
     # 唯一一处依赖声明 —— 缺了它们，`--save` 与所有要连库的命令当场就断。
@@ -192,7 +197,17 @@ def _parse_version(text):
     (1, 27, 1)
     >>> _parse_version('unknown')
     ()
+    >>> _parse_version((1, 90, 0))     # Hamilton 的 __version__ 是元组
+    (1, 90, 0)
     """
+    if isinstance(text, (tuple, list)):
+        parts = []
+        for item in text:
+            try:
+                parts.append(int(item))
+            except (TypeError, ValueError):
+                break
+        return tuple(parts)
     parts = []
     for chunk in str(text).split('.'):
         digits = ''

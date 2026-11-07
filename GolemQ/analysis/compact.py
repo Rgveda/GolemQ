@@ -62,6 +62,8 @@ COMPACT_COLUMNS = (
     FIELD.MAPOWER30_TIMING_LAG_MAJOR, FIELD.MAPOWER30_MEDIAN,
     FIELD.MAPOWER30_MAJOR_MEDIAN,
     FIELD.MTM_NORM, FIELD.MTM_NORM_MAJOR, FIELD.MTM_NORM_WEEKLY,
+    FIELD.DIF_NORM_TIMING_LAG_MAJOR, FIELD.DEA_NORM_TIMING_LAG_MAJOR,
+    FIELD.MTM_NORM_TIMING_LAG_MAJOR,
     FIELD.MTMMA_NORM, FIELD.MTMMA_NORM_WEEKLY, FIELD.MTMMA_NORM_MAJOR,
     FIELD.POLYNOMIAL9_TIMING_LAG, FIELD.POLYNOMIAL9_TIMING_LAG_MAJOR,
     FIELD.POLYNOMIAL9_NORM, FIELD.POLYNOMIAL9_NORM_MAJOR,
@@ -69,7 +71,7 @@ COMPACT_COLUMNS = (
     FIELD.PEAK_HIGH_TIMING_LAG, FIELD.PEAK_TOWARDS_TIMING_LAG,
     FIELD.PEAK_TOWARDS_BEFORE, ST.CLUSTER_GROUP_TOWARDS, ST.PEAK_TOWARDS,
     FIELD.LINEAREG_PRICE, FIELD.LINEAREG_BAND_TIMING_LAG,
-    FIELD.ATR_UB, FIELD.ATR_LB,
+    FIELD.ATR_UB, FIELD.ATR_LB, FIELD.ATR_UB_MAJOR, FIELD.ATR_LB_MAJOR,
     # ATR Stopline / SuperTrend（2026-10-21 补；markup 标签侧输入）
     FIELD.ATR_Stopline, FIELD.ATR_Stopline_PRICE,
     FIELD.ATR_Stopline_TIMING_LAG,
@@ -136,6 +138,12 @@ def _base_frame(ohlc: pd.DataFrame, annual: int) -> pd.DataFrame:
     # ---- MACD（QUANTAXIS 口径）----
     dif, dea, macd = calc_macd_qa(close)
     f[FIELD.DIF], f[FIELD.DEA], f[FIELD.MACD] = dif, dea, macd
+    # 归一化 DIF/DEA（旧树 `features/base.py:2980`：mapower 归一）；供
+    # `OmniPathLeverBslLag` 的 DIF/DEA norm lag 使用。
+    f[FIELD.DIF_NORM] = mapower_np_vXIIs(
+        np.asarray(dif, dtype=np.float32)).astype(np.float32)
+    f[FIELD.DEA_NORM] = mapower_np_vXIIs(
+        np.asarray(dea, dtype=np.float32)).astype(np.float32)
     f[FIELD.MACD_CROSS_SX_BEFORE] = Timeline_duration(
         cross_above(dea, dif).to_numpy(np.int16)).astype(np.int32)
     f[FIELD.MACD_ZERO_TIMING_LAG] = calc_event_timing_lag(
@@ -241,6 +249,14 @@ def _base_frame(ohlc: pd.DataFrame, annual: int) -> pd.DataFrame:
     f[FIELD.MAPOWER30_MAJOR_MEDIAN] = f[FIELD.MAPOWER30_MEDIAN]
     f[FIELD.MTM_NORM_MAJOR] = f[FIELD.MTM_NORM]
     f[FIELD.MTMMA_NORM_MAJOR] = f[FIELD.MTMMA_NORM]
+    f[FIELD.DIF_NORM_MAJOR] = f[FIELD.DIF_NORM]
+    f[FIELD.DEA_NORM_MAJOR] = f[FIELD.DEA_NORM]
+    f[FIELD.DIF_NORM_TIMING_LAG_MAJOR] = calc_feature_event_timing_lag(
+        f, FIELD.DIF_NORM_MAJOR).astype(np.int16)
+    f[FIELD.DEA_NORM_TIMING_LAG_MAJOR] = calc_feature_event_timing_lag(
+        f, FIELD.DEA_NORM_MAJOR).astype(np.int16)
+    f[FIELD.MTM_NORM_TIMING_LAG_MAJOR] = calc_feature_event_timing_lag(
+        f, FIELD.MTM_NORM_MAJOR).astype(np.int16)
     f[FIELD.MAGIC_NINE_TURNS_BEFORE_MAJOR] = f[FIELD.MAGIC_NINE_TURNS_BEFORE]
     f[FIELD.MAGIC_NINE_TURNS_SX_BEFORE_MAJOR] = f[FIELD.MAGIC_NINE_TURNS_SX_BEFORE]
     f[FIELD.BOLL_LB_HMA5_TIMING_LAG_MAJOR] = calc_event_timing_lag(
@@ -348,6 +364,14 @@ def _derive_major(ohlc_day: pd.DataFrame, target_index: pd.MultiIndex) -> pd.Dat
     day[FIELD.MAPOWER30_MAJOR_MEDIAN] = day[FIELD.MAPOWER30_MEDIAN]
     day[FIELD.MTM_NORM_MAJOR] = day[FIELD.MTM_NORM]
     day[FIELD.MTMMA_NORM_MAJOR] = day[FIELD.MTMMA_NORM]
+    day[FIELD.DIF_NORM_MAJOR] = day[FIELD.DIF_NORM]
+    day[FIELD.DEA_NORM_MAJOR] = day[FIELD.DEA_NORM]
+    day[FIELD.DIF_NORM_TIMING_LAG_MAJOR] = calc_feature_event_timing_lag(
+        day, FIELD.DIF_NORM_MAJOR).astype(np.int16)
+    day[FIELD.DEA_NORM_TIMING_LAG_MAJOR] = calc_feature_event_timing_lag(
+        day, FIELD.DEA_NORM_MAJOR).astype(np.int16)
+    day[FIELD.MTM_NORM_TIMING_LAG_MAJOR] = calc_feature_event_timing_lag(
+        day, FIELD.MTM_NORM_MAJOR).astype(np.int16)
     day[FIELD.POLYNOMIAL9_TIMING_LAG_MAJOR] = calc_event_timing_lag(
         np.where(day[FIELD.POLYNOMIAL9].diff(4) > 0, 1, -1)).astype(np.int16)
     day[FIELD.POLYNOMIAL9_NORM_MAJOR] = day[FIELD.POLYNOMIAL9_NORM]
@@ -362,6 +386,8 @@ def _derive_major(ohlc_day: pd.DataFrame, target_index: pd.MultiIndex) -> pd.Dat
     day[FIELD.ATR_SuperTrend_TIMING_LAG_MAJOR] = calc_event_timing_lag(
         np.where(day[FIELD.ATR_SuperTrend_TIMING_LAG] > 0, 1, -1)).astype(np.int16)
     day[FIELD.ATR_Stopline_PRICE_MAJOR] = day[FIELD.ATR_Stopline_PRICE]
+    day[FIELD.ATR_UB_MAJOR] = day[FIELD.ATR_UB]
+    day[FIELD.ATR_LB_MAJOR] = day[FIELD.ATR_LB]
 
     cols = [
         FIELD.CCI_NORM, FIELD.RSI, FIELD.MAXFACTOR, FIELD.MA90_CLEARANCE,
@@ -379,10 +405,14 @@ def _derive_major(ohlc_day: pd.DataFrame, target_index: pd.MultiIndex) -> pd.Dat
         FIELD.MAPOWER30_MAJOR, FIELD.MAPOWER30_TIMING_LAG_MAJOR,
         FIELD.MAPOWER30_MAJOR_MEDIAN,
         FIELD.MTM_NORM_MAJOR, FIELD.MTMMA_NORM_MAJOR,
+        FIELD.DIF_NORM_MAJOR, FIELD.DEA_NORM_MAJOR,
+        FIELD.DIF_NORM_TIMING_LAG_MAJOR, FIELD.DEA_NORM_TIMING_LAG_MAJOR,
+        FIELD.MTM_NORM_TIMING_LAG_MAJOR,
         FIELD.POLYNOMIAL9_TIMING_LAG_MAJOR, FIELD.POLYNOMIAL9_NORM_MAJOR,
         FIELD.ATR_Stopline_TIMING_LAG_MAJOR,
         FIELD.ATR_SuperTrend_TIMING_LAG_MAJOR,
         FIELD.ATR_Stopline_PRICE_MAJOR,
+        FIELD.ATR_UB_MAJOR, FIELD.ATR_LB_MAJOR,
     ]
     out = pd.DataFrame(index=target_index)
     for col in cols:

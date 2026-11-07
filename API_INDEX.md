@@ -70,6 +70,47 @@ Prophet 价格区间（旧树 FBPROPHET_* 四列）—— 只搬算术，落库�
 | f | `fbp_bands_from_ratio(ratios, close)` | 比值带 → 绝对价带（比值 × 当日 close）。与 :func:fbp_bands_to_ratio 互逆。 `[dt]` |
 | f | `calc_fbprophet_bands(ohlc, features, major_ohlc, periods, changepoint_range)` | 在 features 上写 4 列比值：当前频率两列 + 日线两列。 |
 
+### `feature_flow`
+QuadrantGear 的 Hamilton 数据流（列级 DAG，按需执行）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `q60(ohlc60, code)` | 60min 四象限（annual=1008）。 |
+| f | `q15(ohlc15, code)` | 15min 四象限（annual=4032）。 |
+| f | `qd(ohlc_day, code)` | 日线四象限（annual=252）。 |
+| f | `macd60(ohlc60)` |  |
+| f | `macd_day_full(ohlc_day)` | 日线 MACD 的 dif / dea / hist（一次 calc_macd_qa）。 |
+| f | `macd_day(macd_day_full)` |  |
+| f | `dea_day(macd_day_full)` |  |
+| f | `dea_major(ohlc60, dea_day)` | 日线 DEA → 60min（DEA_MAJOR）。 |
+| f | `macd_delta_major(ohlc60, macd_day)` | 日线 MACD 柱差分 → 60min（MACD_DELTA_MAJOR）。 |
+| f | `pwrln(q60, ohlc60)` | 60min 4QPwrln。 |
+| f | `pwrln_minor(q15, ohlc60)` | 15min 4QPwrln → 60min（4QPwrlnMin）。 |
+| f | `pwrln_major(qd, ohlc60)` | 日线 4QPwrln → 60min（4QPwrlnMaj）。 |
+| f | `qlev_frame(pwrln, pwrln_minor, pwrln_major, macd_delta_major, ohlc60)` | QLev 链整帧：5 个能量中间列 + QLevMACDLagD（一次算完）。 |
+| f | `qlev_macd_lag(qlev_frame)` | QLevMACDLagD（从 qlev_frame 取，不重算）。 |
+| f | `quad_downrisk(q60, ohlc60)` | 60min QuadDwnRskLag（非 MAJOR 版，prelude 要用）。 |
+| f | `quad_downrisk_major(qd, ohlc60, code)` | QuadDwnRskLagMaj，复用 qd（日线四象限只算一次）。 |
+| f | `cost15_prz(ohlc60)` | 60min cost15Prz；帧里没有该列时返回 NaN（Charm_O 自动判假）。 |
+| f | `qlev_pwrln_upr_lag(qlev_frame, bs_star_dwn_bf_maj, dea_major, ohlc60)` | QLevPwrlnUprLag（Charm_I 用）；复用 qlev_frame，不重算 QLev。 |
+| f | `zd_lag(ohlc60, code)` | zDLagD（新版无后视镜）。只有下游请求 prelude 时才会被执行。 |
+| f | `prelude_frame(qlev_macd_lag, quad_downrisk_major, quad_downrisk, zd_lag, ohlc60, window)` | QuadPreUprBf / QuadPreEpBf（一次 calc_prelude_before）。 |
+| f | `ms60(ohlc60, macd60)` | 60min 主力吸筹 + 派发（fold=True，高价折叠）。 |
+| f | `ms_day(ohlc_day, macd_day)` | 日线主力吸筹 + 派发（fold=True），供 MsLeadoutBfMaj。 |
+| f | `ms_leadout(ms60)` | 60min MsLeadoutBf。 |
+| f | `ms_leadin_maj(ohlc60, ms_day)` | 日线 MsLeadinBf → 60min（MsLeadinBfMaj，日线计数不换单位）。 |
+| f | `ms_leadout_maj(ohlc60, ms_day)` | 日线 MsLeadoutBf → 60min（MsLeadoutBfMaj，日线计数不换单位）。 |
+| f | `bs_day(ohlc_day)` | 日线 calc_bs_signals + 重命名为 *_MAJOR + calc_bs_before。 |
+| f | `bs_star_up_bf_maj(ohlc60, bs_day)` |  |
+| f | `bs_star_dwn_bf_maj(ohlc60, bs_day)` |  |
+| f | `bs_bu_bf_maj(ohlc60, bs_day)` |  |
+| f | `bs_sel_bf_maj(ohlc60, bs_day)` |  |
+| f | `charm_frame(qlev_macd_lag, quad_downrisk_major, quad_downrisk, qlev_pwrln_upr_lag, cost15_prz, ohlc60)` | QLevCharmOBf / QLevCharmIBf（QuadGear0 第五行的两个 OR 分支）。 |
+| f | `quad_gear0(qlev_macd_lag, quad_downrisk_major, bs_star_up_bf_maj, bs_star_dwn_bf_maj, bs_bu_bf_maj, bs_sel_bf_maj, ms_leadin_maj, ms_leadout_maj, QLevCharmOBf, ohlc60)` | O 档。输入列来自 DAG；calc_quadrant_gear_o 只做算术。 |
+| f | `build_driver()` | 构建本模块的 Hamilton Driver（每次调用新建，线程间不共享状态）。 |
+| f | `quadrant_gear_features(code, ohlc60, ohlc15, ohlc_day)` | 一次性入口：三帧 → 与 ohlc60 等长的 QuadGear0 / QuadGear0Bf。 |
+| f | `quadrant_gear_frame(code, ohlc60, ohlc15, ohlc_day)` | 整条链的中间列（存储别名），供检查 / 训练 / 落库前预览。 |
+
 ### `indicators`
 技术指标的小工具 —— 目前只有 TA_HMA。
 
@@ -100,6 +141,8 @@ Mainstream「全局智能仓位」的逐股输入（纯计算，不连库）。
 | f | `broadcast_daily_to_60min(daily, index60)` | 日线序列 → 60min 网格：交易日 D 的值落到 D 当天 4 根 bar。 `[dt]` |
 | f | `calc_zen_dash_dummy(ohlc, code, max_bi_count)` | zDLagD：缠论笔方向 → calc_event_timing_lag。 |
 | f | `calc_zen_dash_asof(ohlc, code, window, max_bi_count)` | 逐 bar as-of 的 zDLagD。 |
+| f | `calc_zen_dash_causal(ohlc, code, max_bi_count)` | 新版无后视镜的 zDLagD：只认「当下已经确认的末笔」。 |
+| f | `calc_m9t_combo(m9t, m9t_lag_maj, m9t_lag_wek)` | MAGIC_NINE_TURNS_TIMING_LAG_COMBO：三列合成的 event-lag（逐码）。 `[dt]` |
 | f | `calc_prelude_before(features, window)` | 补 QuadPreUprBf / QuadPreEpBf 两列（旧树 analysis/mainstream.py:348-360）。 `[dt]` |
 
 ### `peak`
@@ -147,6 +190,7 @@ Poly9 家族的编排层 —— 把 rolling_poly9_v2 / mapower 串成指标列�
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | f | `calc_position_series(n, bull, bear, eps)` | 逐 bar 的 D-S 仓位（向量化版 calc_position_ds）。 `[dt]` |
+| f | `calc_position_flags(m_bull, m_bear, m_omega, onhold, ratio, gap_bars, stage_mode, stage_streak)` | 仓位序列的三个事件标记（纯派生，不重算）。 `[dt]` |
 | f | `calc_position_ds(upr, ep, zd, eps)` | 一个 bar 的横截面 → D-S 仓位字典。 `[dt]` |
 
 ### `quadrant_coef`
@@ -160,6 +204,13 @@ Poly9 家族的编排层 —— 把 rolling_poly9_v2 / mapower 串成指标列�
 | f | `calc_lineareg_price(close, timeperiod)` | LINEAREG_PRICE = talib.LINEARREG(close, timeperiod)（老树 push_credits.py:454）。 |
 | f | `calc_wavlet_coef_of_fractal(features, column_name, price_name, regression)` | 逐 bar 算 (COEF_CANDIDATE, COEF_DUMMY)。逐字搬老树 |
 | f | `calc_uprising_i_coef(features, column_name, price_name)` | 在 features 上写 两列（老树实际消费的那条链，见模块 docstring）： |
+
+### `quadrant_gear`
+QuadrantGear —— 四象限「档位」模型（旧树 analysis/quad_gear.py 的重做）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `calc_quadrant_gear_o(features)` | 在 features 上写 QuadGear0 / QuadGear0Bf。 `[dt]` |
 
 ### `quadrant_jit`
 四量图（calc_four_quadrant_boost）与四象限体系的特征计算 —— 逐字搬自老树。
@@ -175,6 +226,11 @@ Poly9 家族的编排层 —— 把 rolling_poly9_v2 / mapower 串成指标列�
 | f | `kdj(hight, low, close, fastk_period, slowk_matype, slowk_period, slowd_period)` | KDJ → np.c_[K, D, J] —— 逐字搬自老树 base.py:2550（走 talib.STOCH）。 |
 | f | `calc_four_quadrant_boost(code, features, ohlc_data, annual, market_type)` | 最牛四量图， |
 | f | `calc_quadrant_leverage_macd_timing_lag(features)` | QLevMACDLagD —— 四象限杠杆能量 × MACD 的合成 timing-lag。 |
+| f | `calc_quadrant_leverage_charm(features)` | QLevCharmOBf / QLevCharmIBf —— QuadGear0 第五行的两个 OR 辅助分支。 |
+| f | `calc_fbprophet_lb_uprising_timing_lag(features)` | fbpLUpRsgLagDmy —— 旧树 fbprophet.py:197/233 的降级版。 `[dt]` |
+| f | `calc_lineareg_wavelet_uprising_timing_lag(features)` | LnarWavUprLagCand —— 旧树 models/rail.py:2230 的降级版。 `[dt]` |
+| f | `calc_omnipath_leverage_baseline_timing_lag(features)` | OmniPathLeverBslLag —— 旧树 analysis/base.py:1008-1014。 `[dt]` |
+| f | `calc_quadrant_leverage_negative_timing_lag(features)` | QLevMACDLagD 的结构反函数（新树自造；用户 2026-11-03 点名）。 `[dt]` |
 | f | `calc_quadrant_downrisk_major(code, ohlc_day, index60, annual)` | QuadDwnRskLagMaj —— 日线下行风险 lag，广播到 60min 后再编码。 |
 | f | `calc_bs_star_down(ohlc)` | BSStarDwn —— 只搬星线死叉那一段（老树 analysis/base.py:2429 的子集）。 `[dt]` |
 | f | `calc_bs_signals(ohlc, features)` | 买/卖线 + 星线（老树 analysis/base.py:2429 的纯函数版）。 |
@@ -183,8 +239,8 @@ Poly9 家族的编排层 —— 把 rolling_poly9_v2 / mapower 串成指标列�
 | f | `calc_quadrant_zen_dash_count(features)` | 4QuadZenDCnt —— 一条 calc_energy（老树 analysis/mainstream.py:180-188）。 |
 | f | `calc_quadrant_bs_trunk_timing_lag(features)` | QuadBsTuk / QuadBsTukLag —— 买卖星线结构与 MACD lag 的合成。 |
 | f | `fold_high_price(close)` | 股价折叠：> 10 的股价取 log10(close)，≤ 10 原样返回。 `[dt]` |
-| f | `calc_mainstream_feats(ohlc, features, fold)` | 主力资金吸筹 —— 产出 MsLeadinBf / MsLeadinx3Bf / MsLeadinx5Bf。 |
-| f | `calc_mainstream_leadout_feats(ohlc, features, fold)` | 主力派发/出货（下跌指示）—— :func:calc_mainstream_feats 的镜像。 |
+| f | `calc_mainstream_feats(ohlc, features, fold)` | 主力资金吸筹 + 派发 —— 一次产出两族各 6 列。 |
+| f | `calc_mainstream_major_feats(ohlc_day, fold)` | 日线 MAJOR 版：在日线帧上跑 calc_mainstream_feats，额外产出 |
 | f | `calc_bs_before(features)` | 8 个 BS*Bf* —— 买卖/星线信号的「距上一次」计数（Timeline_duration）。 |
 | f | `calc_pivot_timing_lag(features)` | ZenPivotLag —— 距出中枢（ZenPivotZD 变 NaN）以来的 lag。 |
 | f | `available()` | numba 在不在。 |
@@ -1150,7 +1206,7 @@ stock_reality_feat_day —— 日频元数据的统一落点。
 |:--|:--|:--|
 | f | `reality_feat_name(family, market_type)` | (族, 市场类型) → 集合名。 `[dt]` |
 | f | `reality_feat_rows(features, family, created_at, write_nulls)` | CV 结果帧 → *_reality_feat_* 文档列表。纯函数（不碰 DB）。 `[dt]` |
-| f | `save_position_series(df, market_type, db, verbose, echo)` | 「全局智能仓位」序列 → stock_/index_massive_position_60min。 |
+| f | `save_position_series(df, market_type, db, verbose, echo)` | 「全局智能仓位」→ stock_/index_massive_reality_60min_models（旧名）。 |
 | f | `save_reality_feat(features, family, market_type, verbose, echo, created_at, write_nulls, db)` | 取数（其实只组行）→ upsert_fields 落 golemq_stock_cn。 |
 | f | `restore_price_columns(df, close, columns)` | 把存成比值的价格列乘回 close，还原价格量纲。纯函数。 |
 | f | `fetch_reality_feat(codes, start, end, family, market_type, restore_price, close, db, columns)` | 读回 *_reality_feat_*；空结果返回 None（不是空帧）。 |
@@ -1466,9 +1522,19 @@ Mainstream 管线（8.3）—— 目前只含「全局智能仓位」一段。
 | f | `MainstreamPipeline.code_features(code, as_of)` | 单码 → 60min 特征帧（含 QuadPreUprBf / QuadPreEpBf / zDLagD）。 |
 | f | `MainstreamPipeline.code_masks(code, as_of)` | 单码 → (ts, bull, bear) 三个等长数组（只含可判定 bar）。 |
 | f | `MainstreamPipeline.run_code(code)` |  |
-| f | `MainstreamPipeline.market_timeline(as_of)` |  |
+| f | `MainstreamPipeline.market_timeline(as_of)` | 主时间轴：只保留 10:30 / 11:30 / 14:00 / 15:00 四根。 |
+| f | `MainstreamPipeline.snapshot_contracts()` | 一次 groupby(bar) 产出全部快照契约列（MED/MODE/COMBO）。 |
 | f | `MainstreamPipeline.run_market(codes, as_of, pool_size)` | 全市场横截面 → 每根 60min bar 的仓位行。 |
 | f | `run_mainstream(eval_range, codes, as_of, pct_of_cores, lookback_days, verbose)` | 解析 scope → 逐片算 → 返回 (仓位 DataFrame, 统计)。 |
+
+### `snapshot`
+Massive 快照聚合 —— 一次 groupby(bar) 产出全部 MED/MODE/COMBO 列。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `Agg` | 一个快照契约列。 |
+| f | `aggregate_snapshot(frame, ags)` | 一根 bar 的横截面 → 全部契约列（一行字典）。 |
+| f | `snapshot_frame(features, ags, ts_col)` | (ts, code, 列...) 长表 → 每根 bar 一行的契约列帧。 `[dt]` |
 
 ## GolemQ.pipeline.review
 
@@ -1477,6 +1543,7 @@ coldstart 最小集：M9T major / Poly9 / Prophet（模型层消费）。
 
 | | 名称 | 摘要 |
 |:--|:--|:--|
+| f | `calc_stage_series(ohlc, random_state)` | 全帧一次算 stage（(dt, code) 帧 → 逐 bar 的 STAGE）。 |
 | f | `coldstart_step(ctx, targets)` | 取样：day_core 已对每个目标日期算好 coldstart，这里只映射到 60min 目标。 |
 | f | `build_coldstart_steps()` |  |
 
@@ -1504,7 +1571,7 @@ ReviewPipeline —— 逐码、逐快照、因果的 review 批处理管线。
 | f | `ReviewPipeline.run_code(code)` |  |
 | f | `build_default_steps()` |  |
 | f | `shard_codes(codes, spec)` | 按 md5(code) % N == i-1 取第 i 片（1-based），保持原顺序。 `[dt]` |
-| f | `run_review(eval_range, codes, pct_of_cores, families, force, dry_run, verbose, offset, from_date, recheck_days, limit, shard)` | 解析 scope → 逐码跑 → 返回 (CodeResult 列表, 统计)。 |
+| f | `run_review(eval_range, codes, pct_of_cores, families, force, dry_run, verbose, offset, from_date, recheck_days, limit, shard, code_timeout)` | 解析 scope → 逐码跑 → 返回 (CodeResult 列表, 统计)。 |
 
 ### `runtime`
 Runtime API：在内存里算 review 特征，零 DB 写。
@@ -1761,6 +1828,8 @@ analysis/cv/predict.py 的写库路由用例（DECISIONS.md D51）。
 | f | `TestPersistenceReadsAcrossFamilies.test_reads_day_family_with_market_type()` |  |
 | f | `TestPersistenceReadsAcrossFamilies.test_coords_are_converted_to_datetime()` |  |
 | f | `TestPersistenceReadsAcrossFamilies.test_missing_coord_columns_do_not_raise()` | 缺列的旧文档不能炸 —— 缺的那套按 None 处理（否则整只标的读不动）。 |
+| f | `TestPersistenceReadsAcrossFamilies.test_chartscanned2_but_maj_stale_is_mode_2()` | ChartScaned=2 只说明扫过；CoordinatesMaj 过期时仍要排尾巴扫描。 |
+| f | `TestPersistenceReadsAcrossFamilies.test_chartscanned2_with_current_maj_stays_mode_0()` | Maj 也新鲜时不要无谓重扫。 |
 | C | `TestHeadlessRendering` | ⚠️ 多线程服务端 + matplotlib GUI 后端 = 每个标的都静默渲染失败。 |
 | f | `TestHeadlessRendering.test_mpbackend_is_forced_to_agg()` |  |
 | f | `TestHeadlessRendering.test_render_module_sets_it_at_import()` | 不是靠调用方传 —— 模块导入那一刻就得钉住（matplotlib 可能已被别人先导入）。 |
@@ -1817,6 +1886,21 @@ analysis/fbprophet.py —— Prophet 区间（存比值）的用例（DECISIONS.
 | f | `TestMatchesOldTree.test_bands_match_old_implementation()` |  |
 | C | `TestScaleBehaviour` | ⚠️ 比值不是"数学不变" —— 把上界钉住，防吹。 |
 | f | `TestScaleBehaviour.test_rescale_deviation_is_small_but_not_zero()` |  |
+
+### `test_feature_flow`
+analysis/feature_flow.py —— Hamilton DAG 的“各频段只算一次”。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestFeatureFlow` |  |
+| f | `TestFeatureFlow.test_graph_exposes_gear_and_sources()` |  |
+| f | `TestFeatureFlow.test_each_quadrant_runs_once()` |  |
+| f | `TestFeatureFlow.test_downrisk_reuses_precomputed_day()` |  |
+| f | `TestFeatureFlow.test_matches_manual_chain()` | Hamilton 结果必须与 MainstreamPipeline.code_features 的手写链逐值一致。 |
+| f | `TestFeatureFlow.test_multiindex_frames()` | 真实行情帧是 (datetime, code) 两级索引；输出索引必须原样保留。 |
+| f | `TestFeatureFlow.test_full_frame_uses_storage_aliases()` |  |
+| f | `TestFeatureFlow.test_mainstream_code_features_matches_manual()` | MainstreamPipeline._features_from_frames 与旧手写链逐值一致。 |
+| f | `TestFeatureFlow.test_gear_end_to_end()` |  |
 
 ### `test_indicators`
 analysis/indicators.py（TA_HMA）的结构性钉子。
@@ -1962,6 +2046,14 @@ analysis/poly9.py（Poly9 编排层）与老树的逐值对拍。
 | f | `TestPositionDS.test_nan_counts_as_omega()` | NaN 参与比较恒 False ⇒ 落入 Ω（与旧树一致，不提前剔除）。 |
 | f | `TestPositionDS.test_empty()` |  |
 | f | `TestPositionDS.test_series_matches_per_bar()` |  |
+| C | `TestPositionFlags` |  |
+| f | `TestPositionFlags.test_full_and_onset()` |  |
+| f | `TestPositionFlags.test_re_clear_gap()` |  |
+| f | `TestPositionFlags.test_re_clear_prev_start()` | 暴击点要带回「前一个零仓段的起点」下标（供指数新低条件用）。 |
+| f | `TestPositionFlags.test_bottom_filter()` | 空仓 + STAGE_MODE=-0.5 ⇒ PosBottom；PosProbe 回到原始 m_bull。 |
+| f | `TestPositionFlags.test_deep_bottom()` | 雪球底：连续>=3 天 -0.5 且 m_bear>=0.90（2024-02-05/06 唯一命中）。 |
+| f | `TestPositionFlags.test_bottom_requires_empty_position()` | 仓位没被清零时（有持仓），不触发底部试探。 |
+| f | `TestPositionFlags.test_first_segment_is_not_re_clear()` | 序列第一个清仓段没有「上一段」，不算暴击；之后隔 1 根再清算暴击。 |
 | C | `TestBroadcast` |  |
 | f | `TestBroadcast.test_multiindex_index60()` |  |
 | f | `TestBroadcast.test_prelude_requires_columns()` |  |
@@ -1981,7 +2073,7 @@ analysis/quadrant_jit.py（四量图 + 6 指标）的正确性测试。
 | f | `TestFormulaWiring.test_pivot_timing_lag()` |  |
 | f | `TestFormulaWiring.test_bs_before()` |  |
 | f | `TestFormulaWiring.test_quadrant_bs_trunk_timing_lag_matches_its_condition()` |  |
-| C | `TestMainstreamLeadout` | calc_mainstream_leadout_feats —— 吸筹的镜像（D73，新树自造）。 |
+| C | `TestMainstreamLeadout` | calc_mainstream_feats 的 leadout 族 —— 吸筹的镜像（D73，新树自造）。 |
 | f | `TestMainstreamLeadout.test_six_columns_and_non_empty()` |  |
 | f | `TestMainstreamLeadout.test_entry_and_shakeout_are_disjoint()` |  |
 | f | `TestMainstreamLeadout.test_causal_prefix_invariance()` | 只喂前 300 根与喂全 400 根，前 300 行逐值相同（不看未来）。 |
@@ -2016,6 +2108,18 @@ analysis/quadrant_coef.py —— 上升系数（QUprICoefD）的解耦编排。
 | f | `TestReferenceSeriesPreference.test_weekly_poly9_is_used_when_present()` |  |
 | f | `TestReferenceSeriesPreference.test_falls_back_to_lineareg_without_it()` |  |
 
+### `test_quadrant_gear`
+analysis/quadrant_gear.py —— QuadrantGear O 档的公式与 fold 默认。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestQuadrantGearO` |  |
+| f | `TestQuadrantGearO.test_formula_and_before()` |  |
+| f | `TestQuadrantGearO.test_extra_branch_positive_qlev()` | 第二分支：QLev 为正，但 dwn + q < 0、BSBuBfMaj < QLev、 |
+| f | `TestQuadrantGearO.test_charm_or_branch()` | 第五行：Bu>Sel 为假时，Charm_O < QLev 才兜底；Charm_I 不再参与。 |
+| f | `TestQuadrantGearO.test_missing_raises()` |  |
+| f | `TestQuadrantGearO.test_auto_major_fold()` |  |
+
 ### `test_quadrant_producers`
 上升系数夹取链 / 第二 OR 分支的最小生产者用例（2026-10-19）。
 
@@ -2036,6 +2140,24 @@ analysis/quadrant_coef.py —— 上升系数（QUprICoefD）的解耦编排。
 | C | `TestSecondOrBranch` | QLevMACDLagD 的第二分支：三列都在场才启用（老树 mainstream.py:228）。 |
 | f | `TestSecondOrBranch.test_branch_off_without_inputs()` |  |
 | f | `TestSecondOrBranch.test_branch_on_with_inputs()` |  |
+| C | `TestNegativeLeverageLag` | QLevMACDLagD 的结构反函数 —— 负能量/负 MACD 链（新树自造）。 |
+| f | `TestNegativeLeverageLag.test_down_trend_is_negative()` |  |
+| f | `TestNegativeLeverageLag.test_up_trend_defaults_positive()` |  |
+| f | `TestNegativeLeverageLag.test_gate_resets_negative_when_positive_lag_gt4()` | 门控：正列 > 4 时，负能量原始信号被强制回 +1。 |
+| f | `TestNegativeLeverageLag.test_is_structural_not_a_negation()` | 不是 -QLevMACDLagD：负段可以多于正列负段，且包含正列负段的一部分。 |
+| f | `TestNegativeLeverageLag.test_missing_powerline_raises()` |  |
+| C | `TestOmniPathBaseline` | OmniPathLeverBslLag —— 旧树 base.py:1008 的 baseline lag。 |
+| f | `TestOmniPathBaseline.test_dif_branch_runs()` |  |
+| f | `TestOmniPathBaseline.test_missing_raises()` |  |
+| C | `TestFbProphetLag` | fbpLUpRsgLagDmy 的降级 producer。 |
+| f | `TestFbProphetLag.test_up_flag_event_lag()` |  |
+| f | `TestFbProphetLag.test_missing_raises()` |  |
+| C | `TestLinearegWaveletLag` | LnarWavUprLagCand 的降级 producer。 |
+| f | `TestLinearegWaveletLag.test_atr_lb_below_close()` |  |
+| f | `TestLinearegWaveletLag.test_fallback_to_atr_lb()` |  |
+| f | `TestLinearegWaveletLag.test_missing_raises()` |  |
+| C | `TestMainstreamMajor` | 日线 MAJOR 版：MsLeadinBfMaj / MsLeadoutBfMaj 与基础列同值。 |
+| f | `TestMainstreamMajor.test_major_columns_equal_base()` |  |
 | C | `TestMacdQA` |  |
 | f | `TestMacdQA.test_matches_quantaxis_formula()` |  |
 | f | `TestMacdQA.test_hist_is_double_the_talib_convention()` |  |
@@ -2049,6 +2171,7 @@ analysis/reality_attach.py 的附加口径测试（mock DB，不连库）。
 | f | `TestAttachRealityFeats.test_coldstart_uses_previous_available_day()` |  |
 | f | `TestAttachRealityFeats.test_review_m9t_lag_columns_are_not_in_contract()` |  |
 | f | `TestAttachRealityFeats.test_hour_extra_is_attached_from_60min()` | D78：se / ZenPivotCnt 来自 60min 表，按时间戳精确 join（不 ffill）。 |
+| f | `TestAttachRealityFeats.test_60min_chip_wins_over_day_chip()` | 两张表都有 ChipDist 列时，60min 的 ÷本 bar close 口径优先。 |
 | f | `TestAttachRealityFeats.test_garident_bands_restored_by_anchor_close()` |  |
 | f | `TestAttachRealityFeats.test_chartscan_is_exact_join_not_ffill()` |  |
 | f | `TestAttachRealityFeats.test_prophet_gap_is_ffilled()` |  |
@@ -3248,6 +3371,14 @@ markets/StockCN/datasource/tdx_hosts.py —— 服务器池的候选 / 探活 / 
 | f | `test_timestamp_format()` | 测试时间戳格式转换 |
 
 ## GolemQ.test_cases.pipeline
+
+### `test_review_chip`
+chip_cost_by_day 缺个别交易日换手率时不能整段跳过（000711 回归）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestChipBackfill` |  |
+| f | `TestChipBackfill.test_missing_single_turnover_day_drops_row_not_target()` |  |
 
 ### `test_review_pipeline`
 统一 review 管线的核心不变量（不连 DB / 不跑全市场）。
