@@ -26,18 +26,27 @@ from GolemQ.pipeline.review.pipeline import (DEFAULT_FAMILIES, ReviewOptions,
 def latest_closed_bar(frequency: str = '15min', now=None) -> pd.Timestamp:
     """把墙上时间映射到最近一根**已收盘**的 15min / 60min bar 的时间戳。
 
-    A 股时段：09:30-11:30、13:00-15:00。只做粗粒度判断（非交易时段返回上一根）。
+    A 股时段：09:30-11:30、13:00-15:00。非交易日/开盘前回退到**最后一个
+    交易日 15:00**（走 `GQ_util_get_last_day`，不得把周六当交易日）。
     """
+    from GolemQ.markets.StockCN.date_utils import (GQ_util_get_last_day,
+                                                   GQ_util_if_trade)
     now = pd.Timestamp(now or pd.Timestamp.now())
     freq = str(frequency).lower()
     minutes = 15 if freq.startswith('15') else 60
     ts = now.floor(f'{minutes}min')
+    # 非交易日：直接回退到上一个交易日收盘
+    if not GQ_util_if_trade(str(now.date())):
+        d = GQ_util_get_last_day(ts=now.to_pydatetime())
+        return pd.Timestamp(d).normalize() + pd.Timedelta(hours=15)
     # 收盘后的最后一根：15:00（15min）/ 15:00（60min）
     if now.time() > pd.Timestamp('15:00').time():
         return now.normalize() + pd.Timedelta(hours=15)
+    # 开盘前：上一交易日 15:00
     if now.time() < pd.Timestamp('09:30').time():
         prev = now.normalize() - pd.Timedelta(days=1)
-        return prev + pd.Timedelta(hours=15)
+        d = GQ_util_get_last_day(ts=prev.to_pydatetime())
+        return pd.Timestamp(d).normalize() + pd.Timedelta(hours=15)
     return ts
 
 
