@@ -69,14 +69,14 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 （盘中 = 上一交易日；15:00 = 当日）。实测只有 **10 列**口径不对 ——
 ChipDist 4 + Renko 价格 6；其余 28 个比值列本来就是 as-of。
 
-⚠️ **库里这 10 列仍是旧值**（盘中按 bar close 除）。重建一条命令：
+✅ **存量已重建（2026-11-16）**：`tools/fix_asof_ratios.py --apply --workers 16`
+扫码 7,406 个 / 更新 **7,833,787 行** / 3,337s。复核：600519 / 000711 / 603366
+各 21 个交易日 + 随机 25 码 —— 盘中 3 根**全一致**；三码 21 条比值列 ×
+fetch/attach 的还原值与重算分子逐值一致。做法是**复制上一交易日 15:00 行**，
+不重算（幂等，重跑 `changed=0`）。
 
-```
-python tools/backfill_hour_extra.py --ratios-only --apply [--workers 8 | --shard i/3]
-```
-
-只 `$set` 这 10 列、不跳过已补过的码；`--ratios-only` 与 `--chip-only` 的区别是
-后者只补 chip（现在两者都已是 as-of 口径）。
+还原侧（2026-11-16 收尾）也已对齐：`PRICE_RATIO_COLUMNS` 补齐 `rTrePrcD/rTreSlopD`、
+删死名 `regtreePriceD`；帧首日盘中用日线兜底；close 为空时不写 NaN。
 
 #### Review 列覆盖度（2026-10-27 实测，见 D71/D72）
 
