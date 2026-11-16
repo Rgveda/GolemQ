@@ -30,7 +30,8 @@ _DAY_END = dtime(15, 0)
 
 __all__ = ['SE_WINDOW', 'sample_entropy_by_day',
            'renko_by_day', 'native_by_day', 'pivot_stats', 'chip_cost_by_day',
-           'build_hour_extra_frame', 'build_chip_frame',
+           'build_hour_extra_frame', 'build_chip_frame', 'renko_ratio_frame',
+           'asof_close_by_ts',
            'chip_ratios_from_abs', 'sample_day_frame']
 
 
@@ -372,7 +373,12 @@ def map_last_rows(days, frame, targets):
 
 
 def map_price_rows(days, frame, targets, close_by_ts, price_columns):
-    """同 :func:`map_last_rows`，但 `price_columns` 按**目标行 close** 转比值。"""
+    """同 :func:`map_last_rows`，但 `price_columns` 按**该目标的 as-of 收盘**转比值。
+
+    ⚠️ `close_by_ts` 必须是 :func:`asof_close_by_ts` 的结果（盘中 = 上一交易日
+    收盘），不是目标 bar 自己的 close —— 否则同一份快照被 4 根 bar 各除一次，
+    比值随盘中价格漂移（F8）。
+    """
     out = map_last_rows(days, frame, targets)
     if frame is None or len(frame) == 0 or len(out) == 0:
         return out
@@ -399,15 +405,41 @@ def _close_by_ts(ohlc: pd.DataFrame):
     return s[~s.index.duplicated(keep='last')]
 
 
+def asof_close_by_ts(ohlc: pd.DataFrame):
+    """逐 bar close → **as-of 收盘**（盘中 = 上一交易日收盘）。F8。
+
+    比值列的分母必须与分子的快照同一天锚；实现收口在
+    `reality_save.asof_close`（restore 侧用的是同一份规则），这里只做
+    「ohlc 帧 → close 序列」的转换，**不许再写一份**。
+    """
+    from GolemQ.markets.StockCN.reality_save import asof_close
+    return asof_close(_close_by_ts(ohlc))
+
+
+def renko_ratio_frame(ohlc: pd.DataFrame, targets, code: str) -> pd.DataFrame:
+    """Renko 14 列 → 60min 目标行（6 个价格列 ÷ **as-of 收盘**）。
+
+    review 与回填工具共用；`tools/backfill_hour_extra.py --ratios-only`
+    就靠它重建存量比值。
+    """
+    from GolemQ.pipeline.review.contract import (RENKO_DAY_COLUMNS,
+                                                 RENKO_PRICE_DUMMIES)
+    targets = pd.DatetimeIndex(pd.to_datetime(targets))
+    idx = pd.MultiIndex.from_arrays(
+        [targets, [str(code)] * len(targets)], names=['ts', 'code'])
+    rk_days, rk_df = renko_by_day(ohlc, targets)
+    rk = map_price_rows(rk_days, rk_df, targets, asof_close_by_ts(ohlc),
+                        {d for _b, d in RENKO_PRICE_DUMMIES})
+    return pd.DataFrame(rk, index=idx, columns=list(RENKO_DAY_COLUMNS))
+
+
 def build_hour_extra_frame(ohlc: pd.DataFrame, targets, code: str) -> pd.DataFrame:
     """`se` + `ZenPivotCnt/Lag` + Renko 14 + 60min 原生 10 列的**唯一构造器**。
 
     口径与 `steps/zen.py::zen_snapshots_step`、`tools/backfill_hour_extra.py`
     完全一致；两边都调这里，禁止再各自写 searchsorted 映射。
     """
-    from GolemQ.pipeline.review.contract import (HOUR_NATIVE_COLUMNS,
-                                                 RENKO_DAY_COLUMNS,
-                                                 RENKO_PRICE_DUMMIES)
+    from GolemQ.pipeline.review.contract import HOUR_NATIVE_COLUMNS
     targets = pd.DatetimeIndex(pd.to_datetime(targets))
     idx = pd.MultiIndex.from_arrays(
         [targets, [str(code)] * len(targets)], names=['ts', 'code'])
@@ -421,12 +453,9 @@ def build_hour_extra_frame(ohlc: pd.DataFrame, targets, code: str) -> pd.DataFra
     for j, c in enumerate(piv_df.columns):
         frame[c] = piv[:, j]
 
-    close_by_ts = _close_by_ts(ohlc)
-    rk_days, rk_df = renko_by_day(ohlc, targets)
-    rk = map_price_rows(rk_days, rk_df, targets, close_by_ts,
-                        {d for _b, d in RENKO_PRICE_DUMMIES})
-    for j, c in enumerate(RENKO_DAY_COLUMNS):
-        frame[c] = rk[:, j]
+    rk = renko_ratio_frame(ohlc, targets, code)
+    for c in rk.columns:
+        frame[c] = rk[c].to_numpy()
 
     nat_days, nat_df = native_by_day(ohlc, targets)
     nat = map_last_rows(nat_days, nat_df, targets)
@@ -439,8 +468,11 @@ def chip_ratios_from_abs(chip_abs, targets, close_by_ts,
                          code: str = '') -> pd.DataFrame:
     """绝对成本（按日）→ 每个 target 的 `cost*PrzD` 比值（÷目标行 close）。
 
-    `chip_abs` 的 key 是**归一化日**。⚠️ 选中规则必须与
-    :func:`chip_cost_by_day` 一致（F2，2026-11-16 复审）：
+    `chip_abs` 的 key 是**归一化日**。⚠️ `close_by_ts` 必须是
+    :func:`asof_close_by_ts` 的结果（盘中 = 上一交易日收盘，F8），
+    否则同一份分子被 4 根 bar 各除一次。
+
+    选中规则必须与 :func:`chip_cost_by_day` 一致（F2，2026-11-16 复审）：
 
     * **15:00** 目标 ⇒ 当日（当日收盘已成立）；
     * **盘中**（10:30 / 11:30 / 14:00）⇒ **严格早于当日的最后一个**可用日。

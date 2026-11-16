@@ -49,6 +49,7 @@ upsert、也不让建唯一索引，且 `ensure_indexes` 会把那个失败**吞
 from __future__ import annotations
 
 import time
+from datetime import time as dtime
 
 import numpy as np
 import pandas as pd
@@ -294,6 +295,59 @@ PRICE_RATIO_COLUMNS = (
 )
 
 
+def asof_close(close):
+    """把逐 bar 的 close 映射成**该行的 as-of 收盘**（F8，2026-11-16）。
+
+    比值列（`*D` / `*_DUMMY`）的分母必须是**分子所在快照**的 close，否则
+    同一份「上一交易日的特征」被当天的 4 根 60min bar 各除一次，比值会随
+    盘中价格漂移（review 复审 F2/F8）。
+
+    ==============  ============================================
+    行的时间戳        as-of close
+    ==============  ============================================
+    00:00（日频行）   自身（日线 bar 的 close 就是当日收盘）
+    15:00             自身（当日已收盘）
+    盘中（其他时刻）   最近一个 **≤ ts 的 15:00 bar** 的 close
+                      （= 上一交易日收盘；帧内没有则回落到自身）
+    ==============  ============================================
+
+    100% 纯函数：不取数、不看库。`index` 可以是 `(ts, code)` 多层（逐码处理），
+    也可以是单码的 `DatetimeIndex`。
+
+    >>> idx = pd.DatetimeIndex(['2024-01-02 15:00', '2024-01-03 10:30',
+    ...                         '2024-01-03 15:00'])
+    >>> asof_close(pd.Series([10.0, 11.0, 12.0], index=idx)).tolist()
+    [10.0, 10.0, 12.0]
+    """
+    idx = close.index
+    vals = pd.to_numeric(pd.Series(close), errors='coerce').to_numpy(dtype=float)
+    out = vals.copy()
+    if isinstance(idx, pd.MultiIndex):
+        ts = pd.DatetimeIndex(pd.to_datetime(idx.get_level_values(0)))
+        keys = idx.get_level_values(1)
+    else:
+        ts = pd.DatetimeIndex(pd.to_datetime(idx))
+        keys = np.zeros(len(vals), dtype=int)
+    for _key in pd.unique(keys):
+        sel = np.flatnonzero(np.asarray(keys) == _key)
+        t = ts[sel]
+        times = t.time
+        is_15 = np.asarray(times == dtime(15, 0))
+        if not is_15.any():
+            continue
+        is_daily = np.asarray(times == dtime(0, 0))
+        need = ~(is_15 | is_daily)
+        if not need.any():
+            continue
+        t15 = t[is_15]
+        order = np.argsort(t15)
+        t15, v15 = t15[order], vals[sel][is_15][order]
+        pos = t15.searchsorted(t[need], side='right') - 1
+        out[sel[need]] = np.where(pos >= 0, v15[np.clip(pos, 0, None)],
+                                  vals[sel][need])
+    return pd.Series(out, index=idx, name=getattr(close, 'name', None))
+
+
 def restore_price_columns(df: pd.DataFrame, close, columns=PRICE_RATIO_COLUMNS):
     """把存成**比值**的价格列乘回 close，还原价格量纲。**纯函数**。
 
@@ -362,7 +416,8 @@ def fetch_reality_feat(codes, start, end, family='day', market_type=None,
         restore_price = any(c in out.columns for c in PRICE_RATIO_COLUMNS)
     if restore_price:
         if close is None:
-            close = _close_for_restore(codes, start, end, family)
+            # 比值按 **as-of 收盘**归一化（F8）⇒ 还原也必须乘同一个锚点。
+            close = asof_close(_close_for_restore(codes, start, end, family))
         out = restore_price_columns(out, close)
     return out
 
@@ -402,7 +457,7 @@ def _close_for_restore(codes, start, end, family):
 __all__ = [
     'REALITY_FAMILIES', 'UNIQUE_KEYS',
     'reality_feat_name', 'reality_feat_rows', 'save_reality_feat', 'fetch_reality_feat',
-    'PRICE_RATIO_COLUMNS', 'restore_price_columns',
+    'PRICE_RATIO_COLUMNS', 'restore_price_columns', 'asof_close',
 ]
 
 

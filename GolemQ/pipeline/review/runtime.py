@@ -95,12 +95,14 @@ def compute_runtime(code: str,
         out = _attach_persisted(out, code, market_type, families, as_of)
     if restore_price:
         # 落库是「÷close」比值；runtime 作为读路径**还原价格量纲**。
-        from GolemQ.markets.StockCN.reality_save import restore_price_columns
+        from GolemQ.markets.StockCN.reality_save import (asof_close,
+                                                         restore_price_columns)
         for fam, frame in list(out.items()):
             src = frames.get(fam)
             if src is None or len(src) == 0 or 'close' not in src.columns:
                 continue
-            out[fam] = restore_price_columns(frame, src['close'])
+            # 比值按 as-of 收盘归一化 ⇒ 还原乘同一个锚点（F8）
+            out[fam] = restore_price_columns(frame, asof_close(src['close']))
     return out
 
 

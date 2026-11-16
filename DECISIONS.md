@@ -112,5 +112,6 @@
 | `D79` | Mainstream「全局智能仓位」移植：新树口径自洽，不逐值复刻 4.4 | 2026-11-01 | [decisions/D79.md](docs/decisions/D79.md) |
 | `D80` | QuadrantGear 特征改用 Apache Hamilton 列级 DAG | 2026-11-05 | [decisions/D80.md](docs/decisions/D80.md) |
 | `D81` | `stage` 权威源 = **4.4 搬运**；新树两条重算链全部删除 | 2026-11-16 | [decisions/D81.md](docs/decisions/D81.md) |
+| `D82` | 比值列（`*D` / `*_DUMMY`）的分母 = **分子所在快照的 as-of 收盘** | 2026-11-16 | [decisions/D82.md](docs/decisions/D82.md) |
 
 <!-- END GENERATED -->

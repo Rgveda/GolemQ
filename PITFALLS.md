@@ -1664,3 +1664,26 @@ chip 都只落 **60min 行**。旧 attach 对它们做**精确时间戳 join**�
 **排查**：`warnings.simplefilter('error', pd.errors.PerformanceWarning)` 下跑一遍
 `attach_reality_feats` / `build_hour_extra_frame` / `calc_compact_features` —— 前两者实测不触发，
 只有 compact 触发。
+
+### P51. 比值列（`*D` / `*_DUMMY`）的分母是 **as-of 收盘**，不是本 bar 的 close
+
+**位置**：`markets/StockCN/reality_save.py::asof_close`、
+`pipeline/review/steps/hour_extra.py::{asof_close_by_ts, renko_ratio_frame}`、
+`pipeline/review/steps/daily.py::day_sample_step`、attach / runtime /
+`fetch_reality_feat` 的还原路径（决策见 `D82`）。
+
+**含义**：60min 行的分子取自「≤T 的最后一个 15:00 快照」。分母必须是**同一个快照日**
+的 close：
+
+| 行 | 分母 |
+|:--|:--|
+| 盘中 10:30 / 11:30 / 14:00 | **上一交易日** 15:00 的 close |
+| 15:00 | 当日 15:00 的 close |
+| 日频行（00:00，`*_reality_feat_day`） | 自身 close |
+
+实测 000711 2025-12-08：盘中 `cost15Prz` 分子是 **1.72**（12-05），15:00 是 **1.73**（12-08）。
+库里盘中 3 根的比值必须**完全相同**——不同就说明又按 bar close 除了。
+
+**别改回去**：直觉上「÷ 当前 bar close」看起来更贴近市价，实际会让**同一份快照的比值
+随盘中价格漂移**，且 `ratio × 当前 close` 还原不出分子的绝对价（attach / 图表会错）。
+两个方向（生产与还原）都用 `asof_close`，只有这一份规则。

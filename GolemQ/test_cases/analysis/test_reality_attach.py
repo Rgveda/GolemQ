@@ -275,5 +275,34 @@ class TestStageBeforeFill(unittest.TestCase):
 
 
 
+class TestAsofClose(unittest.TestCase):
+    """F8：`asof_close` / `restore_price_columns` 的分母锚点。"""
+
+    def test_multiindex_and_restore(self):
+        from GolemQ.markets.StockCN.reality_save import (asof_close,
+                                                         restore_price_columns)
+        idx = pd.MultiIndex.from_tuples([
+            (pd.Timestamp('2024-01-02 15:00'), '600519'),
+            (pd.Timestamp('2024-01-03 10:30'), '600519'),
+            (pd.Timestamp('2024-01-03 15:00'), '600519'),
+            (pd.Timestamp('2024-01-02 15:00'), '000001'),
+        ], names=['ts', 'code'])
+        close = pd.Series([10.0, 11.0, 12.0, 50.0], index=idx)
+        got = asof_close(close)
+        # 600519 盘中 → 前一日 15:00 的 10.0；15:00 用自身；000001 不受影响
+        self.assertEqual(got.tolist(), [10.0, 10.0, 12.0, 50.0])
+        df = pd.DataFrame({'cost5PrzD': [2.0, 2.0, 1.0, 4.0]}, index=idx)
+        out = restore_price_columns(df, got, columns=('cost5PrzD',))
+        # 盘中 2.0*10=20（前一日收盘）；15:00 1.0*12=12
+        self.assertEqual(out['cost5Prz'].tolist(), [20.0, 20.0, 12.0, 200.0])
+
+    def test_daily_rows_keep_own_close(self):
+        from GolemQ.markets.StockCN.reality_save import asof_close
+        idx = pd.DatetimeIndex([pd.Timestamp('2024-01-02'),
+                                pd.Timestamp('2024-01-03')])
+        got = asof_close(pd.Series([10.0, 11.0], index=idx))
+        self.assertEqual(got.tolist(), [10.0, 11.0])
+
+
 if __name__ == '__main__':
     unittest.main()

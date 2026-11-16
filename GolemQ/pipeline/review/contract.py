@@ -50,7 +50,8 @@ RENKO_DAY_COLUMNS: Tuple[str, ...] = (
 )
 
 #: 日族：老树 `--daily` 的 14 列（**Renko 2026-10-30 起归 60min 族**，D78）。
-#: ⚠️ `poly9MajD` / `poly9WekD` / `rTrePrcMajD` 存的是**除以同一行 close 的比值**，
+#: ⚠️ `poly9MajD` / `poly9WekD` / `rTrePrcMajD` 存的是**除以该行 as-of 收盘的比值**
+#: （日行 = 自身 close；60min 采样行 = 快照日 close，见 D82），
 #: 不是绝对价位 —— 复权换挡时绝对价会断层（D49 通则）。`*Nor*` 本来就是 0..1。
 #: ⚠️ `se` / `ZenPivotCnt` **不在日族**（D78 撤销 D74）：60min 族承载，
 #: 见 `HOUR_EXTRA_COLUMNS`。

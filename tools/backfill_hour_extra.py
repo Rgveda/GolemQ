@@ -37,8 +37,8 @@ if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
 from GolemQ.pipeline.review.steps.hour_extra import (
-    build_chip_frame, build_hour_extra_frame, map_last_rows, pivot_stats,
-    sample_day_frame as _sample_day_frame)
+    asof_close_by_ts, build_chip_frame, build_hour_extra_frame, map_last_rows,
+    pivot_stats, renko_ratio_frame, sample_day_frame as _sample_day_frame)
 
 #: 目标行标记：有 `zDLagR` 的 60min 行才算 review 写过（CV-only 行不算）。
 _MARKER = 'zDLagR'
@@ -107,7 +107,7 @@ def day_sample_frame(code: str, targets: pd.DatetimeIndex):
 
 def _chip_frame(market, code: str, targets: pd.DatetimeIndex,
                 close_ts) -> pd.DataFrame:
-    """只算 ChipDist 四列（60min 行，÷本 bar close）。
+    """只算 ChipDist 四列（60min 行，分子/分母同为 **as-of 收盘**，F8）。
 
     算法与 review 的 `day_core`/`day_sample_step` 同源：`build_chip_frame`
     是 `hour_extra.py` 里的唯一入口。
@@ -182,20 +182,19 @@ def compute_frame(code: str, targets: pd.DatetimeIndex,
             names=['ts', 'code'])
         return pd.DataFrame({col: vals}, index=idx)
 
-    close_ts = pd.Series(
-        pd.to_numeric(ohlc['close'], errors='coerce').to_numpy(),
-        index=pd.DatetimeIndex(pd.to_datetime(ohlc.index.get_level_values(0))))
+    # ⚠️ 比值分母 = **as-of 收盘**（盘中 = 上一交易日），不是目标 bar close（F8）
+    close_ts = asof_close_by_ts(ohlc)
     if chip_only:
         return _chip_frame(market, code, targets, close_ts)
 
     # se/pivot/Renko/M9T：与 review `zen_snapshots_step` **同一构造器**
     frame = build_hour_extra_frame(ohlc, targets, code)
-    # ChipDist：同一 `build_chip_frame`（绝对成本 ÷ 本 bar close）
+    # ChipDist：同一 `build_chip_frame`（绝对成本 ÷ **as-of 收盘**）
     frame = pd.concat([frame, _chip_frame(market, code, targets, close_ts)],
                       axis=1)
 
-    # 日族采样（不重算）。⚠️ chip 4 列**必须排除**：它们上面已按 60min 行 close
-    # 算好，日表里的同名比值（÷当日 close）不能覆盖它。
+    # 日族采样（不重算）。⚠️ chip 4 列**必须排除**：它们上面已按 as-of 收盘
+    # 算好（与日表同名比值 ÷当日 close 在 15:00 行相同、盘中不同），不能覆盖。
     ds = day_sample_frame(code, targets)
     if ds is not None:
         _ds_cols = [c for c in DAY_SAMPLE_COLUMNS

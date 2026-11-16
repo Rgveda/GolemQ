@@ -290,17 +290,15 @@ def day_sample_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFra
     口径与 `coldstart_step` 相同：15:00 用当日行；盘中用**上一交易日**行
     （当日的日线要到收盘才成立）。
     """
-    from GolemQ.pipeline.review.steps.hour_extra import sample_day_frame
+    from GolemQ.pipeline.review.steps.hour_extra import (asof_close_by_ts,
+                                                          sample_day_frame)
 
     cache = ctx.outputs.get('_day_sample_rows') or {}
     chip_abs = ctx.outputs.get('_chip_abs_rows') or {}
-    _close60 = {}
+    # ⚠️ chip 的分母用**as-of 收盘**（盘中 = 上一交易日），与分子同锚（F8）；
+    # 其余 14 列来自 `_day_row`，本来就已按快照日 close 归一化。
     _src60 = ctx.frames.get('60min')
-    if _src60 is not None and len(_src60):
-        _close60 = dict(zip(
-            pd.DatetimeIndex(pd.to_datetime(
-                _src60.index.get_level_values(0))),
-            pd.to_numeric(_src60[AKA.CLOSE], errors='coerce')))
+    _close60 = asof_close_by_ts(_src60) if _src60 is not None else None
     out = sample_day_frame(cache, targets, close_by_ts=_close60,
                            chip_abs=chip_abs)
     # 共享构造器的 code 维留空；这里补回真实 code（review 写库按 (ts, code)）

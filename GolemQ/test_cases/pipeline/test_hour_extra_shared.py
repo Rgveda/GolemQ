@@ -79,11 +79,12 @@ class TestSharedHourExtraFrame(unittest.TestCase):
         self.assertEqual(out['ZenPivotCnt'].iloc[1:].tolist(), [5.0, 5.0])
         self.assertTrue(pd.isna(out['ZenPivotLag'].iloc[0]))
         self.assertEqual(out['ZenPivotLag'].iloc[1:].tolist(), [6.0, 6.0])
-        # 价格 dummy 按目标行 close 转比值；非价格列原样保留。
+        # 价格 dummy ÷ **as-of 收盘**（F8）：01-02 15:00 用自身 20；01-03 10:00
+        # 盘中 ⇒ 上一交易日 15:00 的 20（不是本 bar 的 30）。
         dummy = RENKO_PRICE_DUMMIES[0][1]
         self.assertTrue(pd.isna(out[dummy].iloc[0]))
         self.assertAlmostEqual(float(out[dummy].iloc[1]), 5.0)
-        self.assertAlmostEqual(float(out[dummy].iloc[2]), 100.0 / 30.0)
+        self.assertAlmostEqual(float(out[dummy].iloc[2]), 5.0)
         non_price = [c for c in RENKO_DAY_COLUMNS
                      if c not in {d for _b, d in RENKO_PRICE_DUMMIES}][0]
         self.assertTrue(pd.isna(out[non_price].iloc[0]))
@@ -130,6 +131,47 @@ class TestSharedChipMapping(unittest.TestCase):
         # 10:00 ⇒ 前一日 10/10；15:00 ⇒ 当日 20/10。
         # 旧实现两根都取当日（[2.0, 2.0]）。
         self.assertEqual(out['cost15PrzD'].tolist(), [1.0, 2.0])
+
+
+class TestAsofClose(unittest.TestCase):
+    """F8：比值分母 = 该目标的 **as-of 收盘**（盘中 = 上一交易日收盘）。"""
+
+    def test_intraday_uses_previous_day_close(self):
+        from GolemQ.pipeline.review.steps.hour_extra import asof_close_by_ts
+        # 01-02 10:00(10) / 01-02 15:00(20) / 01-03 10:00(30)
+        got = asof_close_by_ts(_ohlc())
+        self.assertEqual(got.tolist(), [10.0, 20.0, 20.0])
+
+    def test_renko_price_ratio_uses_asof_close(self):
+        ts = pd.DatetimeIndex([pd.Timestamp('2024-01-02 15:00'),
+                               pd.Timestamp('2024-01-03 10:00'),
+                               pd.Timestamp('2024-01-03 14:00'),
+                               pd.Timestamp('2024-01-03 15:00')])
+        close = np.array([20.0, 30.0, 40.0, 50.0])
+        ohlc = pd.DataFrame({
+            AKA.OPEN: close, AKA.HIGH: close, AKA.LOW: close,
+            AKA.CLOSE: close, 'volume': 1.0},
+            index=pd.MultiIndex.from_arrays(
+                [ts, [CODE] * len(ts)], names=['ts', 'code']))
+        targets = pd.DatetimeIndex(ts[1:])
+        # Renko 快照：前一日 15:00 = 200，当日 15:00 = 300
+        rk_rows = []
+        for price in (200.0, 300.0):
+            row = {c: 7.0 for c in RENKO_DAY_COLUMNS}
+            for _base, dummy in RENKO_PRICE_DUMMIES:
+                row[dummy] = price
+            rk_rows.append([row[c] for c in RENKO_DAY_COLUMNS])
+        rk_days = pd.DatetimeIndex([ts[0], ts[3]])
+        rk_df = pd.DataFrame(rk_rows, index=rk_days,
+                             columns=list(RENKO_DAY_COLUMNS))
+        dummy = RENKO_PRICE_DUMMIES[0][1]
+        with patch.object(he, 'renko_by_day', return_value=(rk_days, rk_df)):
+            out = he.renko_ratio_frame(ohlc, targets, CODE)
+        # 盘中两根都 ÷ 上一交易日 close(20)；15:00 ÷ 当日 close(50)。
+        # 按 bar close 除的旧实现会给 200/30 与 200/40。
+        self.assertAlmostEqual(float(out[dummy].iloc[0]), 10.0)
+        self.assertAlmostEqual(float(out[dummy].iloc[1]), 10.0)
+        self.assertAlmostEqual(float(out[dummy].iloc[2]), 6.0)
 
 
 class TestSharedDaySample(unittest.TestCase):

@@ -63,8 +63,20 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
    → 60min 已全落库时 15min 也能补；空目标不再整帧 upsert；
 4. F3 NameError、F5 死代码、F6 重复计算、F7 `--offset` 三族边界（纯日期 ⇒ 23:59:59）一并处理。
 
-⚠️ **数据侧仍是旧值**：库里 60min 的 `cost*PrzD` 是按旧口径（盘中取当日收盘）写的；
-要让存量一致需重跑 `tools/backfill_hour_extra.py --chip-only --apply`（按码、可分片）。
+#### 比值列 as-of 口径（**D82** / P51）—— 代码已改，**存量待重建**
+
+60min 行的比值列（`*D` / `*_DUMMY`）分母统一为**分子快照日的 as-of 收盘**
+（盘中 = 上一交易日；15:00 = 当日）。实测只有 **10 列**口径不对 ——
+ChipDist 4 + Renko 价格 6；其余 28 个比值列本来就是 as-of。
+
+⚠️ **库里这 10 列仍是旧值**（盘中按 bar close 除）。重建一条命令：
+
+```
+python tools/backfill_hour_extra.py --ratios-only --apply [--workers 8 | --shard i/3]
+```
+
+只 `$set` 这 10 列、不跳过已补过的码；`--ratios-only` 与 `--chip-only` 的区别是
+后者只补 chip（现在两者都已是 as-of 口径）。
 
 #### Review 列覆盖度（2026-10-27 实测，见 D71/D72）
 
