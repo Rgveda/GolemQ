@@ -449,8 +449,13 @@ def attach_reality_feats(features: pd.DataFrame,
     # 归一化列（D / _DUMMY）* close -> 无后缀价格列；attach 只读
     from GolemQ.markets.StockCN.reality_save import asof_close, restore_price_columns
     if AKA.CLOSE in features.columns:
-        # 分母是**该行的 as-of 收盘**（盘中 = 上一交易日收盘），不是本 bar close（F8）。
-        features = restore_price_columns(features, asof_close(features[AKA.CLOSE]),
+        # 分母是**该行的 as-of 收盘**（盘中 = 上一交易日收盘），不是本 bar close（D82）。
+        # `daily` 兜底帧首日：帧内还没有 15:00 bar，用日线的前一交易日收盘。
+        _daily = (day_ohlc[AKA.CLOSE]
+                  if day_ohlc is not None and AKA.CLOSE in getattr(day_ohlc, 'columns', ())
+                  else None)
+        features = restore_price_columns(features,
+                                         asof_close(features[AKA.CLOSE], daily=_daily),
                                          PRICE_RATIO_COLUMNS)
     features = _restore_garident_bands(features, day_ohlc)
     # 补 `bstStgBf` / `epStgBf`（缺才填；garPD → garP → stage → before）

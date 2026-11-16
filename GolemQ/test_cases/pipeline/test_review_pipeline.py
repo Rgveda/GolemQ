@@ -156,6 +156,26 @@ class TestRatioColumns(unittest.TestCase):
             self.assertNotIn(base, HOUR_COLUMNS)
             self.assertNotIn(dummy, DAY_COLUMNS)
 
+    def test_every_ratio_column_is_restorable(self):
+        """契约里每个 `*D` 列都必须在 `PRICE_RATIO_COLUMNS` 里 —— 否则永不还原。
+
+        2026-11-16 复审发现 `rTrePrcD` / `rTreSlopD` 漏了（库里明明有值，
+        attach/runtime 却从不还原），`regtreePriceD` 则是个不存在的旧名。
+        """
+        from GolemQ.markets.StockCN.reality_save import PRICE_RATIO_COLUMNS
+        from GolemQ.pipeline.review.contract import FAMILY_COLUMNS
+        contract = set()
+        for cols in FAMILY_COLUMNS.values():
+            contract |= set(cols)
+        ratio_like = {c for c in contract
+                      if c.endswith('D') or c.endswith('_DUMMY')}
+        missing = sorted(ratio_like - set(PRICE_RATIO_COLUMNS))
+        self.assertEqual(missing, [],
+                         f'这些比值列不会被还原：{missing}')
+        # 反向：还原表里不许有契约中不存在的死名
+        dead = sorted(set(PRICE_RATIO_COLUMNS) - contract)
+        self.assertEqual(dead, [], f'PRICE_RATIO_COLUMNS 里的死名：{dead}')
+
     def test_hour_renko_is_asof_window_and_ratios(self):
         """60min Renko：**逐日 as-of 2160 窗口**，价格列落 `*D` 比值。"""
         from GolemQ.analysis.renko_jit import available

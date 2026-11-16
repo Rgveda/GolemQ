@@ -97,12 +97,17 @@ def compute_runtime(code: str,
         # 落库是「÷close」比值；runtime 作为读路径**还原价格量纲**。
         from GolemQ.markets.StockCN.reality_save import (asof_close,
                                                          restore_price_columns)
+        _day = frames.get('day')
+        _daily = (_day['close'] if _day is not None and 'close' in _day.columns
+                  else None)
         for fam, frame in list(out.items()):
             src = frames.get(fam)
             if src is None or len(src) == 0 or 'close' not in src.columns:
                 continue
-            # 比值按 as-of 收盘归一化 ⇒ 还原乘同一个锚点（F8）
-            out[fam] = restore_price_columns(frame, asof_close(src['close']))
+            # 比值按 as-of 收盘归一化 ⇒ 还原乘同一个锚点（D82）；
+            # `daily` 兜底帧首日（帧内还没有 15:00 bar）。
+            out[fam] = restore_price_columns(
+                frame, asof_close(src['close'], daily=_daily))
     return out
 
 

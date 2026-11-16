@@ -283,24 +283,48 @@ def save_reality_feat(features: pd.DataFrame, family: str, market_type,
 
 #: **存的是「÷close」比值、读回要乘回 close** 的列（D49/D54 的双向约定）。
 #: `*Nor*` 是 0..1 的归一化强度，不是价格量纲，**不还原**。
+#: review 契约里**所有**价格量纲比值列（`D` / `_DUMMY`）。
+#: ⚠️ 加契约列时必须同步这里 —— 否则该列永远不还原（2026-11-16 复审发现
+#: `rTrePrcD` / `rTreSlopD` 漏了，而 `regtreePriceD` 是个库里根本不存在的旧名）。
+#: `test_cases/markets/test_reality_save.py` 有覆盖度守卫。
 PRICE_RATIO_COLUMNS = (
     'poly9MajD', 'poly9WekD',
     'rTrePrcMajD', 'rTreSlopMajD',
     'prophetLbD', 'prophetUbD',
     'prophetLbMajD', 'prophetUbMajD',
-    'poly9D', 'regtreePriceD',
+    'poly9D', 'rTrePrcD', 'rTreSlopD',      # 60min 原生（D78）
     'cost5PrzD', 'cost15PrzD', 'cost85PrzD', 'cost95PrzD',
     'renkoSpriceD', 'renkoLpriceD',
     'renkosBarLbD', 'renkosBarUbD', 'renkolBarLbD', 'renkolBarUbD',
 )
 
 
-def asof_close(close):
+def _daily_maps(daily):
+    """`daily` close → ``{code: (交易日 DatetimeIndex, close array)}``（私有）。"""
+    if daily is None or len(daily) == 0:
+        return {}
+    d = pd.Series(daily)
+    if isinstance(d.index, pd.MultiIndex):
+        dts = pd.DatetimeIndex(pd.to_datetime(d.index.get_level_values(0)))
+        keys = d.index.get_level_values(1)
+    else:
+        dts = pd.DatetimeIndex(pd.to_datetime(d.index))
+        keys = np.zeros(len(d), dtype=int)
+    out = {}
+    for key in pd.unique(keys):
+        sel = np.flatnonzero(np.asarray(keys) == key)
+        order = np.argsort(dts[sel])
+        out[key] = (dts[sel][order].normalize(),
+                    d.to_numpy(dtype=float)[sel][order])
+    return out
+
+
+def asof_close(close, daily=None):
     """把逐 bar 的 close 映射成**该行的 as-of 收盘**（F8，2026-11-16）。
 
     比值列（`*D` / `*_DUMMY`）的分母必须是**分子所在快照**的 close，否则
     同一份「上一交易日的特征」被当天的 4 根 60min bar 各除一次，比值会随
-    盘中价格漂移（review 复审 F2/F8）。
+    盘中价格漂移（D82 / `PITFALLS.md` P51）。
 
     ==============  ============================================
     行的时间戳        as-of close
@@ -308,8 +332,14 @@ def asof_close(close):
     00:00（日频行）   自身（日线 bar 的 close 就是当日收盘）
     15:00             自身（当日已收盘）
     盘中（其他时刻）   最近一个 **≤ ts 的 15:00 bar** 的 close
-                      （= 上一交易日收盘；帧内没有则回落到自身）
+                      （= 上一交易日收盘）
     ==============  ============================================
+
+    ⚠️ **帧首日**的盘中行在 `close` 里找不到更早的 15:00（`fetch_reality_feat`
+    只取请求区间、attach 的帧从首日开始）。此时：
+    传了 `daily`（日线 close，索引 `(date, code)` 或 `DatetimeIndex`）⇒ 用
+    **上一交易日**的日线收盘；没传 ⇒ 回落到自身（= 旧的 bar close 行为）。
+    生产路径（attach / runtime / fetch）都会传 `daily`。
 
     100% 纯函数：不取数、不看库。`index` 可以是 `(ts, code)` 多层（逐码处理），
     也可以是单码的 `DatetimeIndex`。
@@ -318,6 +348,11 @@ def asof_close(close):
     ...                         '2024-01-03 15:00'])
     >>> asof_close(pd.Series([10.0, 11.0, 12.0], index=idx)).tolist()
     [10.0, 10.0, 12.0]
+    >>> # 帧首日盘中：close 里没有前一日的 15:00 ⇒ 用 daily 兜底
+    >>> asof_close(pd.Series([11.0], index=pd.DatetimeIndex(['2024-01-03 10:30'])),
+    ...            daily=pd.Series([10.0], index=pd.DatetimeIndex(['2024-01-02']))
+    ...            ).tolist()
+    [10.0]
     """
     idx = close.index
     vals = pd.to_numeric(pd.Series(close), errors='coerce').to_numpy(dtype=float)
@@ -328,23 +363,35 @@ def asof_close(close):
     else:
         ts = pd.DatetimeIndex(pd.to_datetime(idx))
         keys = np.zeros(len(vals), dtype=int)
+    dmap = _daily_maps(daily)
+    times = np.asarray(ts.time)
+    is_15 = times == dtime(15, 0)
+    is_00 = times == dtime(0, 0)
     for _key in pd.unique(keys):
         sel = np.flatnonzero(np.asarray(keys) == _key)
         t = ts[sel]
-        times = t.time
-        is_15 = np.asarray(times == dtime(15, 0))
-        if not is_15.any():
-            continue
-        is_daily = np.asarray(times == dtime(0, 0))
-        need = ~(is_15 | is_daily)
-        if not need.any():
-            continue
-        t15 = t[is_15]
-        order = np.argsort(t15)
-        t15, v15 = t15[order], vals[sel][is_15][order]
-        pos = t15.searchsorted(t[need], side='right') - 1
-        out[sel[need]] = np.where(pos >= 0, v15[np.clip(pos, 0, None)],
-                                  vals[sel][need])
+        resolved = np.zeros(len(sel), dtype=bool)     # 已经定下来（15:00/日频）
+        resolved |= is_15[sel] | is_00[sel]
+        # 1) 帧内的 15:00 轴
+        r15 = np.flatnonzero(is_15[sel])
+        if len(r15):
+            order = np.argsort(t[r15])
+            t15 = t[r15][order]
+            v15 = vals[sel][r15][order]
+            cand = np.flatnonzero(~resolved)
+            pos = t15.searchsorted(t[cand], side='right') - 1
+            ok = pos >= 0
+            out[sel[cand[ok]]] = v15[pos[ok]]
+            resolved[cand[ok]] = True
+        # 2) 还没有定下来的（帧首日盘中 / 整帧没有 15:00）→ 日线兜底：
+        #    盘中行取**严格早于当日**的最后一个交易日收盘。
+        if dmap and _key in dmap:
+            dts, dvals = dmap[_key]
+            for i in np.flatnonzero(~resolved):
+                p = int(dts.searchsorted(t[i].normalize(), side='left')) - 1
+                if p >= 0:
+                    out[sel[i]] = dvals[p]
+                    resolved[i] = True
     return pd.Series(out, index=idx, name=getattr(close, 'name', None))
 
 
@@ -352,15 +399,23 @@ def restore_price_columns(df: pd.DataFrame, close, columns=PRICE_RATIO_COLUMNS):
     """把存成**比值**的价格列乘回 close，还原价格量纲。**纯函数**。
 
     :param df: 读回的帧（索引 `(ts, code)` 或 `(date, code)`）
-    :param close: 与 `df` 可对齐的 close 序列/帧（索引同形；或含 `close` 列）
+    :param close: 与 `df` 可对齐的 close 序列/帧（索引同形；或含 `close` 列）。
+        ⚠️ 必须是**as-of 收盘**（`:func:`asof_close` 的结果），不是逐 bar close ——
+        比值是按分子所在快照日归一的（D82）。
     :returns: `df` 的副本；只改 `columns` 中实际存在的列。
+
+    ⚠️ `close` 为空（比如该码没有 K 线，取数返回空）时**原样返回**，不把价格列
+    写成 NaN —— 宁可保留比值，也不静默丢掉整列。
     """
     if df is None or len(df) == 0:
         return df
     out = df.copy()
     if isinstance(close, pd.DataFrame):
         close = close['close']
-    close = pd.Series(close).reindex(out.index)
+    close = pd.Series(close)
+    if len(close) == 0:
+        return out
+    close = close.reindex(out.index)
     for col in columns:
         if col not in out.columns:
             continue
@@ -423,9 +478,15 @@ def fetch_reality_feat(codes, start, end, family='day', market_type=None,
 
 
 def _close_for_restore(codes, start, end, family):
-    """取与 `fetch_reality_feat` 同形的 close（供比值列还原）。"""
+    """取与 `fetch_reality_feat` 同形的 close（供比值列还原）。
+
+    ⚠️ **往前多取 30 天**：as-of 还原需要「帧首日之前的 15:00 bar」（D82）。
+    只取请求区间会让首日盘中行找不到上一交易日收盘 ⇒ 静默退化成 bar close。
+    多出来的行由 `restore_price_columns` 的 reindex 丢掉。
+    """
     from GolemQ import get_active_market
     market = get_active_market()
+    start = str((pd.Timestamp(start) - pd.Timedelta(days=30)).date())
     if family == 'day':
         res, _ = market.get_kline_price_v3(codes, start=start, end=end,
                                            realtime=False, verbose=False)

@@ -303,6 +303,18 @@ class TestAsofClose(unittest.TestCase):
         got = asof_close(pd.Series([10.0, 11.0], index=idx))
         self.assertEqual(got.tolist(), [10.0, 11.0])
 
+    def test_first_day_intraday_falls_back_to_daily(self):
+        """帧首日盘中：close 里还没有 15:00 bar ⇒ 用日线的前一交易日收盘。
+
+        否则 `fetch_reality_feat`（只取请求区间）与 attach 的帧首日会静默
+        退化成 bar close —— 生产上就是首日价格错。
+        """
+        from GolemQ.markets.StockCN.reality_save import asof_close
+        idx = pd.DatetimeIndex([pd.Timestamp('2024-01-03 10:30')])
+        daily = pd.Series([10.0], index=pd.DatetimeIndex(['2024-01-02']))
+        got = asof_close(pd.Series([11.0], index=idx), daily=daily)
+        self.assertEqual(got.tolist(), [10.0])
+
 
 if __name__ == '__main__':
     unittest.main()
