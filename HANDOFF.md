@@ -52,18 +52,19 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 `--strategy` 组合；**不要再造** `--review-eval` 这类前缀变体（D58）。
 ⚠️ `--daily` **已删除**（语义不明）；`--review` == `--strategy review`。
 
-#### `--review` 复审遗留（2026-11-16，**均未修**）
+#### `--review` 复审 F1–F7 —— ✅ **已修**（2026-11-16）
 
-清单、机制与可执行复现见 [`docs/worklog/2026-11.md`](docs/worklog/2026-11.md) 同日「代码复审」条。
-按优先级：
+清单、机制与验证见 [`docs/worklog/2026-11.md`](docs/worklog/2026-11.md) 同日「代码复审」与「再续」两条。
+要点：
 
-1. **F1 串行退化**：`int(pct_of_cores)` 把 0.32 / 0.5 截成 0 ⇒ 整条 `--review` / `--strategy compact`
-   串行且**不出并行横幅**。主流已有 `worker_count()`（同款事故的修复），复用它，别写第三份；
-2. **F2 ChipDist 盘中未来函数**：`chip_ratios_from_abs` 对盘中 bar 取了**当日收盘**的成本分子
-   （实测 000711 2025-12-08 10:30 用 1.73 而非前一日 1.72）；review 与 `backfill_hour_extra` 同病；
-3. **F4 15min 无法自愈**：60min 目标为空时 `zen_snapshots` 被跳过，`_minute15_rows` 不生成；
-4. F3 `_core_daily(feats=None)` 是 NameError；F5 死代码 `pivot_counts`；F6 `_day_row` 算两次；
-   F7 `--offset <日期>` 三族边界不一致（日族含当日、分钟族不含）。
+1. `worker_count()` 挪进 `pipeline/base.py`，review/compact 改调它 → 默认 0.32 不再退化成串行；
+2. ChipDist 盘中改用**前一交易日**的分子（旧值有未来函数）；
+3. `StepRunner` 按依赖闭包决定是否执行 + `zen_snapshots` 为 15min 补所在整点的 60min bar
+   → 60min 已全落库时 15min 也能补；空目标不再整帧 upsert；
+4. F3 NameError、F5 死代码、F6 重复计算、F7 `--offset` 三族边界（纯日期 ⇒ 23:59:59）一并处理。
+
+⚠️ **数据侧仍是旧值**：库里 60min 的 `cost*PrzD` 是按旧口径（盘中取当日收盘）写的；
+要让存量一致需重跑 `tools/backfill_hour_extra.py --chip-only --apply`（按码、可分片）。
 
 #### Review 列覆盖度（2026-10-27 实测，见 D71/D72）
 

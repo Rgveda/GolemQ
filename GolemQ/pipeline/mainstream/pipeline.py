@@ -23,7 +23,7 @@ from GolemQ.analysis.position import calc_position_flags, calc_position_series
 from GolemQ.core.constants import FIELD as FLD
 from GolemQ.markets.StockCN.date_utils import GQ_util_last_trade_as_of
 from GolemQ.models.alias import LTT
-from GolemQ.pipeline.base import BasePipeline, CodeResult
+from GolemQ.pipeline.base import BasePipeline, CodeResult, worker_count  # noqa: F401
 
 #: 构建主时间轴用的参考码（长历史、极少停牌）。三条并集覆盖 2016 以来全部交易日。
 TIMELINE_REFS = ('600519', '000001', '300750')
@@ -364,33 +364,6 @@ class MainstreamPipeline(BasePipeline):
                     continue
                 out[_c] = _snap_col(_c)
         return out[out['mberCnt'] > 0].reset_index(drop=True)
-
-
-def worker_count(pct_of_cores, cores: int = None) -> int:
-    """`--pct-of-cores` → worker 数。``>1`` 按**百分数**、``(0,1]`` 按**比例**、
-    ``<=0`` → 0（串行）。
-
-    ⚠️ **不能先 `int()`**：默认值是比例 `0.32`，`int(0.32) == 0` 会让整条流水线
-    退化到**串行**（5,582 码 × ~2.6s ≈ 4 小时），且 `Parallel` 之前没有任何输出
-    —— 2026-11-12 用户实报「直接卡死没提示」。
-
-    >>> worker_count(0.32, 20)
-    6
-    >>> worker_count(25, 20)
-    5
-    >>> worker_count(1.0, 20)
-    20
-    >>> worker_count(0, 20)
-    0
-    """
-    import multiprocessing
-    cores = int(cores or multiprocessing.cpu_count())
-    pct = float(pct_of_cores or 0)
-    if pct > 1:                      # 百分数（23 = 23%）
-        return max(1, int((pct / 100.0) * cores))
-    if pct > 0:                      # 比例（0.32 = 32%）
-        return max(1, int(pct * cores))
-    return 0
 
 
 def run_mainstream(eval_range: str = 'all', codes=None, as_of: str = '',

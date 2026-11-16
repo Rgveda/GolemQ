@@ -43,6 +43,29 @@ REVIEW_ANCHOR_15MIN = '2017-01-01'
 TARGET_LOOKBACK_DAYS = {'day': 2560, '60min': 800, '15min': 800}
 
 
+def as_of_bound(value) -> Optional[pd.Timestamp]:
+    """把**纯日期**形式的截止时间补到当日 **23:59:59**（F7）。
+
+    `--offset 2026-01-05` 以前会被当成 `00:00`：日族（bar 时间戳 00:00）
+    含当天，60min / 15min 却停在**前一交易日 15:00** —— 同一截止日在三族间
+    不一致，看起来像分钟数据缺口。纯日期一律按「含当日全部」解释；
+    带时刻的输入原样保留（runtime 的 as-of 就在盘中）。
+
+    >>> as_of_bound('2026-01-05')
+    Timestamp('2026-01-05 23:59:59')
+    >>> as_of_bound('2026-01-05 10:30')
+    Timestamp('2026-01-05 10:30:00')
+    >>> as_of_bound(None) is None
+    True
+    """
+    if value is None or value == '':
+        return None
+    ts = pd.Timestamp(value)
+    if ts == ts.normalize():
+        return ts.normalize() + pd.Timedelta(hours=23, minutes=59, seconds=59)
+    return ts
+
+
 @dataclass
 class ReviewOptions:
     families: Sequence[str] = DEFAULT_FAMILIES
@@ -149,7 +172,8 @@ class ReviewPipeline(BasePipeline):
             return pd.DatetimeIndex([])
         as_of = ctx.as_of
         if self.options.offset:
-            as_of = min(as_of, pd.Timestamp(self.options.offset))
+            # 纯日期 ⇒ 当日 23:59:59（与 run_code 同一口径，F7）
+            as_of = min(as_of, as_of_bound(self.options.offset))
         source_index = target_times(src, as_of)
         # 首次回填的**目标下界**：更早的数据只做暖机、不落新行（与老树 2560/800 天一致）。
         lookback = TARGET_LOOKBACK_DAYS.get(family)
@@ -163,9 +187,13 @@ class ReviewPipeline(BasePipeline):
 
     @staticmethod
     def _restrict_to_targets(frame: pd.DataFrame, targets) -> pd.DataFrame:
-        """只保留目标时间戳的行 —— 防止把 `minor_signals` 的**全量 15min 帧**整表写库。"""
-        if frame is None or len(frame) == 0 or targets is None or len(targets) == 0:
+        """只保留目标时间戳的行 —— 防止把 `_minute15_rows` 的**全量 15min 帧**整表写库。"""
+        if frame is None or len(frame) == 0:
             return frame
+        if targets is None or len(targets) == 0:
+            # ⚠️ 没有目标 ⇒ 一行都不该写。以前这里原样返回 frame，会把整帧
+            # （包括已经持久化、或只作依赖算出来的行）再 upsert 一遍（F4）。
+            return frame.iloc[0:0]
         ts = pd.DatetimeIndex(pd.to_datetime(frame.index.get_level_values(0)))
         return frame.loc[ts.isin(pd.DatetimeIndex(pd.to_datetime(targets)))]
 
@@ -201,8 +229,8 @@ class ReviewPipeline(BasePipeline):
     # 单码
     # ------------------------------------------------------------------ #
     def run_code(self, code: str, **kwargs) -> CodeResult:
-        as_of = pd.Timestamp(kwargs.get('as_of') or self.options.offset or
-                             GQ_util_last_trade_as_of())
+        as_of = as_of_bound(kwargs.get('as_of') or self.options.offset or
+                            GQ_util_last_trade_as_of())
         market_type = self.market_type_of(code)
         families = tuple(self.options.families)
         # 「库名不外泄」：pipeline 不拼库名，只从 **Active Market** 取实例，
@@ -305,13 +333,11 @@ def run_review(eval_range: str = 'fast', codes: Optional[Iterable[str]] = None,
     if limit and limit > 0:
         codelist = codelist[:int(limit)]
 
-    cpu = int(pct_of_cores) if pct_of_cores else 0
-    if cpu > 1:
-        import multiprocessing
-        cpu = max(1, int((cpu / 100.0) * multiprocessing.cpu_count()))
-    elif 0 < cpu <= 1:
-        import multiprocessing
-        cpu = max(1, int(cpu * multiprocessing.cpu_count()))
+    # ⚠️ 换算收口到 `worker_count`（`pipeline/base.py`，与主流管线同一份）：
+    # 以前是 `int(pct_of_cores)`，把默认的比例 0.32 截成 0 ⇒ 整条管线**串行**，
+    # 而且并行横幅不出（F1，见 worklog 2026-11-16）。
+    from GolemQ.pipeline.base import worker_count
+    cpu = worker_count(pct_of_cores)
     # joblib 的 n_jobs 是**进程数**；旧 `--pct_of_cores 32` = 32% 核数。
 
     opts = ReviewOptions(families=tuple(families), force=force, dry_run=dry_run,

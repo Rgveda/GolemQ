@@ -28,7 +28,7 @@ SE_WINDOW = 2160
 CZSC_MAX_BI = 512
 _DAY_END = dtime(15, 0)
 
-__all__ = ['SE_WINDOW', 'sample_entropy_by_day', 'pivot_counts',
+__all__ = ['SE_WINDOW', 'sample_entropy_by_day',
            'renko_by_day', 'native_by_day', 'pivot_stats', 'chip_cost_by_day',
            'build_hour_extra_frame', 'build_chip_frame',
            'chip_ratios_from_abs', 'sample_day_frame']
@@ -70,77 +70,6 @@ def sample_entropy_by_day(ohlc: pd.DataFrame, targets=None):
             days.append(t)
             vals.append(round(float(v), 3))
     return pd.DatetimeIndex(days), np.asarray(vals, dtype=float)
-
-
-def pivot_counts(ohlc: pd.DataFrame, targets, code: str) -> np.ndarray:
-    """截至**当日 15:00**、用**最近 2160 根** 60min 算出的中枢个数；失败返回 NaN。
-
-    口径（用户 2026-10-30 明确）：
-    * 与 `se` **同一个窗口**：取目标日 15:00 往前 **≤2160 根**（2024 年的 bar
-      ⇒ 数据从 2021 年底起）；
-    * **as-of**：窗口里只放 ≤T 的 bar，从窗口第一根起按顺序建 CZSC，禁止
-      「全历史跑一次再取 T」—— 实测 600519 2024-08-16 两种做法是 **47 vs 44**
-      （全量跑完会改写早期笔/中枢），`--review` 就是为消除这种后视镜扰动；
-    * 每天 4 根 60min 共用当天 15:00 的值（用户允许「跳 4」）。
-
-    代价：每个目标日一遍 2160 根窗口；实测约 **25~40ms/日**。
-    """
-    if ohlc is None or len(ohlc) < 30 or targets is None or len(targets) == 0:
-        return np.full(len(targets), np.nan)
-    try:
-        from czsc import CZSC
-        from czsc.objects import Freq, RawBar
-
-        from GolemQ.analysis.pivot import calc_pivots, causal_pivot_count
-        ts = pd.DatetimeIndex(pd.to_datetime(ohlc.index.get_level_values(0)))
-        cut = pd.DatetimeIndex(pd.to_datetime(targets))
-        bars15 = ts[ts.time == _DAY_END]
-        if len(bars15) == 0:
-            return np.full(len(targets), np.nan)
-        pos = bars15.searchsorted(cut, side='right') - 1
-        need = sorted(set(bars15[pos[pos >= 0]]))
-        if not need:
-            return np.full(len(targets), np.nan)
-
-        bars_all = []
-        for i, (t, (_, row)) in enumerate(zip(ts, ohlc.iterrows())):
-            bars_all.append(RawBar(
-                symbol=code, dt=t, id=i, freq=Freq.F60,
-                open=float(row.get('open', np.nan)),
-                close=float(row.get('close', np.nan)),
-                high=float(row.get('high', np.nan)),
-                low=float(row.get('low', np.nan)),
-                vol=float(row.get('volume', row.get('vol', 0)) or 0),
-                amount=float(row.get('amount', 0) or 0),
-            ))
-        idx_of = {t: i for i, t in enumerate(ts)}
-        by_day = {}
-        for T in need:
-            j = idx_of[T]
-            w = bars_all[max(0, j - SE_WINDOW + 1): j + 1]
-            czsc = CZSC(w[:1], max_bi_count=CZSC_MAX_BI, verbose=False)
-            conf: dict = {}
-            prev = None
-            for bar in w[1:]:
-                czsc.update(bar)
-                if czsc.bi_list:
-                    key = czsc.bi_list[-1].fx_b.dt
-                    if key != prev:
-                        conf[key] = bar.dt
-                        prev = key
-            piv = calc_pivots(bi_list=list(czsc.bi_list),
-                              conf_map=conf, strict=True)
-            by_day[T] = int(causal_pivot_count(
-                piv, pd.DatetimeIndex([T]), strict=True)[0])
-        days = pd.DatetimeIndex(sorted(by_day))
-        p = days.searchsorted(cut, side='right') - 1
-        out = np.full(len(targets), np.nan)
-        ok = p >= 0
-        out[ok] = np.array([by_day[d] for d in days[p[ok]]], dtype=float)
-        out[cut < ts[0]] = np.nan
-        return out
-    except Exception:               # noqa: BLE001 CZSC 失败不该毁掉整条管线
-        return np.full(len(targets), np.nan)
 
 
 def renko_by_day(ohlc: pd.DataFrame, targets):
@@ -510,8 +439,16 @@ def chip_ratios_from_abs(chip_abs, targets, close_by_ts,
                          code: str = '') -> pd.DataFrame:
     """绝对成本（按日）→ 每个 target 的 `cost*PrzD` 比值（÷目标行 close）。
 
-    `chip_abs` 的 key 是**归一化日**；target 取 `<=` 它的最后一个有 chip 的日，
-    与 tool 的 `chip_days.searchsorted(targets, side='right') - 1` 同口径。
+    `chip_abs` 的 key 是**归一化日**。⚠️ 选中规则必须与
+    :func:`chip_cost_by_day` 一致（F2，2026-11-16 复审）：
+
+    * **15:00** 目标 ⇒ 当日（当日收盘已成立）；
+    * **盘中**（10:30 / 11:30 / 14:00）⇒ **严格早于当日的最后一个**可用日。
+
+    以前一律 `searchsorted(normalize, side='right') - 1`：只要 `chip_abs` 里有
+    当日 key（15:00 目标必然产生它），盘中三根也会取到**当日收盘**算出的成本
+    ——未来函数。实测 000711 2025-12-08 10:30 的 `cost15Prz` 分子是 1.73（当日），
+    应为前一交易日 1.72。
     """
     from GolemQ.pipeline.review.contract import HOUR_CHIP_COLUMNS
     targets = pd.DatetimeIndex(pd.to_datetime(targets))
@@ -521,7 +458,11 @@ def chip_ratios_from_abs(chip_abs, targets, close_by_ts,
     if chip_abs:
         days = pd.DatetimeIndex(sorted({pd.Timestamp(d).normalize()
                                         for d in chip_abs}))
-        pos = days.searchsorted(targets.normalize(), side='right') - 1
+        day = targets.normalize()
+        at_close = np.array([t.time() >= _DAY_END for t in targets], dtype=bool)
+        pos = np.empty(len(targets), dtype=int)
+        pos[at_close] = days.searchsorted(day[at_close], side='right') - 1
+        pos[~at_close] = days.searchsorted(day[~at_close], side='left') - 1
         srcs = ('cost5Prz', 'cost15Prz', 'cost85Prz', 'cost95Prz')
         for i, p in enumerate(pos):
             if p < 0:

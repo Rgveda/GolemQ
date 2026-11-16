@@ -44,3 +44,11 @@ tools/_is_stock_cn_baseline.tsv
 # 换了权重就换一个新文件，别把它提交上去。
 # 想放到别处：设 `$GOLEMQ_CHARTSCAN_WEIGHTS` 指过去（见 markets/StockCN/chartscan/model.py）。
 datastore/
+
+# 仓库根部的**运行残留**：review/回填/迁移的日志、临时探测脚本、图表导出。
+# 跑完就该扔 —— 结论写 `docs/worklog/`，日志本身不入库（2026-11-16 用户定）。
+/_*.log
+/_*.cmd
+/_*.txt
+/_*.zip
+/output/

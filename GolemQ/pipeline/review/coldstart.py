@@ -44,7 +44,9 @@ def _core_daily(day: pd.DataFrame, feats: pd.DataFrame = None) -> pd.DataFrame:
 
     ``feats`` 传入时复用 `day_core` 已算好的 M9T/Poly9，**不再重算**。
     """
-    feats = features if feats is None else feats
+    # ⚠️ 以前写成 `features if feats is None else feats` —— `features` 未定义，
+    # `feats=None` 时直接 NameError（F3，2026-11-16 复审）。
+    feats = pd.DataFrame(index=day.index) if feats is None else feats
     feats[AKA.CLOSE] = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
     close = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
     typical = (day[AKA.OPEN] + day[AKA.HIGH] + day[AKA.LOW] + close) / 4

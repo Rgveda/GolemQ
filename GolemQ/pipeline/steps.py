@@ -143,9 +143,27 @@ class StepRunner:
                 names = [s.name for s in pending]
                 raise ValueError(f'FeatureStep 依赖成环/缺失：{names}')
 
+        # ⚠️ 跳过判据不能只看**自己的族**：`zen_snapshots` 既给 60min 落库，
+        # 又顺带产出 `_minute15_rows` 给 `minute15_aligned` 取样。60min 已全落库、
+        # 只剩 15min 缺行时，只看自己会把依赖一起跳过 ⇒ 15min **永远补不上**
+        # （F4，2026-11-16 复审；已用本类实测输出 `{}`）。
+        needed = set()
+        for s in ordered:
+            if s.output_family is None:
+                needed.add(s.name)      # 无族输出的 step 自己决定要不要算
+            elif len(ctx.targets.get(s.output_family, pd.DatetimeIndex([]))):
+                needed.add(s.name)
+        stack = list(needed)
+        while stack:
+            name = stack.pop()
+            for dep in by_name[name].deps:
+                if dep not in needed:
+                    needed.add(dep)
+                    stack.append(dep)
+
         for step in ordered:
             targets = ctx.targets.get(step.output_family, pd.DatetimeIndex([]))
-            if step.output_family is not None and len(targets) == 0:
+            if step.name not in needed:
                 continue
             out = step.func(ctx, targets)
             if out is None or len(out) == 0:

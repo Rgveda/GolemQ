@@ -30,7 +30,7 @@
 | 8 | `zen_snapshots`：`se` | 只 15:00 算，窗口 2160，盘中沿用上一交易日 | ✅ | — |
 | 9 | `zen_snapshots`：**`ZenPivotCnt`** | 原：**全序列一次跑**再按 `known_dt` 过滤 | ❌ → 已修 | 44 vs 47（2024-08-16）、47 vs 50（2025-06-30）。现改为**2160 根 as-of 窗口**（用户 2026-10-30 指定，与 `se` 同窗口） |
 | 10 | `minute15_aligned` | 只从 #7 取样 | ✅ | 不重算 |
-| 11 | `minor_signals_step`（**兼容入口，不在默认管线**） | 整条 15min 帧一次算 | ⚠️ | 若外部调用方拿它算历史行 ⇒ 有后视镜；默认 `build_minor_steps` 不注册它 |
+| 11 | ~~`minor_signals_step`~~（**2026-11-16 已删**） | 整条 15min 帧一次算 | 🗑 | 唯一调用方是测试；它按整帧算 ⇒ 算历史行有后视镜。测试改调 `minor_features(frame)`，兼容入口删除（worklog 2026-11-16 F5） |
 | 12 | `runtime.compute_runtime` | 复用同一套 step | ✅ | 与 review 同步修复 |
 
 ## 三、attach 核验
@@ -123,5 +123,5 @@ NaN（例如 `m9t` 那天算不出），盘中 NaN 是**正确**的。工具已�
 * 60min 一体化行 = zen 4 + minor 17 + coldstart 16 + se/计数 2 + Renko 14
   + 日族 14（采样）+ M9T 2（60min 原生）= **69 列**；Poly9/RegTree/Prophet
   按用户口径「算过就免算」复用日频结果。
-* `minor_signals_step` 是兼容入口，默认管线不注册；外部若用它算历史，需自行
-  改为逐 T 调用。
+* `minor_signals_step` **已删除**（2026-11-16，F5）：它在整条 15min 帧上一次算，
+  拿它算历史行就是后视镜。需要逐 T 计算请直接调 `minor_features(切片帧)`。

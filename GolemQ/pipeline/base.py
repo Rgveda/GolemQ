@@ -79,6 +79,34 @@ from GolemQ.markets.StockCN.symbol import normalize_code
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
+def worker_count(pct_of_cores, cores: int = None) -> int:
+    """`--pct-of-cores` → worker 数。``>1`` 按**百分数**、``(0,1]`` 按**比例**、
+    ``<=0`` → 0（串行）。
+
+    ⚠️ **不能先 `int()`**：默认值是比例 `0.32`，`int(0.32) == 0` 会让整条流水线
+    退化到**串行**，且并行横幅（只在 `pool_size > 0` 分支打印）一行都不出 ——
+    2026-11-12 用户实报「直接卡死没提示」（主流管线），
+    2026-11-16 复审发现 `review` / `compact` 仍是同款坏实现（F1）。
+
+    >>> worker_count(0.32, 20)
+    6
+    >>> worker_count(25, 20)
+    5
+    >>> worker_count(1.0, 20)
+    20
+    >>> worker_count(0, 20)
+    0
+    """
+    import multiprocessing
+    cores = int(cores or multiprocessing.cpu_count())
+    pct = float(pct_of_cores or 0)
+    if pct > 1:                      # 百分数（23 = 23%）
+        return max(1, int((pct / 100.0) * cores))
+    if pct > 0:                      # 比例（0.32 = 32%）
+        return max(1, int(pct * cores))
+    return 0
+
+
 @dataclass
 class CodeResult:
     """逐码执行结果 —— 让失败原因可区分，而不是一律 ``None``。"""

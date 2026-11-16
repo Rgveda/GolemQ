@@ -118,6 +118,19 @@ class TestSharedChipMapping(unittest.TestCase):
         out = he.chip_ratios_from_abs(chip_abs, targets, None, code=CODE)
         self.assertTrue(pd.isna(out['cost15PrzD'].iloc[0]))
 
+    def test_intraday_uses_previous_day_not_same_day(self):
+        """F2：盘中 bar 不能用**当日收盘**算出的 chip（未来函数）。"""
+        same = pd.Timestamp('2024-01-03')
+        prev = pd.Timestamp('2024-01-02')
+        chip_abs = {prev: {'cost15Prz': 10.0}, same: {'cost15Prz': 20.0}}
+        targets = pd.DatetimeIndex([pd.Timestamp('2024-01-03 10:00'),
+                                    pd.Timestamp('2024-01-03 15:00')])
+        close = pd.Series([10.0, 10.0], index=targets)
+        out = he.chip_ratios_from_abs(chip_abs, targets, close, code=CODE)
+        # 10:00 ⇒ 前一日 10/10；15:00 ⇒ 当日 20/10。
+        # 旧实现两根都取当日（[2.0, 2.0]）。
+        self.assertEqual(out['cost15PrzD'].tolist(), [1.0, 2.0])
+
 
 class TestSharedDaySample(unittest.TestCase):
 

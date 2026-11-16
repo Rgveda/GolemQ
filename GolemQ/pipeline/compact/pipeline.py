@@ -145,13 +145,10 @@ def run_compact(eval_range: str = DEFAULT_COMPACT_SCOPE,
         if got is False:
             raise ValueError('无法解析 eval_range={!r}'.format(eval_range))
         codelist = list(got)
-    cpu = int(pct_of_cores) if pct_of_cores else 0
-    if cpu > 1:
-        import multiprocessing
-        cpu = max(1, int((cpu / 100.0) * multiprocessing.cpu_count()))
-    elif 0 < cpu <= 1:
-        import multiprocessing
-        cpu = max(1, int(cpu * multiprocessing.cpu_count()))
+    # 换算收口到 `worker_count`（同一份实现，见 F1）：`int(0.32) == 0`
+    # 会让 `--strategy compact` 静默退化成串行。
+    from GolemQ.pipeline.base import worker_count
+    cpu = worker_count(pct_of_cores)
 
     pipe = CompactPipeline(verbose=verbose)
     return pipe.run_codes(codelist, pool_size=cpu, verbose=verbose,

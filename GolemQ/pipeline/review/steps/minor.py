@@ -27,8 +27,7 @@ from GolemQ.analysis.timing import calc_event_timing_lag
 from GolemQ.analysis.zen import calc_zen_timing_lag
 from GolemQ.core.constants import AKA, FEATURES, FIELD as FLD
 from GolemQ.models.alias import LTT, TRD
-from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_DAILY,
-                                   TIER_RUNTIME, slice_asof)
+from GolemQ.pipeline.steps import FeatureStep, ReviewContext, TIER_DAILY
 from GolemQ.pipeline.review.contract import MINOR_15MIN_COLUMNS, MINOR_COLUMNS
 
 #: 老树 15min 的 rename 表（源列 → MINOR 列）。
@@ -91,12 +90,6 @@ def minor_features(ohlc: pd.DataFrame, code: str,
     for c in MINOR_15MIN_COLUMNS:
         out[c] = feats[c] if c in feats.columns else np.nan
     return out
-
-
-def minor_signals_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFrame:
-    """兼容入口：在整条 15min 帧上算一次（测试/旧调用）。"""
-    return minor_features(slice_asof(ctx.frame('15min'), ctx.as_of), ctx.code,
-                          market_type=ctx.market_type)
 
 
 def minute15_aligned_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFrame:

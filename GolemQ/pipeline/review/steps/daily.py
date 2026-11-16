@@ -253,10 +253,12 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
         wk_raw, wk_feats = wk_cache[wkey]
 
         # 日族 14 列：60min 行按日采样复用（用户 2026-10-30：算过就免算）
+        # ⚠️ 同一 T 以前调两次 `_day_row`（F6）；两个字典共用同一份值即可。
         _chip = chip_abs.get(pd.Timestamp(T).normalize())
-        sample_rows[T] = _day_row(day, feats, wk_raw, wk_feats, chip=_chip)
+        _row = _day_row(day, feats, wk_raw, wk_feats, chip=_chip)
+        sample_rows[T] = _row
         if T in day_target_set:
-            day_rows[T] = _day_row(day, feats, wk_raw, wk_feats, chip=_chip)
+            day_rows[T] = _row
         if T in cold_dates or T in prev_dates:
             cold_rows[T] = _coldstart_row(day, feats=feats)
 

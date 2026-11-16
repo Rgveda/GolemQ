@@ -168,6 +168,12 @@ DOCTEST_MODULES = (
     # ⚠️ `server.py` / `client.py` **模块级不 import zmq**（只在 GolemAI env 有），
     # 故本模块在 GolemQ env 下也收集得动；`server.py` 没有 doctest，不入列。
     'GolemQ.analysis.cv.client',
+    # 管线层的两个**纯辅助**（2026-11-16）：`base.worker_count`（`--pct-of-cores`
+    # 的比例/百分数换算 —— `int(0.32)==0` 会让整条管线静默串行，F1）与
+    # `review.pipeline.as_of_bound`（纯日期截止补到 23:59:59，F7）。
+    # 两个模块本身都会拖 pandas/joblib，但导入不碰 DB/网络；按“逐函数”的规矩只钉这两条。
+    'GolemQ.pipeline.base',
+    'GolemQ.pipeline.review.pipeline',
 )
 
 

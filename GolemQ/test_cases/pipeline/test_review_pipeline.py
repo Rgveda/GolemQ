@@ -31,7 +31,7 @@ from GolemQ.pipeline.review.contract import (DAY_COLUMNS, HOUR_COLUMNS,
                                              MINOR_15MIN_COLUMNS)
 from GolemQ.pipeline.review.steps.daily import (daily_snapshot_step,
                                                 day_core_step)
-from GolemQ.pipeline.review.steps.minor import minor_signals_step
+from GolemQ.pipeline.review.steps.minor import minor_features
 from GolemQ.pipeline.review.steps.zen import zen_snapshots_step
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, StepRunner,
                                    TIER_RUNTIME, slice_asof, target_times)
@@ -183,19 +183,15 @@ class TestRatioColumns(unittest.TestCase):
 class TestMinorStep(unittest.TestCase):
     def test_columns_and_prefix_stability(self):
         df = _ohlc(320, freq='15min', seed=5)
-        as_of = df.index.get_level_values(0)[-1]
-        ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
-                            frames={'15min': df}, as_of=as_of)
-        out = minor_signals_step(ctx, target_times(df, as_of))
+        out = minor_features(df, '600519', market_type=MARKET_TYPE.STOCK_CN)
         self.assertEqual(list(out.columns), list(MINOR_15MIN_COLUMNS))
         # 老树 `calc_zen_wavelet_reality_minor` 的 zen 两列必须在，且真的算出了值
         self.assertTrue(out[['zDLagMinR', 'zPLagMinR']].notna().any().all())
 
         # 前缀稳定性：只到 T 的帧算出的第 T 行 == 全量帧的第 T 行
         T = df.index.get_level_values(0)[-2]
-        ctx_t = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
-                              frames={'15min': df}, as_of=T)
-        out_t = minor_signals_step(ctx_t, target_times(df, T))
+        out_t = minor_features(slice_asof(df, T), '600519',
+                               market_type=MARKET_TYPE.STOCK_CN)
         for c in MINOR_15MIN_COLUMNS:
             a = float(out.loc[(T, '600519'), c])
             b = float(out_t.loc[(T, '600519'), c])
@@ -875,6 +871,129 @@ class TestPipelineInterrupt(unittest.TestCase):
         text = out.getvalue()
         self.assertIn('3 个CPU核心', text)
         self.assertIn('并行处理', text)
+
+
+class TestWorkerCount(unittest.TestCase):
+    """F1：比例形式的 `--pct-of-cores` 以前被 `int()` 截成 0 ⇒ 静默串行。"""
+
+    def test_fraction_and_percent(self):
+        import multiprocessing
+        from GolemQ.pipeline.base import worker_count
+        cores = multiprocessing.cpu_count()
+        self.assertEqual(worker_count(0.32), max(1, int(0.32 * cores)))
+        self.assertEqual(worker_count(0.5), max(1, int(0.5 * cores)))
+        self.assertEqual(worker_count(25), max(1, int(0.25 * cores)))
+        self.assertEqual(worker_count(0), 0)
+
+    def _run_with(self, modname, cls, fn_name, **kwargs):
+        class _M:
+            def scan_dataset(self):
+                return None
+        module = __import__(modname, fromlist=[fn_name])
+        fn = getattr(module, fn_name)
+        with unittest.mock.patch(
+                'GolemQ.analysis.cv.scopes.perpar_symbol_range',
+                return_value=['600519', '000001']), \
+                unittest.mock.patch('GolemQ.get_active_market', return_value=_M()), \
+                unittest.mock.patch.object(cls, 'run_codes',
+                                           return_value=([], {})) as rc:
+            fn(eval_range='fast', pct_of_cores=kwargs['pct'])
+        return rc.call_args.kwargs['pool_size']
+
+    def test_review_default_ratio_runs_parallel(self):
+        import multiprocessing
+        got = self._run_with('GolemQ.pipeline.review.pipeline',
+                             ReviewPipeline, 'run_review', pct=0.32)
+        self.assertEqual(got, max(1, int(0.32 * multiprocessing.cpu_count())))
+
+    def test_review_zero_is_serial(self):
+        self.assertEqual(self._run_with('GolemQ.pipeline.review.pipeline',
+                                        ReviewPipeline, 'run_review', pct=0), 0)
+
+    def test_compact_default_ratio_runs_parallel(self):
+        from GolemQ.pipeline.compact.pipeline import CompactPipeline
+        self.assertGreaterEqual(
+            self._run_with('GolemQ.pipeline.compact.pipeline',
+                           CompactPipeline, 'run_compact', pct=0.32), 1)
+
+
+class TestTargetRestriction(unittest.TestCase):
+    def test_empty_targets_write_nothing(self):
+        """F4：没有目标 ⇒ 不能把整帧再 upsert 一遍。"""
+        from GolemQ.pipeline.review.steps.zen import build_zen_steps  # noqa: F401
+        idx = pd.MultiIndex.from_tuples(
+            [(pd.Timestamp('2024-01-02'), '600519'),
+             (pd.Timestamp('2024-01-03'), '600519')], names=['ts', 'code'])
+        frame = pd.DataFrame({'x': [1.0, 2.0]}, index=idx)
+        out = ReviewPipeline._restrict_to_targets(frame, pd.DatetimeIndex([]))
+        self.assertEqual(len(out), 0)
+
+
+class TestZenMinute15Dependency(unittest.TestCase):
+    """F4：60min 已全落库、只剩 15min 缺行时，依赖也要跑起来。"""
+
+    def test_15min_only_still_produces_minute_rows(self):
+        from GolemQ.pipeline.review.contract import (
+            HOUR_NATIVE_COLUMNS, MINOR_15MIN_COLUMNS, RENKO_DAY_COLUMNS)
+        from GolemQ.pipeline.review.steps import zen as zen_mod
+        from GolemQ.pipeline.review.steps.minor import build_minor_steps
+        from GolemQ.pipeline.review.steps.zen import build_zen_steps
+
+        ts15 = pd.DatetimeIndex([pd.Timestamp('2024-01-02 09:45'),
+                                 pd.Timestamp('2024-01-02 10:00'),
+                                 pd.Timestamp('2024-01-02 10:15'),
+                                 pd.Timestamp('2024-01-02 10:30')])
+        q15 = pd.DataFrame({'open': 1.0, 'high': 1.0, 'low': 1.0,
+                            'close': 1.0, 'volume': 1.0},
+                           index=pd.MultiIndex.from_arrays(
+                               [ts15, ['600519'] * len(ts15)],
+                               names=['ts', 'code']))
+        ts60 = pd.DatetimeIndex([pd.Timestamp('2024-01-02 10:30')])
+        h60 = pd.DataFrame({'open': 1.0, 'high': 1.0, 'low': 1.0,
+                            'close': 1.0, 'volume': 1.0},
+                           index=pd.MultiIndex.from_arrays(
+                               [ts60, ['600519']], names=['ts', 'code']))
+        ctx = ReviewContext(code='600519', market_type=MARKET_TYPE.STOCK_CN,
+                            frames={'60min': h60, '15min': q15},
+                            as_of=pd.Timestamp('2024-01-02 15:00'))
+        ctx.targets['60min'] = pd.DatetimeIndex([])     # 60min 已全部落库
+        ctx.targets['15min'] = pd.DatetimeIndex(
+            [pd.Timestamp('2024-01-02 10:00')])
+
+        def fake_minor(frame, code, market_type=None):
+            return pd.DataFrame(
+                {c: np.arange(len(frame), dtype=float)
+                 for c in MINOR_15MIN_COLUMNS}, index=frame.index)
+
+        def fake_extra(frame, targets, code):
+            idx = pd.MultiIndex.from_arrays(
+                [pd.DatetimeIndex(targets), [code] * len(targets)],
+                names=['ts', 'code'])
+            cols = (['se', 'ZenPivotCnt', 'ZenPivotLag',
+                     *RENKO_DAY_COLUMNS, *HOUR_NATIVE_COLUMNS])
+            return pd.DataFrame(0.0, index=idx, columns=cols)
+
+        with unittest.mock.patch.object(zen_mod, 'minor_features', fake_minor), \
+                unittest.mock.patch.object(zen_mod, 'build_hour_extra_frame',
+                                           fake_extra), \
+                unittest.mock.patch.object(zen_mod, '_zen_last',
+                                           return_value=(np.nan, np.nan)):
+            out = StepRunner().run(
+                ctx, build_zen_steps() + build_minor_steps(),
+                families=('15min',), tiers=('daily',))
+
+        self.assertIn('15min', out)
+        got = set(pd.DatetimeIndex(out['15min'].index.get_level_values(0)))
+        self.assertEqual(got, set(ts15))                # 这一小时的 4 根
+        self.assertIn('_minute15_rows', ctx.outputs)
+
+
+class TestColdstartNoneFeats(unittest.TestCase):
+    def test_core_daily_accepts_none_feats(self):
+        """F3：`feats=None` 分支以前是 `NameError: features`。"""
+        from GolemQ.pipeline.review.coldstart import _core_daily
+        feats = _core_daily(_ohlc(80))
+        self.assertIn(FLD.MAGIC_NINE_TURNS, feats.columns)
 
 
 if __name__ == '__main__':
