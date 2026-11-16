@@ -89,7 +89,9 @@ def zen_snapshots_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.Data
         piv_cnt = ex['ZenPivotCnt']
         piv_lag = ex['ZenPivotLag']
         rk_vals = ex[list(RENKO_DAY_COLUMNS)].to_numpy(dtype=float)
-        nat_vals = ex[list(HOUR_NATIVE_COLUMNS)].to_numpy(dtype=float)
+        # ⚠️ stage 族里有 `garPD`（列表）与 `garPAnchor`（日期串）—— 不能整片
+        # 转 float；逐列取，数值列在 DataFrame 构造时自然成为 float。
+        nat_vals = [ex[c] for c in HOUR_NATIVE_COLUMNS]
         rows.append([d60, p60, d15, p15, piv_lag, *minor_vals, se, piv_cnt,
                      *rk_vals, *nat_vals])
         idx.append((T, ctx.code))

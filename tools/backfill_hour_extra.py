@@ -1,12 +1,13 @@
 # coding: utf-8
-"""给已有 review **60min 行**补 `se` / `ZenPivotCnt` / `ChipDist` 四列。
+"""给已有 review **60min 行**补 `se` / `ZenPivotCnt` / `ZenPivotLag` / `ChipDist`。
 
 口径与 `pipeline/review/steps/zen.py` 完全一致（直接复用
-`steps/hour_extra.py` 的 `sample_entropy_by_day` / `pivot_counts`）：
+`steps/hour_extra.py` 的 `sample_entropy_by_day` / `pivot_stats`）：
 
 * `se`：60min 收盘价 `antropy.sample_entropy`，只在 15:00 那根算，
   窗口 ≤2160 根，`round(3)`；盘中沿用上一交易日 15:00（因果 ffill）；
-* `ZenPivotCnt`：截至该 bar 已确认的缠论中枢个数（CZSC 因果口径）。
+* `ZenPivotCnt` / `ZenPivotLag`：同一批 CZSC 中枢，后者是出中枢后的 lag。
+  `--zen-pivot-only` 只算这一列，跳过 se/Renko/M9T/FBPROPHET/STAGE。
 
 ⚠️ **取数一定从 2016 锚点开始**：目标区间头部（如 2024 年以前）也要有
 ≥2160 根 60min 做基础计算；只取「目标起点往前 900 天」会把头部 SE/中枢
@@ -17,6 +18,8 @@
     python tools/backfill_hour_extra.py                  # 报告（dry-run）
     python tools/backfill_hour_extra.py --apply          # 真写
     python tools/backfill_hour_extra.py --codes 600519 --apply
+    python tools/backfill_hour_extra.py --codes-file codes.txt \
+        --zen-pivot-only --apply                         # 只修 ZenPivotLag
     python tools/backfill_hour_extra.py --unset-day --apply   # 清掉日表两列
 """
 from __future__ import annotations
@@ -34,7 +37,7 @@ if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
 from GolemQ.pipeline.review.steps.hour_extra import (
-    build_chip_frame, build_hour_extra_frame,
+    build_chip_frame, build_hour_extra_frame, map_last_rows, pivot_stats,
     sample_day_frame as _sample_day_frame)
 
 #: 目标行标记：有 `zDLagR` 的 60min 行才算 review 写过（CV-only 行不算）。
@@ -55,12 +58,13 @@ def _market_type(code: str):
     return is_stock_cn(str(code))[1]
 
 
-def target_datetimes(code: str, since: str = '') -> pd.DatetimeIndex:
+def target_datetimes(code: str, since: str = '',
+                     marker: str = _MARKER) -> pd.DatetimeIndex:
     """该码已写入 review 的 60min 时刻（按 `datetime` 字符串解析）。"""
     db = _db()
     from GolemQ.markets.StockCN.reality_save import reality_feat_name
     name = reality_feat_name('60min', _market_type(code))
-    q = {'code': str(code), _MARKER: {'$ne': None}}
+    q = {'code': str(code), marker: {'$ne': None}}
     cur = db[name].find(q, {'datetime': 1, '_id': 0})
     vals = [pd.Timestamp(d['datetime']) for d in cur if d.get('datetime')]
     if not vals:
@@ -137,13 +141,16 @@ def _chip_frame(market, code: str, targets: pd.DatetimeIndex,
 
 def compute_frame(code: str, targets: pd.DatetimeIndex,
                   verbose: bool = False,
-                  chip_only: bool = False) -> pd.DataFrame:
+                  chip_only: bool = False,
+                  zen_pivot_only: bool = False) -> pd.DataFrame:
     """按 targets 算 60min 一体化行里的**增量列**。
 
     一次算完：`se` + `ZenPivotCnt` + Renko 14 + M9T 2（60min 原生，2160 as-of）
     + 日族 14（从日表采样，不重算 Poly9/RegTree）。
 
     ``chip_only=True``：只算 `HOUR_CHIP_COLUMNS` 四列，跳过上面全部列。
+    ``zen_pivot_only=True``：只算 `ZenPivotLag`，跳过 se/Renko/M9T/日族采样
+    （FBPROPHET/STAGE/Poly9 等大头都在这条路径之外）。
     """
     from GolemQ import get_active_market
     from GolemQ.pipeline.review.contract import (DAY_SAMPLE_COLUMNS,
@@ -157,6 +164,23 @@ def compute_frame(code: str, targets: pd.DatetimeIndex,
     if ohlc is None or len(ohlc) < 30:
         return pd.DataFrame()
     ohlc = ohlc[~ohlc.index.duplicated(keep='last')].sort_index()
+
+    if zen_pivot_only:
+        # 只算中枢 lag；不碰 se / Renko / M9T / 日族采样 / chip。
+        from GolemQ.models.alias import ZEN
+        piv_days, piv_df = pivot_stats(ohlc, targets, code)
+        col = ZEN.PIVOT_TIMING_LAG
+        # `pivot_stats` 异常时返回空帧；此时不要写 NaN，否则会把旧值清空。
+        if piv_df is None or len(piv_df.columns) == 0 or len(piv_days) == 0:
+            return pd.DataFrame()
+        piv = map_last_rows(piv_days, piv_df, targets)
+        vals = piv[:, list(piv_df.columns).index(col)]
+        if not np.isfinite(vals).any():
+            return pd.DataFrame()
+        idx = pd.MultiIndex.from_arrays(
+            [pd.DatetimeIndex(targets), [str(code)] * len(targets)],
+            names=['ts', 'code'])
+        return pd.DataFrame({col: vals}, index=idx)
 
     close_ts = pd.Series(
         pd.to_numeric(ohlc['close'], errors='coerce').to_numpy(),
@@ -189,16 +213,20 @@ def compute_frame(code: str, targets: pd.DatetimeIndex,
 
 def backfill_code(code: str, apply: bool, since: str = '',
                   verbose: bool = False, redo: bool = False,
-                  chip_only: bool = False) -> dict:
+                  chip_only: bool = False,
+                  zen_pivot_only: bool = False) -> dict:
     """补一个码；返回统计。异常不抛出（单码失败不该拖垮整批）。
 
     `apply=True` 且 `redo=False` 时**跳过已经有 `se` 的码**（断点续跑）。
+    `zen_pivot_only=True` 时**不跳过**：本模式的目的就是覆盖已有的错误
+    `ZenPivotLag`。
     """
     try:
-        targets = target_datetimes(code, since=since)
+        marker = 'ZenPivotLag' if zen_pivot_only else _MARKER
+        targets = target_datetimes(code, since=since, marker=marker)
         if len(targets) == 0:
             return {'code': code, 'status': 'no_targets'}
-        if apply and not redo:
+        if apply and not redo and not zen_pivot_only:
             from GolemQ.markets.StockCN.reality_save import reality_feat_name
             from GolemQ.pipeline.review.contract import HOUR_CHIP_COLUMNS
             name = reality_feat_name('60min', _market_type(code))
@@ -226,22 +254,23 @@ def backfill_code(code: str, apply: bool, since: str = '',
                 if _db()[name].find_one(probe, {'_id': 1}):
                     return {'code': code, 'status': 'skipped'}
         frame = compute_frame(code, targets, verbose=verbose,
-                              chip_only=chip_only)
+                              chip_only=chip_only,
+                              zen_pivot_only=zen_pivot_only)
         if frame.empty:
             return {'code': code, 'status': 'no_kline'}
         stats = {'code': code, 'status': 'ok', 'rows': len(frame)}
         if apply:
             from GolemQ.markets.StockCN.reality_save import save_reality_feat
-            out = save_reality_feat(frame, '60min', _market_type(code),
-                                    verbose=False, write_nulls=False,
-                                    db=_db())
+            out = save_reality_feat(
+                frame, '60min', _market_type(code), verbose=False,
+                write_nulls=bool(zen_pivot_only), db=_db())
             stats.update(upserted=out['upserted'], modified=out['modified'])
         return stats
     except Exception as exc:            # noqa: BLE001
         return {'code': code, 'status': 'error', 'error': repr(exc)}
 
 
-def all_codes(limit: int = 0) -> list:
+def all_codes(limit: int = 0, marker: str = _MARKER) -> list:
     """有 60min review 行的码（按 code 去重）。"""
     db = _db()
     from GolemQ.markets.StockCN.reality_save import reality_feat_name
@@ -250,7 +279,7 @@ def all_codes(limit: int = 0) -> list:
         name = reality_feat_name('60min', mt)
         if name not in db.list_collection_names():
             continue
-        for c in db[name].distinct('code', {_MARKER: {'$ne': None}}):
+        for c in db[name].distinct('code', {marker: {'$ne': None}}):
             codes.add(str(c))
     out = sorted(codes)
     return out[:limit] if limit else out
@@ -293,6 +322,8 @@ def unset_day_renko(apply: bool) -> None:
 def main(argv=None):
     parser = argparse.ArgumentParser(description='补 60min se / ZenPivotCnt（D78）')
     parser.add_argument('--codes', default='', help='逗号分隔；默认取全库有 review 行的码')
+    parser.add_argument('--codes-file', default='',
+                        help='每行一个代码的 UTF-8 文件（优先于 --codes）')
     parser.add_argument('--limit', type=int, default=0)
     parser.add_argument('--since', default='', help='只补该日期之后的 60min 行')
     parser.add_argument('--workers', type=int, default=1)
@@ -308,6 +339,9 @@ def main(argv=None):
                         help='重算已有 se 的码（默认跳过 = 断点续跑）')
     parser.add_argument('--chip-only', action='store_true',
                         help='只补 ChipDist 四列（跳过 se/pivot/renko/native）')
+    parser.add_argument('--zen-pivot-only', action='store_true',
+                        help='只补 ZenPivotLag（跳过 se/Renko/M9T/日族/'
+                             'FBPROPHET/STAGE 等全部耗时列）')
     parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args(argv)
 
@@ -316,8 +350,15 @@ def main(argv=None):
     if args.unset_day_renko:
         unset_day_renko(args.apply)
 
-    codes = ([c.strip() for c in args.codes.split(',') if c.strip()]
-             or all_codes(limit=args.limit))
+    if args.codes_file:
+        with open(args.codes_file, encoding='utf-8') as fh:
+            codes = [ln.strip() for ln in fh if ln.strip()]
+    else:
+        codes = [c.strip() for c in args.codes.split(',') if c.strip()]
+    if not codes:
+        codes = all_codes(
+            limit=args.limit,
+            marker='ZenPivotLag' if args.zen_pivot_only else _MARKER)
     if args.shard:
         # 与 `--review-shard` **同一实现**（pipeline.review.pipeline.shard_codes），
         # 两处各写一份迟早会分叉。
@@ -326,19 +367,22 @@ def main(argv=None):
             codes = shard_codes(codes, args.shard)
         except ValueError as exc:
             raise SystemExit(str(exc))
-    print(f'[backfill] {len(codes)} 个码，apply={args.apply}，since={args.since or "-"}')
+    print(f'[backfill] {len(codes)} 个码，apply={args.apply}，'
+          f'zen_pivot_only={args.zen_pivot_only}，since={args.since or "-"}')
     t0 = time.time()
     results = []
     if args.workers > 1 and len(codes) > 1:
         from joblib import Parallel, delayed
         results = Parallel(n_jobs=args.workers, backend='loky')(
             delayed(backfill_code)(c, args.apply, args.since, args.verbose,
-                                   args.redo, args.chip_only)
+                                   args.redo, args.chip_only,
+                                   args.zen_pivot_only)
             for c in codes)
     else:
         for i, c in enumerate(codes, 1):
             r = backfill_code(c, args.apply, args.since, args.verbose,
-                              args.redo, args.chip_only)
+                              args.redo, args.chip_only,
+                              args.zen_pivot_only)
             results.append(r)
             if i % 100 == 0:
                 print(f'  … {i}/{len(codes)}  ({time.time() - t0:.0f}s)')

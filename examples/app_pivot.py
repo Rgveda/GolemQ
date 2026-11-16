@@ -1,25 +1,16 @@
 # coding: utf-8
-"""缠论盘整中枢（箱体）演示 —— **新树 / MongoDB 8.3 版**
+"""缠论中枢 × Mainstream —— **叠加图**演示（新树 / MongoDB 8.3 版）
 
 运行方式：
 
     streamlit run examples/app_pivot.py
 
-数据链路：
+与其它 `app_*` 一样只保留「标题 + 侧边栏开关 + 本页的 layer」；
+取数 / attach / Mainstream / K 线骨架全在 `examples/_app_common.py`
+（用户 2026-11-15：统一架构）。
 
-    GolemQ.get_active_market().get_kline_price_min  # 市场实例，可指定 frequency
-        → markets/StockCN/kline83.py                # MongoDB 8.3 时序集合，已前复权
-    czsc.CZSC                                       # 分笔（bi_list）
-    GolemQ.analysis.pivot                           # 中枢识别 / 走势分类 / 绘图
-
-与旧树 `GolemQ_old/app_pivot.py` 的差别：
-* 数据从 QUANTAXIS 4.4 的 `stock_min`（`type='60min'`）换成 8.3 的 `stock_*min`；
-* **多了频率选择**（8.3 有 1/5/15/30/60min 五档，旧树门面拿不到这个参数）；
-* 中枢那层来自 `GolemQ.analysis.pivot`（自旧树 `GolemQ_old/czsc/pivot.py` 搬运），
-  其因果口径（无未来函数）与旧树一致 —— 箱体自**中枢成立 bar** 起才画。
-
-⚠️ 中枢箱体**不铺满整段**：`ZG/ZD` 从中枢成立那一刻才出现，`GG/DD` 是逐根
-刷新极值的台阶线。这是刻意的 —— 一上来就画到整段极值 = 未来函数。
+缠论定义：中枢 = 至少三个连续笔的重叠区间（盘整箱体）；
+60min 用**日线 MAJOR** 标记，其它频率用**本频**标记。
 """
 import os
 import sys
@@ -27,8 +18,6 @@ import sys
 # --------------------------------------------------------------------------- #
 # 让它能在「没装包、直接从源码跑」的情况下找到 GolemQ
 # --------------------------------------------------------------------------- #
-# 旧树那段 hack 是删掉脚本目录以避开 `GolemQ/czsc` 遮蔽 pip 版 czsc；新树没有
-# `GolemQ/czsc` 包，遮蔽问题不存在，故只保留「把仓库根放进 sys.path」这一半。
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
@@ -36,295 +25,121 @@ _EX = os.path.dirname(os.path.abspath(__file__))
 if _EX not in sys.path:
     sys.path.insert(0, _EX)
 
-from datetime import datetime, timedelta
-
-import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
-from czsc import CZSC
-from czsc.objects import Freq, RawBar
-
-from GolemQ import get_active_market
-from GolemQ.analysis.indicators import calc_macd_qa
-from GolemQ.analysis.pivot import (
-    bi_confirm_map, bi_list_to_points, calc_pivots, classify_pivots,
-    pivots_to_df, plot_pivots_plotly,
-)
-from GolemQ.analysis.compact import _map_causal
-from GolemQ.analysis.quadrant_jit import (calc_mainstream_feats,
-                                          calc_mainstream_major_feats)
-from GolemQ.analysis.reality_attach import attach_reality_feats
-from GolemQ.core.constants import AKA, FIELD as FLD
+from GolemQ.analysis.pivot import (bi_confirm_map, bi_list_to_points,
+                                   calc_pivots, classify_pivots,
+                                   pivots_to_df, plot_pivots_plotly)
 from GolemQ.models.alias import LTT
 
+import _app_common as app
 from _gear_bands import add_gear_bands, gear_o_before
 
-# 频率 → (czsc 枚举, 日线根数, 取「加长历史」时回溯的自然日数)
-# 日线根数按 A 股一个交易日算：1min=240 / 5min=48 / 15min=16 / 30min=8 / 60min=4
-FREQS = {
-    '60min': (Freq.F60, 4, 1500),
-    '30min': (Freq.F30, 8, 700),
-    '15min': (Freq.F15, 16, 360),
-    '5min': (Freq.F5, 48, 140),
-    '1min': (Freq.F1, 240, 40),
-}
-
-MAX_BARS = 4096
-
-st.set_page_config(page_title="盘整中枢（箱体）演示", layout="wide")
-st.title("📦 缠论盘整中枢（箱体）演示")
+st.set_page_config(page_title="缠论中枢", layout="wide")
+st.title("📦 缠论中枢 × Mainstream（叠加图）")
 
 # --------------------------------------------------------------------------- #
 # 侧边栏
 # --------------------------------------------------------------------------- #
 with st.sidebar:
-    st.header("⚙️ 参数")
-    symbol = st.text_input("股票代码", value="000711", help="如 000711 / 600519 / 000858")
-    frequency = st.selectbox("K 线频率", list(FREQS), index=0,
-                             help="8.3 里 1/5/15/30/60min 五档都有数据")
+    symbol, frequency, long_history = app.sidebar_base(default_freq_index=0)
+
+    st.divider()
     show_pivots = st.checkbox("显示中枢箱体", value=True)
     show_ggdd = st.checkbox("显示 GG/DD 延伸边界", value=True)
-    long_history = st.checkbox("加长历史（最多 4096 根）", value=False,
-                               help="默认用读取器自带窗口；勾选后按频率回溯并截到 4096 根")
-    st.divider()
-    show_leadin = st.checkbox("Mainstream：吸筹 leadin 触发", value=True)
-    show_leadout = st.checkbox("Mainstream：派发 leadout 触发", value=True)
-    fold_mainstream = st.checkbox(
-        "高价股折叠（fold）", value=False,
-        help="D73：阈值按绝对价位算，>10 元的高价股未折叠时 leadout 几乎不触发")
+    show_bi = st.checkbox("缠论：笔", value=False)
     show_gear_o = st.checkbox(
         "QuadGear0：橙色触发区段", value=True,
         help="QuadGear0Bf == 0（O 档触发）；信号固定为 60min 口径")
+
+    st.divider()
+    show_leadin = st.checkbox("Mainstream：吸筹 leadin 触发", value=True)
+    show_leadout = st.checkbox("Mainstream：派发 leadout 触发", value=True)
+    fold_mainstream = True
+
     st.caption("缠论定义：中枢 = 至少三个连续笔的重叠区间，即盘整箱体 · "
                "60min 用**日线 MAJOR** 标记，其它频率用**本频**标记")
 
-
 # --------------------------------------------------------------------------- #
-# 数据加载（轻量，秒开）
+# 数据
 # --------------------------------------------------------------------------- #
-@st.cache_data(show_spinner=False, ttl=600)
-def load_pivots(symbol: str, frequency: str = '60min', long_history: bool = False,
-                fold_mainstream: bool = False):
-    """8.3 分钟线 → czsc 分笔 → 中枢识别 + Mainstream leadin/leadout。"""
-    freq_enum, _, lookback_days = FREQS[frequency]
-    market = get_active_market()
-    if long_history:
-        start = str(datetime.now() - timedelta(days=lookback_days))
-        d, name = market.get_kline_price_min(symbol, start=start, frequency=frequency,
-                                             realtime=True, verbose=False)
-    else:
-        d, name = market.get_kline_price_min(symbol, frequency=frequency,
-                                             realtime=True, verbose=False)
-    # ⚠️ **总是**截到最后 MAX_BARS 根：读取器的默认窗口是按**小时**算的
-    # （60min 约 2000 根），切到 5min/1min 会变成两万根以上，画不动。
-    ohlc = d.data.tail(MAX_BARS)
-
-    # ⚠️ **必须先判空**：`CZSC([])` 会抛 `IndexError`（czsc 0.7.10 的
-    # `analyze.py:228` 直接取 `bars[0].symbol`），把「这只票没有数据」报成异常。
-    # 空结果 ≠ 错误 —— 返回空结构，让调用方按「无数据」处理。
-    if ohlc.empty:
-        return (pd.DataFrame(), name, [], classify_pivots([]), 0, [],
-                pd.DataFrame(), None, None, None)
-
-    # Mainstream 吸筹/派发（两族都在 `calc_mainstream_feats` 里算）
-    _f = pd.DataFrame(index=ohlc.index)
-    _f[FLD.MACD] = calc_macd_qa(
-        pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce'))[2]
-    ms = calc_mainstream_feats(ohlc, _f, fold=fold_mainstream)
-
-    # 60min 图另取日线，算 MAJOR 版；非 60min 用本频
-    ms_major = None
-    if frequency == '60min':
-        _ts0 = pd.Timestamp(pd.to_datetime(
-            ohlc.index.get_level_values(0)).min())
-        _dstart = str((_ts0 - pd.Timedelta(days=900)).date())
-        _res, _ = market.get_kline_price_v3(
-            symbol, start=_dstart, end=str(pd.Timestamp.now().date()),
-            realtime=True, verbose=False)
-        _day = None if _res is None else getattr(_res, 'data', None)
-        if _day is not None and len(_day):
-            ms_major = calc_mainstream_major_feats(
-                _day, fold=fold_mainstream)
-
-    # 60min 另取 review 的 Prophet LB/UB，用于把标记放到 K 线外
-    anchor = None
-    if frequency == '60min':
-        try:
-            anchor, _ = attach_reality_feats(ohlc.copy(), symbol, verbose=False)
-        except Exception:                         # noqa: BLE001
-            anchor = None
-
-    bars = []
-    for i, (idx, row) in enumerate(ohlc.iterrows()):
-        # 8.3 读路径是 (ts, code) 两级索引，取 level 0
-        dt = idx[0] if isinstance(idx, tuple) else idx
-        bars.append(RawBar(symbol=symbol, dt=dt, id=i, freq=freq_enum,
-                           open=float(row['open']), close=float(row['close']),
-                           high=float(row['high']), low=float(row['low']),
-                           vol=float(row['volume']),
-                           amount=float(row.get('amount', 0) or 0)))
-
-    df = pd.DataFrame([{'dt': b.dt, 'open': b.open, 'high': b.high,
-                        'low': b.low, 'close': b.close} for b in bars])
-    czsc = CZSC(bars, max_bi_count=512, verbose=False)
-    conf_map = bi_confirm_map(bars, max_bi_count=512)
-    pivots = calc_pivots(bi_list=czsc.bi_list, conf_map=conf_map, strict=True)
-    cls = classify_pivots(pivots)
-    bi_points = bi_list_to_points(czsc.bi_list)
-    return (df, name, pivots, cls, len(czsc.bi_list), bi_points, ms,
-            ms_major, anchor)
-
-
 try:
-    df, name, pivots, cls, bi_count, bi_points, ms, ms_major, anchor = \
-        load_pivots(symbol, frequency, long_history, fold_mainstream)
-except Exception as e:
-    st.error(f"数据加载失败：{e}")
+    data = app.load_base(symbol, frequency, long_history, fold_mainstream)
+except Exception as exc:                            # noqa: BLE001
+    st.error(f"数据加载失败：{exc}")
     st.stop()
 
-if df.empty:
+if data is None:
     st.warning(f"{symbol} 在 {frequency} 上没有取到 K 线 —— 换只标的或换个频率试试。")
     st.stop()
+df = data.get('df')
+if df is None or df.empty:
+    st.warning(f"{symbol} 的 K 线不足 30 根 —— 算不出来。")
+    st.stop()
 
+feats, ms, ms_major = data['feats'], data['ms'], data['ms_major']
+if data.get('feats_err'):
+    st.warning(f"attach `*_reality_feat_60min` 失败：`{data['feats_err']}`")
+
+conf_map = bi_confirm_map(data['bars'], max_bi_count=512)
+pivots = calc_pivots(bi_list=data['bi_list'], conf_map=conf_map, strict=True)
+cls = classify_pivots(pivots)
+bi_points = bi_list_to_points(data['bi_list'])
 gear_bf = gear_o_before(symbol) if show_gear_o else None
+
+_use_major = (frequency == '60min' and ms_major is not None
+              and len(ms_major) > 0)
 
 # --------------------------------------------------------------------------- #
 # 指标卡
 # --------------------------------------------------------------------------- #
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("📊 K 线数", f"{len(df):,}")
-c2.metric("✏️ 笔数", bi_count)
+c2.metric("✏️ 笔数", len(bi_points))
 c3.metric("📦 中枢数", len(pivots))
 c4.metric("🧭 走势类型", cls['kind'])
-# 展示名由读取器解析（`kline83._display_name`：stock_info → stock_list）。
-# 解析不到时它**回落成代码**（真指数、未知代码、`name` 为空的标的）——
-# 那种情况下别再印一次代码：`301308（301308）` 没有信息量。
-_label = symbol if name == symbol else f'{name}（{symbol}）'
-_use_major = (frequency == '60min' and ms_major is not None
-              and len(ms_major) > 0)
+_label = symbol if data['name'] == symbol else f"{data['name']}（{symbol}）"
 
-
-def _major_values(major_col):
-    """日线 MAJOR 列按日期因果映射到当前 60min 帧（15:00 用当日）。"""
-    s = pd.to_numeric(ms_major[major_col], errors='coerce').copy()
-    s.index = pd.DatetimeIndex(
-        pd.to_datetime(s.index.get_level_values(0))).normalize()
-    s = s.groupby(level=0).last()
-    return _map_causal(s, ms.index).to_numpy()
-
-
-def _trigger_mask(col, major_col):
-    if _use_major and major_col in ms_major.columns:
-        ts = pd.DatetimeIndex(pd.to_datetime(df['dt']))
-        return ((ts.hour == 15) & (ts.minute == 0)
-                & (_major_values(major_col) < 1e-12))
-    if col not in ms.columns:
-        return pd.Series(False, index=df.index)
-    return pd.to_numeric(ms[col], errors='coerce').to_numpy() < 1e-12
-
-
-_li = int(_trigger_mask(LTT.MAINSTREAM_LEADIN_BEFORE,
-                        LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR).sum())
-_lo = int(_trigger_mask(LTT.MAINSTREAM_LEADOUT_BEFORE,
-                        LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR).sum())
+_li = int(app.trigger_mask(df, ms, ms_major, frequency,
+                           LTT.MAINSTREAM_LEADIN_BEFORE,
+                           LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR).sum())
+_lo = int(app.trigger_mask(df, ms, ms_major, frequency,
+                           LTT.MAINSTREAM_LEADOUT_BEFORE,
+                           LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR).sum())
 _mode = '日线 MAJOR' if _use_major else '本频'
-st.caption(f"标的：{_label} · {frequency} · "
-           f"上涨中枢 {cls['n_up']} 个 / 下跌中枢 {cls['n_down']} 个 · "
-           f"Mainstream（{_mode}）leadin {_li} 次 / leadout {_lo} 次"
+st.caption(f"标的：{_label} · {frequency} · 末个中枢：**{cls['kinds'][-1] if cls.get('kinds') else '—'}**")
+st.caption(f"Mainstream（{_mode}）：leadin {_li} 次 / leadout {_lo} 次"
            f"（fold={fold_mainstream}；标记在 Prophet LB 下方 / UB 上方）")
-if _lo == 0 and not fold_mainstream:
-    st.info("leadout 触发为 0：D73 的阈值按绝对价位算，>10 元的高价股"
-            "未折叠时几乎不触发；勾选侧边栏「高价股折叠（fold）」再看。")
 
 # --------------------------------------------------------------------------- #
-# 绘图（Plotly，交互式）
+# 图
 # --------------------------------------------------------------------------- #
-fig = go.Figure()
+fig = app.make_figure(df)
 
-# K 线（红涨绿跌）
-fig.add_trace(go.Candlestick(
-    x=df['dt'], open=df['open'], high=df['high'], low=df['low'], close=df['close'],
-    increasing_line_color='red', increasing_fillcolor='red',
-    decreasing_line_color='green', decreasing_fillcolor='green',
-    name='K线'))
-
-# QuadGear0 触发区段（橙色）
 if show_gear_o and gear_bf is not None:
     _runs = add_gear_bands(fig, gear_bf, frequency=frequency)
     if _runs:
         st.caption(f"橙色背景：`QuadGear0Bf < 1e-12`（O 档触发，"
                    f"{len(_runs)} 段；60min 口径）")
 
-# 笔（BI）
-fig.add_trace(go.Scatter(
-    x=[p['dt'] for p in bi_points],
-    y=[p['bi'] for p in bi_points],
-    mode='lines+markers', name='笔',
-    line=dict(color='royalblue', width=1.5),
-    marker=dict(size=4, color='royalblue'),
-))
+if show_bi:
+    import plotly.graph_objects as go
+    fig.add_trace(go.Scatter(
+        x=[p['dt'] for p in bi_points], y=[p['bi'] for p in bi_points],
+        mode='lines+markers', name='笔',
+        line=dict(color='royalblue', width=1.5),
+        marker=dict(size=4, color='royalblue')))
 
-# 中枢箱体（因果口径：自中枢成立 bar 起才画）
 if show_pivots:
     plot_pivots_plotly(
         fig, pivots, x_last=df['dt'].iloc[-1], show_ggdd=show_ggdd)
 
-# Mainstream leadin / leadout：`*_BEFORE == 0` 是**触发当根**
-def _marker_y(side):
-    """标记 y：吸筹在 Prophet LB / low 下方，派发在 UB / high 上方。"""
-    close = pd.to_numeric(df['close'], errors='coerce').to_numpy(float)
-    low = pd.to_numeric(df['low'], errors='coerce').to_numpy(float)
-    high = pd.to_numeric(df['high'], errors='coerce').to_numpy(float)
-    lb = np.full(len(df), np.nan)
-    ub = np.full(len(df), np.nan)
-    if anchor is not None:
-        for name, arr in (('prophetLb', lb), ('prophetUb', ub)):
-            if name in anchor.columns:
-                arr[:] = pd.to_numeric(anchor[name], errors='coerce').to_numpy()
-    pad = np.maximum(close * 0.01, (ub - lb) * 0.15)
-    pad = np.where(np.isfinite(pad) & (pad > 0), pad, close * 0.01)
-    if side == 'up':
-        base = np.maximum(np.where(np.isfinite(ub), ub, high), high)
-        return base + pad
-    base = np.minimum(np.where(np.isfinite(lb), lb, low), low)
-    return base - pad
-
-
-def _add_mainstream_triggers(col, major_col, label, color, symbol, side):
-    mask = _trigger_mask(col, major_col)
-    if mask.any():
-        y = _marker_y(side)
-        fig.add_trace(go.Scatter(
-            x=df['dt'].to_numpy()[mask], y=y[mask],
-            mode='markers', name=label,
-            marker=dict(symbol=symbol, size=10, color=color,
-                        line=dict(width=1, color='white'))))
-
-
-if show_leadin:
-    _add_mainstream_triggers(
-        LTT.MAINSTREAM_LEADIN_BEFORE, LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR,
-        'leadin（吸筹）', '#2ca02c', 'triangle-up', 'down')
-if show_leadout:
-    _add_mainstream_triggers(
-        LTT.MAINSTREAM_LEADOUT_BEFORE, LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR,
-        'leadout（派发）', '#d62728', 'triangle-down', 'up')
-
-fig.update_layout(
-    height=620,
-    xaxis_rangeslider_visible=False,
-    hovermode='x unified',
-    margin=dict(l=10, r=10, t=40, b=10),
-    legend=dict(orientation='h', yanchor='bottom', y=1.02),
-)
-fig.update_xaxes(nticks=15)
-
+app.add_mainstream_triggers(fig, data, show_leadin, show_leadout)
+app.finish_figure(fig)
 st.plotly_chart(fig, width='stretch')
 
 # --------------------------------------------------------------------------- #
-# 中枢明细表
+# 明细
 # --------------------------------------------------------------------------- #
 st.subheader("中枢明细")
 st.dataframe(pivots_to_df(pivots, kind=cls['kinds']), width='stretch', hide_index=True)

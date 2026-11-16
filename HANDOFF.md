@@ -101,6 +101,20 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 （Windows joblib 上限 **61 workers**），日志 `_review_resume3.log`。
 已完成的行由 `missing_targets` 自动跳过；本轮只跑 review，不再启动另外两机。
 
+进度（2026-11-12）：实测 `stock_list` 5,582 码中已有 `zDLagR` 的 **4,363**，
+**缺 1,220**（清单 `_review_missing_20261112.txt`；ETF 仍 0/1,737，未在本轮）。
+在 Nightwatcher（50.210）用**当前工作树**的代码重启：整包 zip
+`_review_sync_20261112.zip`（335 项，仅 `GolemQ/`+`tools/`，无 `__pycache__`），
+六份 review 关键文件 SHA256 与本地逐一对齐；本地全量测试 **1,075 OK（skipped=2）**
+先跑过。命令写进 `cmd.exe` 后由 WMI 脱离会话启动（PID 29868，30 workers）：
+
+```
+tools/run_review_shard.py _review_missing_20261112.txt --pct-of-cores 19 --review-timeout 14400
+```
+
+日志 `_review_missing_20261112.log`（各机本地 `C:\Users\azai\GQ_review_20261103`）。
+⚠️ 该目录**没有 .git**，同步一律靠整包覆盖；远端 mtime 不能当版本依据。
+
 #### ChipDist 四列（2026-11-06 修复）
 
 * 根因：`hour_extra.chip_cost_by_day` 遇到 960 日窗口内**任一天**缺换手率就
@@ -117,7 +131,17 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
   全库仍缺 **23** 个码：均为日线 <30 根或换手率 <30 天（如 001381 日线 5 根、
   920799 换手率仅 20 天），需先补 turnover 才能算 chip，不是回填进程问题。
   日志 `_chip_only_shard{1,2}.log`、`_chip_rescue61.log`。
-* **正在跑的 review 进程加载的是旧代码**，收尾后仍需 backfill 一遍。
+* ~~**正在跑的 review 进程加载的是旧代码**，收尾后仍需 backfill 一遍。~~
+  2026-11-11 已停止旧进程（PID 34036），同步 `pivot.py` 修复后重启。
+  存量 `ZenPivotLag` **9,041,118 行全负（正值 0）**，涉及 **4,364 码**
+  （stock 4,362 + ETF 2；index 0）。
+  不再走整表 review：`tools/backfill_hour_extra.py --zen-pivot-only` 只算
+  `pivot_stats` 并只 `$set` `ZenPivotLag`，单码 ≈23s（整表 review 约 1.9h）。
+  **已完成**：`ok=4364 / error=0 / rows=9,041,118`，耗时 6,367s；
+  4,357 码出现正值，其余 7 码窗口内始终在中枢外。
+  原因见 `PITFALLS.md` P46 与 `docs/worklog/2026-11.md`（未完成中枢 `end_dt`）。
+  反弹策略回测（2024-08~2026-11）也在工作日志：**无限仓 avg 215 持仓不可行**；
+  限仓 30~50 时 CAGR 约 **29.5%**（截断规则尚未定，见日志表）。
 
 #### 回填结束后第一件事：消除补数与 `--review` 的**编排**平行实现（2026-10-31 挂账）
 

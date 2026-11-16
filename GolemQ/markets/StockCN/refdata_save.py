@@ -44,7 +44,11 @@ __all__ = [
     'ALL_REF_COLLECTIONS',
     'REFDATA_BY_SOURCE',
     'UNIQUE_KEYS',
-    'DELTA_DELETE',
+    'ARCHIVE_DELISTED',
+    'DELIST_KLINE',
+    'DELIST_QUIET_DAYS',
+    'confirm_delisted',
+    'archive_delisted',
     'MIN_STOCK_CODES',
     'SNAPSHOT_COLLECTIONS',
     'SNAPSHOT_BLOCKED_PREFIXES',
@@ -198,19 +202,157 @@ UNIQUE_KEYS = {
     'financial': ['code', 'report_date'],
 }
 
-#: 允许 delta 删除的集合 —— **不是所有集合都能删差量**。
-#: `stock_list`/`stock_info` 的源是全市场权威名单，本次没出现即为退市，可删。
-#: `etf_list` 是快照非权威名单，删差量会误删停牌/新上市未收录的品种。
-#: `financial` 是历史累积，本次没拉到不代表没有，**绝不能删**。
-#: 允许做**差量删除**的集合（语义：「本次取到的就是全部，其余删掉」）。
+#: **下架归档表**：本次取数里没出现的标的**搬到这里**，而不是留在主表或直接删掉。
+#: 用户 2026-11-12 定：名单类三张（stock/ETF/指数）都要归档；`stock_info` 不删不归档
+#: （历史财务元数据不因退市而丢，退市后照样可查）。
 #:
-#: ⚠️ **`stock_list` 刻意不在列**：主源 pytdx **设计上就枚举不全**（拿不到北交所
-#: 那 351 只 `92xxxx`，见 `datasource/__init__.py` 的优先级说明），而差量删除会把
-#: "没取到"当成"已退市"**删掉**。实测踩过：切成 pytdx 主源的那一次，`deleted=351`。
-#: 失去的只是"自动清退市代码"这一点便利，换来的是"取数不全也不会静默删数据"。
-#: ⚠️ **`index_list` 同理不入列**（同 `stock_list` 的理由）：pytdx 枚举不全
-#: （1221 条 vs 4.4 的 1291 条），差量删除会把"没取到"当成"已下架"删掉。
-DELTA_DELETE = {'stock_info'}
+#: 与差量删除的关系：归档 = 「先 upsert 到归档表，再从主表删」。对下游而言主表
+#: 语义和差量删除相同（本次取到的就是全部），但**可回溯** —— 误判的码搬回来就行。
+ARCHIVE_DELISTED = {
+    'stock_list': 'stock_delisted',
+    'etf_list': 'etf_delisted',
+    'index_list': 'index_delisted',
+}
+
+#: 名单集合 → **行情日线**集合：判「这只标的还在不在交易」的第二信源。
+DELIST_KLINE = {
+    'stock_list': 'stock_day',
+    'etf_list': 'etf_day',
+    'index_list': 'index_day',
+}
+
+#: **静默期**：最后一根日线距行情库最新交易日不足这么多天 ⇒ 判定**仍在交易**，
+#: 不归档（宁可晚一个月，也不误伤停牌/漏更的标的）。
+DELIST_QUIET_DAYS = 30
+
+
+def confirm_delisted(coll_name: str, codes, *, veto_codes=None,
+                     quiet_days: int = DELIST_QUIET_DAYS) -> tuple:
+    """**多重信源**确认这批码是不是真的退市了 —— 返回 ``(confirmed, pending)``。
+
+    信源 1：名单源本次没返回它（调用方已经算好的差集）。
+    信源 2：**行情库**里它最近 ``quiet_days`` 天还有没有日线。
+    信源 3（可选）：``veto_codes`` —— 第三方**官方清单**。命中的码直接判活，
+    不参与判定（指数用中证指数公司的清单，见 `akshare_source.index_roster_codes`）。
+
+    基准日取**行情库自己的最新交易日**（不是墙钟）：行情库整体停更时差集会被
+    整体当成「安静」，用最新交易日做基准就能让整批自动落空 —— 一次断更不会
+    变成一次批量归档。
+
+    实测（2026-11-12）：
+    * `index_list` 差集 70 只：27 只仍在中证官方清单里（`000013` 企债、
+      `000805` A股资源…）⇒ 指数还在编制，只是 TDX 停止推送 —— **否决**；
+      其余 43 只（`395xxx`/`880xxx`）两源皆无 ⇒ 判下架。
+    * `etf_list` 差集 810 只：全部**昨天还在交易**（akshare 只能枚举 927/1,737），
+      属于源枚举不全，一只都不能动。
+    """
+    coll = GOLEMQ_STOCK_CN[coll_name]
+    codes = set(codes)
+    if not codes:
+        return set(), set()
+    vetoed = set()
+    if veto_codes:
+        vetoed = codes & set(veto_codes)
+        codes = codes - vetoed
+    if not codes:
+        return set(), vetoed
+    kline = GOLEMQ_STOCK_CN[DELIST_KLINE[coll_name]]
+    latest = kline.find_one({}, {'date_stamp': 1}, sort=[('date_stamp', -1)])
+    ref = None if not latest else latest.get('date_stamp')
+    if not ref:                     # 行情库空/异常 ⇒ 一个都不判下架
+        return set(), codes | vetoed
+    cutoff = ref - int(quiet_days) * 86400
+    last = {a['_id']: a['last'] for a in kline.aggregate([
+        {'$match': {'code': {'$in': sorted(codes)}}},
+        {'$group': {'_id': '$code', 'last': {'$max': '$date_stamp'}}}])}
+    confirmed = {c for c in codes if not last.get(c) or last[c] < cutoff}
+    return confirmed, (codes - confirmed) | vetoed
+
+
+def archive_delisted(coll_name: str, rows: list, *, verbose: bool = False,
+                     echo=None) -> dict:
+    """把 `coll_name` 主表里**多重信源确认已退市**的标的搬进 :data:`ARCHIVE_DELISTED`。
+
+    为什么要归档而不是删：主表的语义仍是「本次取到的就是全部」（下游照旧按当前
+    名单走），但**误判可回溯** —— 搬错了把 `*_delisted` 里的行挪回来即可。
+    归档行多三个字段：``delisted_at``（判定时刻）、``delisted_from``（来自哪张表）、
+    ``delisted_reason``（``no_feed`` 指数 / ``no_list_no_bar`` 股票、ETF）。
+
+    **判定链条（缺一不搬）**：
+
+    1. `rows` 为空 —— 取数失败/源没数据，整段不动；
+    2. 名单差集 —— 本次取数里没出现；
+    3. **行情确认**（:func:`confirm_delisted`）—— 它在行情库最新交易日前
+       `DELIST_QUIET_DAYS` 天内**没有日线**；
+    4. **官方清单否决**（只对 `index_list`）—— 中证指数公司的清单里还有它
+       ⇒ 指数仍在编制，只是数据源停止推送，**不搬**。取不到这份清单时整段
+       不归档：两源皆无不足以替官方清单拍板。
+
+    仍在交易的差集码进 ``pending``，**不搬、只报** —— 那说明是「源枚举不全」
+    （如 akshare 的 etf_list）而不是退市，需要人工/联网再核实。
+
+    ⚠️ **不加 doctest**：要真 DB（`find` / `delete_many` / `bulk_write`），
+    正确性由 `test_cases/markets/test_refdata_archive.py` 用假集合覆盖。
+    """
+    say = echo or print
+    out = {'archived': 0, 'pending': [], 'skipped': None}
+    target = ARCHIVE_DELISTED.get(coll_name)
+    if target is None:
+        out['skipped'] = f'{coll_name} 不归档'
+        return out
+    if not rows:
+        out['skipped'] = '本次取到 0 行'
+        return out
+
+    key = UNIQUE_KEYS[coll_name][0]
+    codes = {r[key] for r in rows if key in r}
+    coll = GOLEMQ_STOCK_CN[coll_name]
+    existing = {d[key] for d in coll.find({}, {'_id': 0, key: 1})}
+    missing = existing - codes
+    if not missing:
+        return out
+
+    # 信源 3：指数用中证指数公司的**官方清单**当否决源。取不到就不归档 ——
+    # 宁可这轮不动，也不能拿「两源皆无」去替官方清单拍板。
+    veto = None
+    if coll_name == 'index_list':
+        try:
+            from .datasource.akshare_source import index_roster_codes
+            veto = index_roster_codes()
+        except Exception as exc:      # noqa: BLE001 联网失败不该毁掉整次保存
+            out['skipped'] = (f'第三信源（中证指数清单）不可用：'
+                              f'{type(exc).__name__}: {exc}')
+            # 只报结论，别把异常文本塞进 banner（原因在 `out['skipped']` 里）
+            say(f'[refdata] {coll_name}: 第三信源不可用，本轮不归档')
+            return out
+
+    confirmed, pending = confirm_delisted(coll_name, missing, veto_codes=veto)
+    # ⚠️ **这两行会经 `banner.echo` 画进 banner 的状态窗，必须短。**
+    # banner 的光标记账按「逻辑行」算：一旦某行在终端里**折行**，实际占的行数
+    # 就比记账多 1，之后每次重画都会在屏上多留一块（2026-11-13 实报：绿圆变白圆
+    # 时换行，banner 越堆越多）。明细别塞进 echo —— `out['pending']` 里带着。
+    if pending:
+        out['pending'] = sorted(pending)
+        say(f'[refdata] {coll_name}: {len(pending)} 只仍在交易，不判下架')
+    if not confirmed:
+        return out
+
+    docs = list(coll.find({key: {'$in': sorted(confirmed)}}, {'_id': 0}))
+    if not docs:
+        return out
+    now = dt.datetime.now()
+    #: `no_feed` = 名单源与行情都没有、官方清单也不认识它（指数）；
+    #: `no_list_no_bar` = 名单差集 + 行情静默（股票/ETF，暂无官方否决源）。
+    reason = 'no_feed' if coll_name == 'index_list' else 'no_list_no_bar'
+    for d in docs:
+        d['delisted_at'] = now
+        d['delisted_from'] = coll_name
+        d['delisted_reason'] = reason
+    save_collection(GOLEMQ_STOCK_CN[target], docs, [key], verbose=False)
+    res = coll.delete_many({key: {'$in': [d[key] for d in docs]}})
+    out['archived'] = res.deleted_count
+    say(f'[refdata] {coll_name}: {out["archived"]} 条退市 → {target}')
+    return out
 
 
 def _pick_source(collection: str, source: str = None, verbose: bool = False,
@@ -249,13 +391,13 @@ def _supplement_stock_list(rows: list, primary_name: str, verbose: bool,
     * **补行**：主源**枚举不到的标的**（pytdx 拿不到北交所 `92xxxx`，
       `get_security_list(2, 0)` 返回 None 且会毒死连接）由补充源补上。
 
-    ⚠️ **补行是必须的**：`stock_list` 带 `delete_delta_key`，主源取到多少就是"全集"，
-    少的那 351 只会被**差量删除**。实测 pytdx 5,228 / tdxaidata 5,579，差的正好是
-    北交所那 351 只。
+    ⚠️ **补行是必须的**：`stock_list` 落库后会按差集做**退市归档**，主源取到多少
+    就是"全集"。实测 pytdx 5,228 / tdxaidata 5,579，差的正好是北交所那 351 只 ——
+    虽然行情确认会把它们挡在 `pending` 里（还在交易），但名单本身也必须是全的。
     """
     # ⚠️ **不要因为"主源字段齐全"就提前返回**：还要补主源**枚举不到**的标的
     # （pytdx 拿不到北交所）。我曾在这里留了个 `if not need: return rows`，
-    # 结果 pytdx 当主源时 351 只北交所被差量删除 —— 见下面 `DELTA_DELETE` 的说明。
+    # 结果 pytdx 当主源时 351 只北交所被差量删除 —— 见 `ARCHIVE_DELISTED` 的说明。
     say = echo or print
     for name in COLLECTION_SOURCE_PRIORITY.get('stock_list', []):
         if name == primary_name or name in exclude:
@@ -655,20 +797,26 @@ def save_refdata(collections=None, source: str = None, codelist=None,
                 if coll_name == 'stock_block':
                     stats = save_block_collection(coll, rows, verbose=verbose)
                 else:
-                    delta_key = {'stock_list': 'code', 'stock_info': 'code'}.get(coll_name)
-                    # ⚠️ **传了 `codelist` 就绝不删差量**（承重）。
-                    # 删差量的语义是「本次取到的就是全部」；而 `codelist` 是调用方
-                    # **故意只取一部分**（试跑、排障、补齐某几只）。两者相乘 = 把没取到
-                    # 的那些标的**静默删掉** —— 实测踩过：`--save-codes` 跑一次
-                    # 就把 `stock_info` 从 5,574 行删到 250 行。
-                    if codelist is not None and delta_key:
-                        delta_key = None
-                        if verbose:
-                            say(f'[refdata] {coll_name}: 本次传了 codelist（部分取数），'
-                                  f'**跳过差量删除**，不会动其他标的')
+                    # ⚠️ **差量删除一律不在这里做** —— 改成「名单 + 行情双重确认后
+                    # 搬进 `*_delisted`」（`archive_delisted`）。硬删除不可回溯，
+                    # 而这个系统的名单源本来就有枚举不全的历史（pytdx 拿不到北交所、
+                    # akshare 只能枚举 927/1,737 只 ETF）。
                     stats = save_collection(
                         coll, rows, UNIQUE_KEYS[coll_name],
-                        delete_delta_key=delta_key, verbose=verbose)
+                        delete_delta_key=None, verbose=verbose)
+                    # ⚠️ **传了 `codelist` 就绝不归档**（承重）：`codelist` 是调用方
+                    # 故意只取一部分（试跑、排障、补某几只），拿它算差集会把其余
+                    # 标的整批判成「下架」—— 实测踩过：`--save-codes` 跑一次就把
+                    # `stock_info` 从 5,574 行删到 250 行（P19）。
+                    if codelist is None:
+                        arch = archive_delisted(coll_name, rows,
+                                                verbose=verbose, echo=echo)
+                        if arch['archived']:
+                            stats['archived'] = arch['archived']
+                        if arch['pending']:
+                            stats['pending_delisted'] = len(arch['pending'])
+                    elif coll_name in ARCHIVE_DELISTED and verbose:
+                        say(f'[refdata] {coll_name}: 部分取数，跳过退市归档')
             except Exception as exc:      # noqa: BLE001
                 entry['status'] = 'failed'
                 entry['detail'] = f'落库失败 {type(exc).__name__}: {exc}'

@@ -197,12 +197,13 @@ def native_by_day(ohlc: pd.DataFrame, targets):
     """每个交易日 15:00：用 **≤T 的 2160 根 60min** 算一遍 60min 原生特征。
 
     用户 2026-10-30：交易日尾部按 60min 实际时间计算，日频版另行采样。
-    产出 `HOUR_NATIVE_COLUMNS` 10 列（M9T 2 + Poly9 2 + RegTree 3 + Prophet 3）；
+    产出 `HOUR_NATIVE_COLUMNS`（M9T 2 + Poly9 2 + RegTree 3 + Prophet 3），**全部不带 `Maj`**。带 `Maj` 的日频版本由
+    `day_core` 计算、`day_sample_frame` 按日采样，二者不是同一列。
     价格量纲列按**快照所在 bar** 的 close 转比值。
     """
     from GolemQ.analysis.fbprophet import calc_fbprophet_bands  # noqa: F401
     from GolemQ.pipeline.review.contract import HOUR_NATIVE_COLUMNS
-    from GolemQ.pipeline.review.coldstart import _core_daily, _prophet_columns
+    from GolemQ.pipeline.review.coldstart import _prophet_columns
     from GolemQ.pipeline.review.steps.daily import _frame_features
     empty = pd.DataFrame(columns=list(HOUR_NATIVE_COLUMNS))
     if ohlc is None or len(ohlc) < 30 or targets is None or len(targets) == 0:
@@ -214,28 +215,23 @@ def native_by_day(ohlc: pd.DataFrame, targets):
         return pd.DatetimeIndex([]), empty
     pos = bars15.searchsorted(cut, side='right') - 1
     need = sorted(set(bars15[pos[pos >= 0]]))
-    # STAGE 全帧一次算（与 `tools/backfill_stage.py` 同口径）：
-    # 它自带 502 根定带窗口、逐 checkpoint 因果，不必按天重建 2160 窗口。
-    from GolemQ.pipeline.review.coldstart import calc_stage_series
-    _stage_all = calc_stage_series(ohlc)
-    _ts_all = pd.DatetimeIndex(pd.to_datetime(ohlc.index.get_level_values(0)))
-    stage_by_ts = dict(zip(_ts_all, pd.to_numeric(_stage_all,
-                                                  errors='coerce').to_numpy()))
     days, rows = [], []
     for T in need:
         w = ohlc.loc[ts <= T].tail(SE_WINDOW)
         if len(w) < 30:
             continue
         try:
-            feats = _frame_features(w, annual=4032)
-            feats = _core_daily(w, feats)      # STAGE（+ garP 等伴随列）
+            # 只算 60min 原生（无 Maj）列。日频 `*Maj*` 由 `day_core` 负责，
+            # 再由 `day_sample_frame` 按日采样到 60min —— 这里**不要**调
+            # `_core_daily`：它会逐日重算并生成本函数用不到的 Maj 列。
+            # ⚠️ stage 族已改为 **4.4 搬运**（用户 2026-11-16），本函数不再产出。
+            feats = _frame_features(w, annual=4032, with_zen=False)
             feats = _prophet_columns(w, feats)
         except Exception:           # noqa: BLE001 单点失败不毁整条链
             continue
         close_last = float(pd.to_numeric(w[AKA.CLOSE], errors='coerce').iloc[-1])
         last = feats.iloc[-1]
         row = {
-            'stage': stage_by_ts.get(T, np.nan),
             'm9t': last.get('m9t', np.nan),
             'm9tLag': last.get('m9tLag', np.nan),
             'poly9D': (last.get('poly9', np.nan) / close_last
@@ -424,15 +420,25 @@ def map_last_scalar(days, values, targets):
 
 
 def map_last_rows(days, frame, targets):
-    """把按日快照的 2-D 帧映射到 target（逐行取 `<=` 的最后一个）。"""
+    """把按日快照的 2-D 帧映射到 target（逐行取 `<=` 的最后一个）。
+
+    ⚠️ **逐列转型**：stage 族里有 `garPD`（带的比值列表）与 `garPAnchor`
+    （日期字符串），整帧 `to_numpy(dtype=float)` 会炸；数值列仍走 float，
+    其余列按 object 原样搬运（下游按列语义消费）。
+    """
     pos, _ = _target_positions(days, targets)
     ncols = 0 if frame is None else len(frame.columns)
-    out = np.full((len(pos), ncols), np.nan)
     if frame is None or len(frame) == 0 or ncols == 0:
-        return out
-    vals = frame.to_numpy(dtype=float)
-    ok = (pos >= 0) & (pos < len(vals))
-    out[ok] = vals[pos[ok]]
+        return np.full((len(pos), ncols), np.nan)
+    out = np.full((len(pos), ncols), np.nan, dtype=object)
+    ok = (pos >= 0) & (pos < len(frame))
+    for j in range(ncols):
+        col = frame.iloc[:, j]
+        try:
+            arr = pd.to_numeric(col, errors='raise').to_numpy(dtype=float)
+        except (TypeError, ValueError):
+            arr = col.to_numpy(dtype=object)
+        out[ok, j] = arr[pos[ok]]
     return out
 
 

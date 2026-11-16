@@ -31,11 +31,14 @@ def _last(series, default=np.nan):
 
 
 def _frame_features(ohlc: pd.DataFrame, annual: int = 252,
-                    with_regtree: bool = True) -> pd.DataFrame:
+                    with_regtree: bool = True,
+                    with_zen: bool = True) -> pd.DataFrame:
     """在**因果切片**上算日/周线 zen、Poly9、M9T、RegTree。
 
     ``with_regtree=False`` 用于**周线**：`_day_row` 只用周线的 zen/Poly9/M9T，
     周线 RegTree 是纯浪费（而且是最重的部分之一）。
+    ``with_zen=False`` 用于 **60min 原生列**：`native_by_day` 只取
+    M9T/Poly9/RegTree/Prophet，不需要再算一遍 zen。
     """
     feats = pd.DataFrame(index=ohlc.index)
     close = pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce')
@@ -61,7 +64,8 @@ def _frame_features(ohlc: pd.DataFrame, annual: int = 252,
             if c not in feats.columns:
                 feats[c] = np.nan
 
-    feats = calc_zen_timing_lag(ohlc, feats)
+    if with_zen:
+        feats = calc_zen_timing_lag(ohlc, feats)
 
     if with_regtree and len(ohlc) > 450:
         try:

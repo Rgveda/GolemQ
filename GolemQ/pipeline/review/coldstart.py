@@ -4,7 +4,10 @@
 用户 2026-10-19 定：只合模型层实际读取、纯 K 线可算的部分，**不接**东财/同花顺/
 massive；且**不再单独写 `*_coldstart_reviews`** —— 冷启动列合并进
 `*_reality_feat_60min`（同一张 60min 快照表，避免两套真相）。
-`STAGE / BOOTSTRAP / m9t` 由 `_coldstart_row`（日线 `_core_daily`）产出。
+`m9t`（Maj）由 `_coldstart_row`（日线 `_core_daily`）产出；
+**stage 族不在这里算** —— `stage/garPD/garPAnchor/garPCount/garPClr` 从
+4.4 旧库搬运（`tools/migrate_stage_from44.py`，用户 2026-11-16），
+`bstStgBf/epStgBf` 由 `reality_attach` 现算、不落库。
 
 ⚠️ 与老树的两处**刻意差异**：
 
@@ -23,14 +26,11 @@ import numpy as np
 import pandas as pd
 
 from GolemQ.analysis.fbprophet import calc_fbprophet_bands
-from GolemQ.analysis.indicators import TA_HMA, calc_macd_qa
+from GolemQ.analysis.indicators import TA_HMA
 from GolemQ.analysis.magic_nine_jit import calc_magic_nine_turns_np_vXs_jit
 from GolemQ.analysis.poly9 import calc_polynomial9_vXIs
 from GolemQ.analysis.quadrant_jit import mapower_np_vXIIs
-from GolemQ.analysis.stages import (calc_garident_stages,
-                                    garident_bands_to_ratio)
-from GolemQ.analysis.timing import (Timeline_duration, calc_event_timing_lag,
-                                    calc_feature_event_timing_lag)
+from GolemQ.analysis.timing import calc_event_timing_lag
 from GolemQ.core.constants import AKA, FIELD as FLD
 from GolemQ.pipeline.review.contract import COLDSTART_COLUMNS
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_DAILY,
@@ -39,83 +39,26 @@ from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_DAILY,
 CHECKPOINT_STRIDE = 21
 
 
-def _stage_columns(day: pd.DataFrame, features: pd.DataFrame = None) -> pd.DataFrame:
-    """日线 STAGE / BOOTSTRAP（稀疏 checkpoint + KMeans）。
-
-    ``features`` 传入时**就地复用**已有 day 特征（M9T/Poly9 已算好），
-    只补 STAGE / BOOTSTRAP / GAR 这一组。
-    """
-    feats = features if features is not None else pd.DataFrame(index=day.index)
-    feats[AKA.CLOSE] = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
-    ck = feats[[AKA.CLOSE]].iloc[::CHECKPOINT_STRIDE].copy()
-    # ⚠️ **不要把最后一根强行追加成 checkpoint**：老树 vXII 的 checkpoint 由
-    # `CLT_GRP_CHK > 0` 信号决定，目标 bar 若不在网格上，它的 stage 应当用
-    # **上一个 checkpoint 的带子**（ffill）来判 —— 那才是 `-0.5` / 半档的来源。
-    # 追加了最后一根，就等于用「含当根 close 的窗口」定带 ⇒ 必然整数。
-    try:
-        feats = calc_garident_stages(ck, feats, random_state=0)
-    except Exception:               # noqa: BLE001 缺 sklearn/kneed 或定带失败
-        feats[AKA.STAGE] = np.nan
-    st = pd.to_numeric(feats.get(AKA.STAGE, pd.Series(np.nan, index=feats.index)),
-                       errors='coerce').to_numpy()
-    feats[AKA.STAGE] = st
-    feats[FLD.BOOTSTRAP_STAGE_BEFORE] = Timeline_duration(
-        np.where(st < -0.00168, 1, 0)).astype(np.int16)
-    # 老树 `fractal/vXII.py:658`：STAGE 的金叉/死叉时序
-    feats[FLD.GARIDENT_STAGE_TIMING_LAG] = calc_feature_event_timing_lag(
-        feats, AKA.STAGE).astype(np.int16)
-    return feats
-
-
-def calc_stage_series(ohlc: pd.DataFrame, random_state: int = 0) -> pd.Series:
-    """**全帧一次算** stage（`(dt, code)` 帧 → 逐 bar 的 STAGE）。
-
-    与 `_stage_columns` 同一实现，但**不对每天重建 2160 窗口**：
-    stage 自带 502 根定带窗口，逐 checkpoint 即因果；整帧一次算同时保证
-    `native_by_day`（增量）与 `tools/backfill_stage.py`（历史回填）**同口径**。
-
-    ⚠️ checkpoint 网格 = `iloc[::CHECKPOINT_STRIDE]`（老树用 `CLT_GRP_CHK`
-    信号，新树缺该 producer，见 D79）。
-    """
-    if ohlc is None or len(ohlc) == 0:
-        return pd.Series(dtype=float)
-    feats = pd.DataFrame(index=ohlc.index)
-    feats[AKA.CLOSE] = pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce')
-    ck = feats[[AKA.CLOSE]].iloc[::CHECKPOINT_STRIDE].copy()
-    try:
-        feats = calc_garident_stages(ck, feats, random_state=random_state)
-    except Exception:               # noqa: BLE001 缺 sklearn/kneed
-        return pd.Series(np.nan, index=ohlc.index, dtype=float)
-    return pd.to_numeric(feats.get(AKA.STAGE), errors='coerce')
-
-
 def _core_daily(day: pd.DataFrame, feats: pd.DataFrame = None) -> pd.DataFrame:
-    """日线核心列：STAGE / BOOTSTRAP / M9T(+lag) / Poly9。**因果**（逐 checkpoint）。
+    """日线核心列：M9T(+lag) / Poly9（**不含 stage 族** —— 那由 60min 链算）。
 
     ``feats`` 传入时复用 `day_core` 已算好的 M9T/Poly9，**不再重算**。
     """
-    feats = _stage_columns(day, features=feats)
+    feats = features if feats is None else feats
+    feats[AKA.CLOSE] = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
     close = pd.to_numeric(day[AKA.CLOSE], errors='coerce')
     typical = (day[AKA.OPEN] + day[AKA.HIGH] + day[AKA.LOW] + close) / 4
     if FLD.HMA10 not in feats.columns:
         feats[FLD.HMA10] = TA_HMA(typical.to_numpy(), 10)
 
-    # `epStgBf` 的两个前置（老树 `fractal/vXII.py:658-660`）：
-    #   DEA_O_LAG          = DEA 的金叉/死叉时序
-    #   MACD_JX_BF         = DIF 上穿 DEA 后的 bar 数（CROSS + Timeline_duration）
-    dif, dea, _macd = calc_macd_qa(close)
-    feats[FLD.DIF] = dif.to_numpy()
-    feats[FLD.DEA] = dea.to_numpy()
-    feats[FLD.DEA_ZERO_TIMING_LAG] = calc_feature_event_timing_lag(
-        feats, FLD.DEA).astype(np.int16)
-    _jx = ((dif > dea) & (dif.shift(1) <= dea.shift(1))).to_numpy().astype(np.int16)
-    feats['_MACD_JX_BF'] = Timeline_duration(_jx).astype(np.int16)
     if FLD.MAGIC_NINE_TURNS not in feats.columns:
         feats[FLD.MAGIC_NINE_TURNS] = calc_magic_nine_turns_np_vXs_jit(
             close.to_numpy().astype(np.float32))
     feats[FLD.MAGIC_NINE_TURNS_MAJOR] = feats[FLD.MAGIC_NINE_TURNS]
-    feats[FLD.MAGIC_NINE_TURNS_TIMING_LAG] = calc_event_timing_lag(
-        feats[FLD.MAGIC_NINE_TURNS].to_numpy())
+    # `day_core` 的 `_frame_features` 已算过同一列；存在就复用，不重复扫一遍。
+    if FLD.MAGIC_NINE_TURNS_TIMING_LAG not in feats.columns:
+        feats[FLD.MAGIC_NINE_TURNS_TIMING_LAG] = calc_event_timing_lag(
+            feats[FLD.MAGIC_NINE_TURNS].to_numpy())
     if FLD.POLYNOMIAL9 in feats.columns:
         feats[FLD.POLYNOMIAL9_MAJOR] = feats[FLD.POLYNOMIAL9]
         if FLD.POLYNOMIAL9_NORM in feats.columns:
@@ -133,20 +76,6 @@ def _core_daily(day: pd.DataFrame, feats: pd.DataFrame = None) -> pd.DataFrame:
             for c in (FLD.POLYNOMIAL9_MAJOR, FLD.POLYNOMIAL9_NORM_MAJOR):
                 feats[c] = np.nan
 
-    # `epStgBf`（老树 `features/reviews.py:670`）：GAR 净空 < 0.927 且
-    # DEA 时序 < MACD 金叉时序 ⇒ 端点阶段计数。
-    _clear = pd.to_numeric(feats.get(FLD.GARIDENT_PRICE_CLEARANCE,
-                                     pd.Series(np.nan, index=feats.index)),
-                           errors='coerce')
-    _dea_lag = pd.to_numeric(feats.get(FLD.DEA_ZERO_TIMING_LAG,
-                                       pd.Series(np.nan, index=feats.index)),
-                             errors='coerce')
-    _jxBf = pd.to_numeric(feats.get('_MACD_JX_BF',
-                                    pd.Series(np.nan, index=feats.index)),
-                          errors='coerce')
-    _ep = ((_clear < 0.927) & (_dea_lag < _jxBf)).fillna(False).to_numpy()
-    feats[FLD.ENDPOINT_STAGE_BEFORE] = Timeline_duration(
-        _ep.astype(np.int16)).astype(np.int16)
     return feats
 
 
@@ -192,26 +121,9 @@ def _coldstart_row(day: pd.DataFrame, feats: pd.DataFrame = None) -> dict:
     _close = float(close.iloc[-1])
     _poly9 = last.get(FLD.POLYNOMIAL9_MAJOR, np.nan)
     _poly9_ratio = (_poly9 / _close) if (_close and not pd.isna(_poly9)) else np.nan
-    # `garP` 同一条纪律：`calc_garident_stages` 内部是**绝对价位带**，
-    # 落库前除以**锚 bar** 的 close 存比值；`garPAnchor` 给出乘回哪一个 close。
-    _anchor = last.get(FLD.GARIDENT_PRICE_ANCHOR, np.nan)
-    _bands = last.get(FLD.GARIDENT_PRICE, np.nan)
-    _gar_ratio = np.nan
-    if (isinstance(_anchor, str) and _anchor and
-            isinstance(_bands, (list, tuple)) and len(_bands)):
-        _days = pd.to_datetime(day.index.get_level_values(0)).strftime('%Y-%m-%d')
-        _anchor_close = pd.Series(close.to_numpy(), index=_days).groupby(level=0).last().get(_anchor)
-        if _anchor_close is not None and not pd.isna(_anchor_close):
-            _gar_ratio = garident_bands_to_ratio(_bands, float(_anchor_close))
     return {
-        AKA.STAGE: last.get(AKA.STAGE, np.nan),
-        FLD.BOOTSTRAP_STAGE_BEFORE: last.get(FLD.BOOTSTRAP_STAGE_BEFORE, np.nan),
-        FLD.ENDPOINT_STAGE_BEFORE: last.get(FLD.ENDPOINT_STAGE_BEFORE, np.nan),
-        FLD.GARIDENT_PRICE_DUMMY: _gar_ratio,
-        'garPCount': last.get(FLD.GARIDENT_PRICE_COUNT, np.nan),
-        'garPClr': last.get(FLD.GARIDENT_PRICE_CLEARANCE, np.nan),
-        'garPAnchor': _anchor,
-        'garSLag': last.get(FLD.GARIDENT_STAGE_TIMING_LAG, np.nan),
+        # ⚠️ **stage 族不在这里**（用户 2026-11-16）：`stage/bstStgBf/epStgBf/
+        # garP*` 由 60min 链（`native_by_day`）一次算出，日线链不再重复计算。
         'm9t': last.get(FLD.MAGIC_NINE_TURNS, np.nan),
         'm9tMaj': last.get(FLD.MAGIC_NINE_TURNS_MAJOR, np.nan),
         FLD.POLYNOMIAL9_MAJOR: _poly9_ratio,
@@ -258,35 +170,6 @@ def coldstart_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFram
     out = pd.DataFrame(
         rows, index=pd.MultiIndex.from_tuples(idx, names=['ts', 'code']),
         columns=list(COLDSTART_COLUMNS))
-    # Garident Price 是**定带事件**：`garPD` 稀疏，按用户 2026-10-30 要求
-    # **向后填充**；`garPAnchor` 必须同步 ffill —— 还原时要乘回**同一锚日**的
-    # close，只填 garPD 会造成“band 是旧锚、价是新 close”的错配。
-    # ⚠️ 不能直接 `Series.ffill()`：`garPD` 是 list/数组，pandas 会走 2D pad
-    # 路径并在 int8 上抛 `TypeError: No matching signature`。这里逐值手工前填。
-    def _is_null(v):
-        if v is None:
-            return True
-        if isinstance(v, float):
-            return np.isnan(v)
-        if isinstance(v, (list, tuple, np.ndarray)):
-            return False
-        try:
-            return bool(pd.isna(v))
-        except (TypeError, ValueError):
-            return False
-
-    for c in ('garPD', 'garPAnchor', 'garPCount', 'garPClr', 'garSLag'):
-        if c not in out.columns:
-            continue
-        last = None
-        filled = []
-        for v in out[c].tolist():
-            if _is_null(v):
-                filled.append(last)
-            else:
-                last = v
-                filled.append(v)
-        out[c] = filled
     return out
 
 

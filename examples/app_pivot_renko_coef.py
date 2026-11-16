@@ -1,51 +1,24 @@
 # coding: utf-8
-"""缠论中枢 × RENKO 砖块界 × **上升系数** —— **叠加图**演示（新树 / MongoDB 8.3 版）
+"""缠论中枢 × RENKO 砖块界 × 上升系数 × ChartScan —— **叠加图**（新树 / MongoDB 8.3）
 
 运行方式：
 
     streamlit run examples/app_pivot_renko_coef.py
 
-与 `examples/app_pivot_renko.py` 的区别：**多画第三条曲线**
-`LTT.QUADRANT_UPRISING_I_COEF_DUMMY`（上升系数），**叠在主图副轴**（同 `ax3 = ax1.twinx()`）、深红虚线
-（`color='darkred'`, `linestyle='--'`, `lw=1`, `alpha=0.67`）。
+与其它 `app_*` 一样只保留「标题 + 侧边栏开关 + 本页的 layer」；
+取数 / attach / Mainstream / K 线骨架 / ChartScan / Charm / 上升系数全在
+`examples/_app_common.py`（用户 2026-11-15：统一架构）。
 
-三个东西各回答一个问题
-======================
+图上的层
+========
 | | 来源 | 回答什么 |
 |:--|:--|:--|
 | **缠论中枢** | `analysis/pivot.py`（czsc 分笔 → 三笔重叠箱体） | **结构**：箱体上下沿 + 走势类型 |
-| **RENKO 砖界** | `*_reality_feat_60min` 的 Renko 14 列（`analysis.reality_attach` 贴回） | **趋势**：S 族 / L 族上下界，`RENKO_BAR` 只在两族同向时非零；**as-of，无后视镜** |
-| **上升系数** | `LTT.QUADRANT_UPRISING_I_COEF_DUMMY`（`QUprICoefD`） | 四量图链里的**优先级权重**（`portfolio/strategy.py` 的 `priority()` 用它排序） |
+| **RENKO 砖界** | `*_reality_feat_60min` 的 Renko 14 列（as-of 落库） | **趋势**：S/L 两族上下界；`RENKO_BAR` 只在两族同向时非零 |
+| **上升系数** | `LTT.QUADRANT_UPRISING_I_COEF_DUMMY`（`QUprICoefD`） | 四量图链里的**优先级权重** |
+| **ChartScan / Charm** | `Cls60/ClsDay/Cls15` + `Coord*`；`QLevCharm{O,I}Bf` | Buy/Sell 三时钟带 + 触发点 |
 
-⚠️ 三者**没有共同的数学基础**，图上分歧是常态；本页**不做任何融合**。
-
-上升系数怎么算（2026-10-19 二次核对后的**实际消费链**）
-====================================================
-老树对同一列有三条写法；用户看到的 `OmniPathUpR1CoefDmy` 是
-`CANDIDATE × log10(有效 MACD lag)`（`mainstream.py:252-261` + `zen_pivot.py:272-285`），
-**不是** `fourquad.py:717` 的参照序列回归：
-
-```
-本频 K线  ──calc_four_quadrant_boost──▶ 4QPwrln            ┐
-15min     ──同上──────────────────────▶ 4QPwrln           ├─ QLevMACDLagD ──┐
-日线      ──同上──────────────────────▶ 4QPwrln(+MACD柱)  ┘                 │
-                                                                  ┌─────────┘
-QLevMACDLagD ──getPoolRate──▶ QUprICoefCan ──× log10(lag)──▶ QUprICoefD
-```
-
-落地模块：**`analysis/quadrant_coef.py`**（`getPeak/ getPoolRate / getPoolRate_vX /
-calc_wavlet_coef_of_fractal / calc_uprising_i_coef`）。
-
-⚠️ `log10` 前的 lag 在老树里会**夹到 10**：`lag <= 10` 恒用 10；`lag > 10` 时
-还要看 `4QuadZenDCnt` / `QLevPwrlnUprLag`。本页已按**最小表达式**现算这两列
-（CZSC 笔方向 + 日线星线死叉 + 两条 event-lag，见 `_calc_coef`），
-不再有「缺列 ⇒ 1.9% 偏差」那条。
-
-⚠️ 上升系数**只画真实算出来的值**：算不出来就在页面上写清是哪一步（不造数）。
-
-⚠️ `2026-10-19` 起该常量由 `TRD.OMNIPATH_UPRISING_I_COEF_DUMMY` **改名**而来，
-值也从 `'OmniPathUpR1CoefDmy'` 改成 `'QUprICoefD'` —— 实测 4.4 / 8.3 **都没有行**
-存过这一列，故无数据契约需要保留。
+⚠️ 各层**没有共同的数学基础**，图上分歧是常态；本页**不做任何融合**。
 """
 import os
 import sys
@@ -65,377 +38,148 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from czsc import CZSC
-from czsc.objects import Freq, RawBar
-
-from GolemQ import get_active_market
-from GolemQ.analysis.pivot import (
-    bi_confirm_map, bi_list_to_points, calc_pivots, classify_pivots,
-    pivots_to_df, plot_pivots_plotly,
-)
-from GolemQ.analysis.compact import _map_causal
-from GolemQ.analysis.quadrant_jit import (calc_mainstream_feats,
-                                          calc_mainstream_major_feats)
-from GolemQ.analysis.reality_attach import attach_reality_feats
-from GolemQ.core.constants import AKA, FIELD as FLD
+from GolemQ.analysis.pivot import (bi_confirm_map, bi_list_to_points,
+                                   calc_pivots, classify_pivots,
+                                   pivots_to_df, plot_pivots_plotly)
+from GolemQ.core.constants import FIELD as FLD
 from GolemQ.models.alias import LTT
 
-from _gear_bands import add_gear_bands, gear_o_before
+import _app_common as app
+from _gear_bands import add_gear_bands, gear_o_before, trigger_runs
 
-FREQS = {
-    'day': (Freq.D, 'day', 900),
-    '60min': (Freq.F60, 'min', 1500),
-    '30min': (Freq.F30, 'min', 700),
-    '15min': (Freq.F15, 'min', 360),
-    '5min': (Freq.F5, 'min', 140),
-}
-
-MAX_BARS = 4096
-
-#: 第三条曲线：上升系数（`QUprICoefD`）。
-COEF_COL = LTT.QUADRANT_UPRISING_I_COEF_DUMMY
-
-#: review 的 Renko 只落 60min 表（D78）；其它频率只有中枢/笔，没有 Renko。
-RENKO_FREQ = '60min'
-
-st.set_page_config(page_title="中枢 × RENKO × 上升系数", layout="wide")
-st.title("📦🧱📈 缠论中枢 × RENKO 砖块界 × 上升系数（叠加图）")
+st.set_page_config(page_title="中枢 × RENKO × 上升系数 × ChartScan", layout="wide")
+st.title("📦🧱📈🔍 中枢 × RENKO × 上升系数 × ChartScan（叠加图）")
 
 # --------------------------------------------------------------------------- #
 # 侧边栏
 # --------------------------------------------------------------------------- #
 with st.sidebar:
-    st.header("⚙️ 参数")
-    symbol = st.text_input("股票代码", value="000711", help="如 000711 / 600519 / 000858")
-    frequency = st.selectbox("K 线频率", list(FREQS), index=1)
-    long_history = st.checkbox("加长历史（最多 4096 根）", value=False)
+    symbol, frequency, long_history = app.sidebar_base(default_freq_index=1)
 
     st.divider()
-    st.caption("显示开关 —— 三种方法各自可关，便于对照")
+    st.caption("显示开关 —— 各层各自可关，便于对照")
     show_pivots = st.checkbox("缠论：中枢箱体", value=True)
     show_ggdd = st.checkbox("缠论：GG/DD 延伸边界", value=False)
     show_bi = st.checkbox("缠论：笔", value=False)
-    _renko_freq_ok = frequency == RENKO_FREQ
+    _renko_freq_ok = frequency == app.RENKO_FREQ
     show_renko_s = st.checkbox("RENKO：S 族砖界", value=True,
                                disabled=not _renko_freq_ok)
     show_renko_l = st.checkbox("RENKO：L 族砖界", value=True,
                                disabled=not _renko_freq_ok)
     show_signal = st.checkbox("RENKO：RENKO_BAR 信号", value=True,
                               disabled=not _renko_freq_ok)
+    show_gear_o = st.checkbox(
+        "QuadGear0：橙色触发区段", value=True,
+        help="QuadGear0Bf == 0（O 档触发）；信号固定为 60min 口径")
     show_coef = st.checkbox("上升系数", value=True)
+    show_chartscan = st.checkbox(
+        "ChartScan：Buy/Sell 三时钟带", value=True,
+        help="15min→lime / 60min→olive / 日线→green。Sell 状态画带（即老树的 "
+             "STOPLOSS 区段）；数据来自 `*_reality_feat_60min` 的 "
+             "`Cls60/ClsDay/Cls15` + `Coord*`。")
+    show_charm = st.checkbox(
+        "Charm_O/I 触发点", value=True,
+        help="`QLevCharmOBf / QLevCharmIBf < 1e-12`（0 = 触发）⇒ 紫点 / 红点，"
+             "y = `CCI_NORM.min()-1`。守卫：Charm_O 触发数 > 3.82×Charm_I 时"
+             "视为口径异常，**O 不画**。")
 
     st.divider()
     show_leadin = st.checkbox("Mainstream：吸筹 leadin 触发", value=True)
     show_leadout = st.checkbox("Mainstream：派发 leadout 触发", value=True)
-    fold_mainstream = st.checkbox(
-        "高价股折叠（fold）", value=False,
-        help="D73：阈值按绝对价位算，>10 元的高价股未折叠时 leadout 几乎不触发")
-    show_gear_o = st.checkbox(
-        "QuadGear0：橙色触发区段", value=True,
-        help="QuadGear0Bf == 0（O 档触发）；信号固定为 60min 口径")
+    fold_mainstream = True
 
     st.divider()
-    st.caption("RENKO 列来自 `*_reality_feat_60min`（`--review` 的 as-of 产出），"
-               "本页**不重算**。落库只有 **60min**：两个交易时段之间的盘内 bar "
-               "共用当日 15:00 的快照；其它频率只显示中枢/笔。")
-
+    st.caption("RENKO / ChartScan / Charm 都来自 `*_reality_feat_60min`"
+               "（`--review` 的 as-of 产出），本页**不重算**。")
 
 # --------------------------------------------------------------------------- #
-# 数据加载
+# 数据
 # --------------------------------------------------------------------------- #
-def _powerline(ohlc, code):
-    """在给定帧上跑四量图，取 `4QPwrln`（电力线）。
-
-    `calc_four_quadrant_boost` 只依赖 `ohlc` 与 talib 指标，**不需要**外来的
-    features —— 所以每个频率都能独立算一份。
-    """
-    from GolemQ.analysis.quadrant_jit import calc_four_quadrant_boost
-    f = calc_four_quadrant_boost(code, features=pd.DataFrame(index=ohlc.index),
-                                 ohlc_data=ohlc, annual=252)
-    return f[LTT.QUADRANT_POWERLINE]
-
-
-@st.cache_data(show_spinner=False, ttl=600)
-def _ohlc_of(symbol: str, kind: str, freq: str = None, start: str = None):
-    """另取一份**别的频率**的 K 线帧（`kind` = `'day'` / `'min'`）。
-
-    ⚠️ `start` 是为了**暖机**：老树取日线是「60min 首根 **再往前 252 天**」
-    （`models/mainstream.py:69`）、15min 是「**再往前 192 天**」
-    （`features/reviews.py:2071`）。只取默认 800 天会与 60min 同起点，
-    首日 `MACD_DELTA_MAJOR`/`powerline` 没有暖机 ⇒ 事件 lag 错位。
-    """
-    market = get_active_market()
-    if kind == 'day':
-        d, _ = market.get_kline_price_v3(symbol, start=start, realtime=False, verbose=False)
-    else:
-        d, _ = market.get_kline_price_min(symbol, start=start, frequency=freq,
-                                          realtime=False, verbose=False)
-    if d is None or len(getattr(d, 'data', ())) == 0:
-        return None
-    # ⚠️ **不要 tail(MAX_BARS)**：15min 的暖机窗口有 1 万多根，截到 4096 会
-    # 把 60min 首根所在日期整段丢掉（对齐后全是 NaN）。MAX_BARS 只用于主图。
-    return d.data
-
-
-def _qa_macd(ohlc):
-    """**QUANTAXIS 口径**的 `(DIF, DEA, MACD柱)` —— 老树主流链用的就是它。
-
-    ⚠️ 不是 `talib.MACD`：QA 用 `ewm(adjust=True)` 且柱 `×2`（见
-    `analysis/indicators.calc_macd_qa` 的 docstring）。用 talib 口径会让
-    `MsLeadinx5BfMin` 有 1364/2075 根不同。
-    """
-    from GolemQ.analysis.indicators import calc_macd_qa
-    return calc_macd_qa(pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce'))
-
-
-def _macd_delta(ohlc):
-    """`MACD_DELTA` = **QA 口径 MACD 柱**的差分。"""
-    return _qa_macd(ohlc)[2].diff(1)
-
-
-def _macd_dea(ohlc):
-    """`DEA`（QA 口径），用于日线 `DEA_MAJ`。"""
-    return _qa_macd(ohlc)[1]
-
-
-def _macd_cross_sx_before(ohlc):
-    """`MACD_SX_BF` = `Timeline_duration(CROSS(DEA, DIF))`（老树 `indices.py:767-782`）。"""
-    from GolemQ.analysis.timing import Timeline_duration
-    dif, dea, _hist = _qa_macd(ohlc)
-    cross = (dea > dif) & (dea.shift(1) <= dif.shift(1))
-    return pd.Series(Timeline_duration(np.where(cross.fillna(False).to_numpy(), 1, 0)),
-                     index=ohlc.index)
-
-
-def _leadin_x5(ohlc):
-    """15min 的 `MsLeadinx5Bf`（新树 `analysis/quadrant_jit.py::calc_mainstream_feats`）。"""
-    feats = pd.DataFrame(index=ohlc.index)
-    feats[FLD.MACD] = _qa_macd(ohlc)[2].to_numpy()
-    feats = calc_mainstream_feats(ohlc, feats)
-    return feats[LTT.MAINSTREAM_LEADINx5_BEFORE]
-
-
-def _align_by_timestamp(series, index):
-    """把**同频/更高频**的序列按**精确时间戳**对齐到主索引。
-
-    ⚠️ 15min → 60min **不能用按日期 ffill**：老树 `reviews.py:1876-1880` 是按
-    `snapshot.name`（60min 的时间戳）去 15min 帧里取**同一时刻**那一行。
-    按日期取当天最后一根会把 15:00 的值抹到 10:30/11:30/14:00 上 ——
-    实测能让 `QLevPwrlnUprLag` 差出 148 根（2026-10-19）。
-    """
-    s = series.copy()
-    if isinstance(s.index, pd.MultiIndex):
-        s.index = pd.DatetimeIndex(pd.to_datetime(s.index.get_level_values(0)))
-    else:
-        s.index = pd.DatetimeIndex(pd.to_datetime(s.index))
-    s = s[~s.index.duplicated(keep='last')]
-    dates = pd.DatetimeIndex(pd.to_datetime(index.get_level_values(0)))
-    return pd.Series(s.reindex(dates).to_numpy(), index=index)
-
-
-def _align_by_date(series, index):
-    """把**另一个频率**的序列按「日期」对齐到当前索引上（同 `fbprophet._reindex_by_date`）。"""
-    dates = pd.Index(pd.to_datetime(index.get_level_values(0))).normalize()
-    src = series.copy()
-    src.index = pd.Index(pd.to_datetime(src.index.get_level_values(0))).normalize()
-    src = src[~src.index.duplicated(keep='last')]
-    # ⚠️ **ffill**：日线/周线的值要回填到其后的每一根 bar —— 老树合并周线帧
-    # 也是 ffill（`features_week` → 日线帧）。只 reindex 会让非周五的 bar 全是 NaN。
-    return pd.Series(src.reindex(dates).ffill().to_numpy(), index=index)
-
-
-def _calc_coef(code: str, ohlc, bi_list):
-    """算 `LTT.QUADRANT_UPRISING_I_COEF_DUMMY` → `(Series | None, 错误说明 | None)`。
-
-    链路（`analysis/quadrant_coef.py` 的模块 docstring 有完整说明）：
-
-        ohlc ──calc_four_quadrant_boost──▶ 4QPwrln（本频 / 15min / 日线）
-             ──rename──▶ 4QPwrln / _MINOR / _MAJOR
-             ──calc_quadrant_leverage_macd_timing_lag──▶ QLevMACDLagD
-             ──calc_uprising_i_coef──▶ QUprICoefD
-
-    ⚠️ 2026-10-19 起，`QUprICoefD` 的 `log10` 夹取还需要
-    `4QuadZenDCnt` / `QLevPwrlnUprLag`；这两列在这里按**最小表达式**现算
-    （ZEN 笔方向、星线死叉、两条 event-lag —— 不拖 ZEN/BS 整链）。
-    """
-    from GolemQ.analysis.pivot import calc_zen_dash_timing_lag
-    from GolemQ.analysis.quadrant_jit import (
-        calc_bs_star_down, calc_quadrant_leverage_macd_timing_lag,
-        calc_quadrant_powerline_uprisal_lag, calc_quadrant_stardown_count,
-        calc_quadrant_zen_dash_count)
-    from GolemQ.analysis.quadrant_coef import calc_uprising_i_coef
-    from GolemQ.analysis.timing import Timeline_duration
-
-    try:
-        # 暖机窗口照老树：日线 = 60min 首根 − 252 天；15min = − 192 天
-        _first = pd.to_datetime(ohlc.index.get_level_values(0)[0])
-        day_ohlc = _ohlc_of(code, 'day',
-                            start=str((_first - pd.Timedelta(days=252)).date()))
-        mn_ohlc = _ohlc_of(code, 'min', '15min',
-                           start=str((_first - pd.Timedelta(days=192)).date()))
-        if day_ohlc is None or mn_ohlc is None:
-            return None, '取不到 15min / 日线的 K 线'
-
-        f = pd.DataFrame(index=ohlc.index)
-        f[LTT.QUADRANT_POWERLINE] = _powerline(ohlc, code).to_numpy()
-        f[LTT.QUADRANT_POWERLINE_MAJOR] = _align_by_date(
-            _powerline(day_ohlc, code), ohlc.index)
-        # ⚠️ 15min 用**精确时间戳**（不是按日期 ffill），见 `_align_by_timestamp`
-        f[LTT.QUADRANT_POWERLINE_MINOR] = _align_by_timestamp(
-            _powerline(mn_ohlc, code), ohlc.index)
-        f[FLD.MACD_DELTA_MAJOR] = _align_by_date(_macd_delta(day_ohlc), ohlc.index)
-        f[FLD.DEA_MAJOR] = _align_by_date(_macd_dea(day_ohlc), ohlc.index)
-
-        # ---- 第二 OR 分支的三个 60min / 15min 输入 ----
-        f[FLD.MACD_DELTA] = _macd_delta(ohlc).to_numpy()
-        f[FLD.MACD_CROSS_SX_BEFORE] = _macd_cross_sx_before(ohlc).to_numpy()
-        f[LTT.MAINSTREAM_LEADINx5_BEFORE_MINOR] = _align_by_timestamp(
-            _leadin_x5(mn_ohlc), ohlc.index)
-
-        # ---- 星线死叉（日线，展开到主频）→ 4QuadStDwnCnt ----
-        _star = _align_by_date(calc_bs_star_down(day_ohlc).astype(float), ohlc.index)
-        f[LTT.BS_STAR_DOWN_MAJOR] = _star.to_numpy()
-        f[LTT.BS_STAR_DOWN_BEFORE_MAJOR] = Timeline_duration(
-            np.where(f[LTT.BS_STAR_DOWN_MAJOR].to_numpy() > 1e-19, 1, 0))
-
-        # ---- zDLagD：**只由 CZSC 笔方向决定**（不碰 ZEN 小波族）----
-        f[FLD.ZEN_DASH_TIMING_LAG_DUMMY] = calc_zen_dash_timing_lag(
-            bi_list, ohlc.index).to_numpy()
-
-        f[AKA.CLOSE] = pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce')
-        f = calc_quadrant_leverage_macd_timing_lag(f)   # 含第二 OR 分支
-        f = calc_quadrant_stardown_count(f)             # 一条 calc_energy
-        f = calc_quadrant_powerline_uprisal_lag(f)      # 两条 event-lag
-        f = calc_quadrant_zen_dash_count(f)             # 一条 calc_energy
-        f = calc_uprising_i_coef(f)
-        return f[COEF_COL].astype(float), None
-    except Exception as exc:                    # noqa: BLE001 演示里要给人看原因
-        return None, '{}: {}'.format(type(exc).__name__, exc)
-
-
-@st.cache_data(show_spinner=False, ttl=600)
-def load(symbol: str, frequency: str, long_history: bool,
-         fold_mainstream: bool = False):
-    """取数 → RENKO 特征 → czsc 分笔 → 中枢 → （若已生产）上升系数 + Mainstream。"""
-    freq_enum, kind, lookback_days = FREQS[frequency]
-    market = get_active_market()
-    if kind == 'day':
-        start = str(pd.Timestamp.now() - pd.Timedelta(days=lookback_days))[:10] if long_history else None
-        d, name = market.get_kline_price_v3(symbol, start=start, realtime=True, verbose=False)
-    else:
-        start = str(pd.Timestamp.now() - pd.Timedelta(days=lookback_days)) if long_history else None
-        d, name = market.get_kline_price_min(symbol, start=start, frequency=frequency,
-                                             realtime=True, verbose=False)
-
-    if d is None or len(getattr(d, 'data', ())) == 0:
-        return None, name, None
-    ohlc = d.data.tail(MAX_BARS)
-    if ohlc.empty:
-        return pd.DataFrame(), name, None
-
-    # ---- Mainstream 吸筹/派发（两族都在 `calc_mainstream_feats` 里算）----
-    _f = pd.DataFrame(index=ohlc.index)
-    _f[FLD.MACD] = _qa_macd(ohlc)[2]
-    ms = calc_mainstream_feats(ohlc, _f, fold=fold_mainstream)
-
-    # 60min 图另取日线算 MAJOR 版；非 60min 用本频
-    ms_major = None
-    if frequency == '60min':
-        _ts0 = pd.Timestamp(pd.to_datetime(
-            ohlc.index.get_level_values(0)).min())
-        _dstart = str((_ts0 - pd.Timedelta(days=900)).date())
-        _res, _ = market.get_kline_price_v3(
-            symbol, start=_dstart, end=str(pd.Timestamp.now().date()),
-            realtime=True, verbose=False)
-        _day = None if _res is None else getattr(_res, 'data', None)
-        if _day is not None and len(_day):
-            ms_major = calc_mainstream_major_feats(
-                _day, fold=fold_mainstream)
-
-    # ---- RENKO 列：attach `*_reality_feat_60min`（as-of，无后视镜）----
-    # ⚠️ 只读落库值，**不**在页面上跑 `renko_trend_cross_func` —— 那是整段历史
-    # 一次算完，会把目标 bar 之后的数据带进来。落库只有 60min 族（D78）。
-    feats = pd.DataFrame(index=ohlc.index)
-    renko_err = None
-    if frequency == RENKO_FREQ:
-        try:
-            feats, _loaded = attach_reality_feats(ohlc.copy(), symbol,
-                                                  verbose=False)
-        except Exception as exc:                   # noqa: BLE001
-            renko_err = f'{type(exc).__name__}: {exc}'
-    renko_ok = (FLD.RENKO_TREND_S in feats.columns
-                and pd.to_numeric(feats[FLD.RENKO_TREND_S],
-                                  errors='coerce').notna().any())
-
-    # ---- czsc 分笔 → 中枢 ----
-    bars = []
-    for i, (idx, row) in enumerate(ohlc.iterrows()):
-        dt = idx[0] if isinstance(idx, tuple) else idx
-        bars.append(RawBar(symbol=symbol, dt=dt, id=i, freq=freq_enum,
-                           open=float(row[AKA.OPEN]), close=float(row[AKA.CLOSE]),
-                           high=float(row[AKA.HIGH]), low=float(row[AKA.LOW]),
-                           vol=float(row.get(AKA.VOLUME, 0) or 0),
-                           amount=float(row.get('amount', 0) or 0)))
-    czsc = CZSC(bars, max_bi_count=512, verbose=False)
-    conf_map = bi_confirm_map(bars, max_bi_count=512)
-    pivots = calc_pivots(bi_list=czsc.bi_list, conf_map=conf_map, strict=True)
-    cls = classify_pivots(pivots)
-    bi_points = bi_list_to_points(czsc.bi_list)
-
-    # ---- 上升系数（`analysis/quadrant_coef.py`）----
-    # `QLevMACDLagD` 由 `4QPwrln` 的**三个频率**（15min / 本频 / 日线）合成
-    # ⇒ 要另取两份帧。
-    coef, coef_err = _calc_coef(symbol, ohlc, czsc.bi_list)
-
-    dts = [b.dt for b in bars]
-    return pd.DataFrame({'dt': dts,
-                         'open': [b.open for b in bars],
-                         'high': [b.high for b in bars],
-                         'low': [b.low for b in bars],
-                         'close': [b.close for b in bars]}), name, (
-        feats, pivots, cls, bi_points, coef, coef_err, renko_ok, renko_err,
-        ms, ms_major)
-
-
 try:
-    df, name, bundle = load(symbol, frequency, long_history, fold_mainstream)
+    data = app.load_base(symbol, frequency, long_history, fold_mainstream)
 except Exception as exc:                            # noqa: BLE001
     st.error(f"数据加载失败：{exc}")
     st.stop()
 
-if df is None:
+if data is None:
     st.warning(f"{symbol} 在 {frequency} 上没有取到 K 线 —— 换只标的或换个频率试试。")
     st.stop()
-if bundle is None or df.empty:
-    st.warning(f"{symbol} 的 K 线不足 30 根 —— 三条方法都算不出来。")
+df = data.get('df')
+if df is None or df.empty:
+    st.warning(f"{symbol} 的 K 线不足 30 根 —— 各层都算不出来。")
     st.stop()
 
-feats, pivots, cls, bi_points, coef, coef_err, renko_ok, renko_err, ms, \
-    ms_major = bundle
+feats = data['feats']
+ms, ms_major = data['ms'], data['ms_major']
+coef, coef_err = data['coef'], data['coef_err']
+bars = data['bars']
+if data.get('feats_err'):
+    st.warning(f"attach `*_reality_feat_60min` 失败：`{data['feats_err']}`")
 
+# ---- 缠论：分笔 → 中枢（画图用；`load_base` 已建好 bars / bi_list）----
+conf_map = bi_confirm_map(bars, max_bi_count=512)
+pivots = calc_pivots(bi_list=data['bi_list'], conf_map=conf_map, strict=True)
+cls = classify_pivots(pivots)
+bi_points = bi_list_to_points(data['bi_list'])
+
+# ---- RENKO / Gear0 ----
+renko_ok = (FLD.RENKO_TREND_S in feats.columns
+            and pd.to_numeric(feats[FLD.RENKO_TREND_S],
+                              errors='coerce').notna().any())
 gear_bf = gear_o_before(symbol) if show_gear_o else None
 
 _use_major = (frequency == '60min' and ms_major is not None
               and len(ms_major) > 0)
 
 
-def _major_values(major_col):
-    """日线 MAJOR 列按日期因果映射到当前 60min 帧（15:00 用当日）。"""
-    s = pd.to_numeric(ms_major[major_col], errors='coerce').copy()
-    s.index = pd.DatetimeIndex(
-        pd.to_datetime(s.index.get_level_values(0))).normalize()
-    s = s.groupby(level=0).last()
-    return _map_causal(s, ms.index).to_numpy()
-
-
-def _trigger_mask(col, major_col):
-    if _use_major and major_col in ms_major.columns:
-        ts = pd.DatetimeIndex(pd.to_datetime(df['dt']))
-        return ((ts.hour == 15) & (ts.minute == 0)
-                & (_major_values(major_col) < 1e-12))
-    if col not in ms.columns:
+def _leadin_lt_leadout_mask():
+    """RENKO_BAR 的显示条件（用户 2026-11 口径）。"""
+    if ms is None:
         return np.zeros(len(df), dtype=bool)
-    return pd.to_numeric(ms[col], errors='coerce').to_numpy() < 1e-12
+    if _use_major and ms_major is not None:
+        a, b = (LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR,
+                LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR)
+        if a not in ms_major.columns or b not in ms_major.columns:
+            return np.zeros(len(df), dtype=bool)
+        leadin = app.major_values(ms, ms_major, a)
+        leadout = app.major_values(ms, ms_major, b)
+    else:
+        a, b = LTT.MAINSTREAM_LEADIN_BEFORE, LTT.MAINSTREAM_LEADOUT_BEFORE
+        if a not in ms.columns or b not in ms.columns:
+            return np.zeros(len(df), dtype=bool)
+        leadin = pd.to_numeric(ms[a], errors='coerce').to_numpy()
+        leadout = pd.to_numeric(ms[b], errors='coerce').to_numpy()
+    if len(leadin) != len(df) or len(leadout) != len(df):
+        return np.zeros(len(df), dtype=bool)
+
+    mask = leadin < leadout
+    stoploss = ms.get(LTT.MAINSTREAM_LEADOUT_STOPLOSS_BEFORE_MAJOR)
+    if stoploss is not None:
+        stoploss = pd.to_numeric(stoploss, errors='coerce').to_numpy()
+        if len(stoploss) == len(df):
+            mask = mask & (leadin < stoploss)
+    rewind = ms.get(LTT.MAINSTREAM_LEADIN_REWIND_BEFORE_MAJOR)
+    if rewind is not None:
+        rewind = pd.to_numeric(rewind, errors='coerce').to_numpy()
+        if len(rewind) == len(df):
+            rew_ok = rewind < leadout
+            if stoploss is not None and len(stoploss) == len(df):
+                rew_ok = rew_ok & (rewind < stoploss)
+            mask = mask | rew_ok
+    mask = np.asarray(mask, dtype=bool)
+
+    if (stoploss is not None and len(stoploss) == len(df)
+            and len(leadin) == len(df)):
+        blocked = np.zeros(len(df), dtype=bool)
+        state = False
+        for i in range(len(df)):
+            if stoploss[i] == 0:
+                state = True
+            if leadin[i] == 0:
+                state = False
+            blocked[i] = state
+        mask = mask & ~blocked
+    return mask
 
 
 def _last_int(col: str):
@@ -453,11 +197,7 @@ s_dir = _last_int(FLD.RENKO_TREND_S)
 l_dir = _last_int(FLD.RENKO_TREND_L)
 bar_sig = _last_int(FLD.RENKO_TREND)
 _dir_word = {1: '🔴 上', -1: '🟢 下', 0: '— 平'}
-
-
-def _dir_txt(v) -> str:
-    return '—' if v is None else _dir_word.get(v, str(v))
-
+_dir_txt = lambda v: '—' if v is None else _dir_word.get(v, str(v))
 
 _last_kind = cls['kinds'][-1] if cls.get('kinds') else '—'
 c1, c2, c3, c4, c5 = st.columns(5)
@@ -466,12 +206,11 @@ c2.metric("📦 中枢数", len(pivots))
 c3.metric("🧭 走势类型", cls['kind'])
 c4.metric("🧱 RENKO S / L",
           f"{_dir_txt(s_dir)} / {_dir_txt(l_dir)}" if renko_ok else '—')
-# 末根常常是 NaN（分形长度不够/窗口越界）⇒ 取**最后一个非空值**
 _coef_last = coef.dropna().tail(1) if coef is not None else None
 c5.metric("📈 上升系数",
           f"{float(_coef_last.iloc[0]):.4f}" if _coef_last is not None and len(_coef_last)
           else '—')
-_label = symbol if name == symbol else f'{name}（{symbol}）'
+_label = symbol if data['name'] == symbol else f"{data['name']}（{symbol}）"
 _fmt = lambda v: f'{v:+d}' if v is not None else '—'
 if renko_ok:
     st.caption(f"标的：{_label} · {frequency} · 末个中枢：**{_last_kind}** · "
@@ -481,33 +220,49 @@ else:
     st.caption(f"标的：{_label} · {frequency} · 末个中枢：**{_last_kind}** · "
                "RENKO 列不可用（见下方说明）")
 
-_li = int(_trigger_mask(LTT.MAINSTREAM_LEADIN_BEFORE,
-                        LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR).sum())
-_lo = int(_trigger_mask(LTT.MAINSTREAM_LEADOUT_BEFORE,
-                        LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR).sum())
+_li = int(app.trigger_mask(df, ms, ms_major, frequency,
+                           LTT.MAINSTREAM_LEADIN_BEFORE,
+                           LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR).sum())
+_lo = int(app.trigger_mask(df, ms, ms_major, frequency,
+                           LTT.MAINSTREAM_LEADOUT_BEFORE,
+                           LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR).sum())
 _mode = '日线 MAJOR' if _use_major else '本频'
 st.caption(f"Mainstream（{_mode}）：leadin {_li} 次 / leadout {_lo} 次"
            f"（fold={fold_mainstream}；标记在 Prophet LB 下方 / UB 上方）")
-if _lo == 0 and not fold_mainstream:
-    st.info("leadout 触发为 0：D73 的阈值按绝对价位算，>10 元的高价股"
-            "未折叠时几乎不触发；勾选侧边栏「高价股折叠（fold）」再看。")
-    if renko_err:
-        st.warning(f"attach `*_reality_feat_60min` 失败：`{renko_err}`")
-    elif frequency != RENKO_FREQ:
-        st.info(f"RENKO 只落库 {RENKO_FREQ}；当前频率 `{frequency}` 只有中枢/笔。")
-    else:
-        st.info(f"`{symbol}` 的 `*_reality_feat_60min` 里没有 Renko 行 —— "
-                "先跑 `--review` / `tools/backfill_renko.py`。")
 
 # --------------------------------------------------------------------------- #
-# 图 1：K 线 + 中枢 + RENKO（叠加）
+# 图 1：K 线 × 中枢 × RENKO × 上升系数 × ChartScan
 # --------------------------------------------------------------------------- #
-fig = go.Figure()
-fig.add_trace(go.Candlestick(
-    x=df['dt'], open=df['open'], high=df['high'], low=df['low'], close=df['close'],
-    increasing_line_color='red', increasing_fillcolor='red',
-    decreasing_line_color='green', decreasing_fillcolor='green',
-    name='K线'))
+fig = app.make_figure(df)
+
+# QuadDwnRskLagMaj > 0 的黄色带
+if (LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR in ms.columns
+        and FLD.CCI_NORM in feats.columns):
+    _dwn = pd.to_numeric(
+        ms[LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR], errors='coerce')
+    _cci = pd.to_numeric(feats[FLD.CCI_NORM], errors='coerce').dropna()
+    if len(_dwn) == len(df) and len(_cci):
+        _band = pd.Series(
+            np.where(_dwn.to_numpy() > 1e-12, 0.0, 1.0), index=ms.index)
+        _runs = trigger_runs(_band)
+        if _runs:
+            _y0, _y1 = float(_cci.min() - 1), float(_cci.max() - 1)
+            _pad = pd.Timedelta(minutes=30)
+            for _a, _b in _runs:
+                fig.add_shape(
+                    type='rect', xref='x', yref='y',
+                    x0=_a - _pad, x1=_b + _pad, y0=_y0, y1=_y1,
+                    fillcolor='yellowgreen', opacity=0.832,
+                    line=dict(width=0), layer='below')
+            st.caption(f"yellowgreen 区域：`QuadDwnRskLagMaj > 1e-12`，"
+                       f"{len(_runs)} 段；y 范围 = `CCI_NORM` min/max - 1。")
+
+# ChartScan 带 + Charm 点（公共层）
+if show_chartscan:
+    app.add_chartscan_sell_bands(fig, feats, df, echo=st.caption)
+    app.add_chartscan_buy_bands(fig, data, echo=st.caption)
+if show_charm:
+    app.add_charm_dots(fig, data, echo=st.caption)
 
 # QuadGear0 触发区段（橙色）
 if show_gear_o and gear_bf is not None:
@@ -526,8 +281,7 @@ if show_bi:
 if show_pivots:
     plot_pivots_plotly(fig, pivots, x_last=df['dt'].iloc[-1], show_ggdd=show_ggdd)
 
-# RENKO S / L 两族砖界 —— 台阶线（`line_shape='hv'`）：砖界在两次分型之间恒定不变
-# ⚠️ 这些列来自 `*_reality_feat_60min`，同一交易日 4 根共用一个 15:00 快照。
+# RENKO S / L 两族砖界（台阶线）
 _renko_bands = []
 if renko_ok and show_renko_s:
     _renko_bands.append((FLD.RENKO_TREND_S_LB, FLD.RENKO_TREND_S_UB, 'royalblue', 'S'))
@@ -546,85 +300,37 @@ for lb, ub, col, tag in _renko_bands:
 if renko_ok and show_signal and FLD.RENKO_TREND in feats.columns:
     sig = pd.to_numeric(feats[FLD.RENKO_TREND], errors='coerce').values
     close = pd.to_numeric(df['close'], errors='coerce').values
+    _leadin_lt_leadout = _leadin_lt_leadout_mask()
     for val, col, nm, sym in ((1, 'red', 'RENKO_BAR = +1', 'triangle-up'),
                               (-1, 'green', 'RENKO_BAR = -1', 'triangle-down')):
-        m = sig == val
+        m = (sig == val) & _leadin_lt_leadout
         if m.any():
             fig.add_trace(go.Scatter(
                 x=df['dt'][m], y=close[m], mode='markers', name=nm,
                 marker=dict(symbol=sym, size=8, color=col, opacity=0.75)))
 
-# Mainstream leadin / leadout：60min 用日线 MAJOR，非 60min 用本频
-def _marker_y(side):
-    """标记 y：吸筹在 Prophet LB / low 下方，派发在 UB / high 上方。"""
-    close = pd.to_numeric(df['close'], errors='coerce').to_numpy(float)
-    low = pd.to_numeric(df['low'], errors='coerce').to_numpy(float)
-    high = pd.to_numeric(df['high'], errors='coerce').to_numpy(float)
-    lb = np.full(len(df), np.nan)
-    ub = np.full(len(df), np.nan)
-    if frequency == '60min' and feats is not None:
-        for name, arr in (('prophetLb', lb), ('prophetUb', ub)):
-            if name in feats.columns:
-                arr[:] = pd.to_numeric(feats[name], errors='coerce').to_numpy()
-    pad = np.maximum(close * 0.01, (ub - lb) * 0.15)
-    pad = np.where(np.isfinite(pad) & (pad > 0), pad, close * 0.01)
-    if side == 'up':
-        base = np.maximum(np.where(np.isfinite(ub), ub, high), high)
-        return base + pad
-    base = np.minimum(np.where(np.isfinite(lb), lb, low), low)
-    return base - pad
+# Mainstream leadin / leadout
+app.add_mainstream_triggers(fig, data, show_leadin, show_leadout)
 
-
-def _add_mainstream_triggers(col, major_col, label, color, symbol, side):
-    mask = _trigger_mask(col, major_col)
-    if mask.any():
-        y = _marker_y(side)
-        fig.add_trace(go.Scatter(
-            x=df['dt'].to_numpy()[mask], y=y[mask],
-            mode='markers', name=label,
-            marker=dict(symbol=symbol, size=10, color=color,
-                        line=dict(width=1, color='white'))))
-
-
-if show_leadin:
-    _add_mainstream_triggers(
-        LTT.MAINSTREAM_LEADIN_BEFORE, LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR,
-        'leadin（吸筹）', '#2ca02c', 'triangle-up', 'down')
-if show_leadout:
-    _add_mainstream_triggers(
-        LTT.MAINSTREAM_LEADOUT_BEFORE, LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR,
-        'leadout（派发）', '#d62728', 'triangle-down', 'up')
-
-# ---- 上升系数：**叠在主图的副轴**上（matplotlib 的 `ax3 = ax1.twinx()` 对应 Plotly 的 `yaxis='y2'`）----
-# 参考 `OneWaveQuant/.../calc_4quad_poolcoef-bs-stage-of-zen.ipynb`：
-#   ax3 = ax1.twinx(); ax3.plot(DATETIME_LABEL, features[COEF], color='darkred',
-#                               linestyle='--', lw=1, alpha=0.67)
+# 上升系数：叠在主图副轴
 if show_coef and coef is not None:
     fig.add_trace(go.Scatter(
-        x=df['dt'], y=coef.to_numpy(), mode='lines', name=COEF_COL,
+        x=df['dt'], y=coef.to_numpy(), mode='lines', name=app.COEF_COL,
         line=dict(color='darkred', dash='dash', width=1), opacity=0.67,
         yaxis='y2'))
 
-fig.update_layout(
-    height=600, xaxis_rangeslider_visible=False, hovermode='x unified',
-    legend=dict(orientation='h', yanchor='bottom', y=1.02),
-    margin=dict(l=10, r=10, t=40, b=10),
-    # 副轴：叠在 y 上、放右侧 —— 与 `ax1.twinx()` 同一个意思
-    yaxis2=dict(title=COEF_COL, overlaying='y', side='right',
-                showgrid=False, zeroline=False))
-fig.update_xaxes(nticks=15)
+app.finish_figure(fig)
 st.plotly_chart(fig, width='stretch')
 
 # --------------------------------------------------------------------------- #
-# 上升系数：**说明**（曲线已叠在主图副轴上，这里不再单画一张）
+# 上升系数：说明
 # --------------------------------------------------------------------------- #
-st.subheader(f"📈 上升系数 `{COEF_COL}`")
-
+st.subheader(f"📈 上升系数 `{app.COEF_COL}`")
 if not show_coef:
     st.caption("已关闭（侧边栏）。")
 elif coef is None:
     st.warning(
-        f"**`{COEF_COL}` 这一次没算出来** —— `{coef_err}`。\n\n"
+        f"**`{app.COEF_COL}` 这一次没算出来** —— `{coef_err}`。\n\n"
         "链路：`4QPwrln`（本频 / 15min / 日线）+ `MACD_DELTA_MAJOR`（日线）"
         " → `QLevMACDLagD` → `QUprICoefD`（`analysis/quadrant_coef.py`）。"
     )
@@ -632,15 +338,13 @@ else:
     _last = coef.dropna().tail(1)
     st.caption(
         f"已叠在**主图的右轴**上（matplotlib 的 `ax3 = ax1.twinx()` ≡ Plotly 的 "
-        f"`yaxis='y2'`）：`darkred` 虚线 · `lw=1` · `alpha=0.67` —— 与 "
-        "`calc_4quad_poolcoef-bs-stage-of-zen.ipynb` 的 `ax3.plot(...)` 同一口径。"
+        f"`yaxis='y2'`）：`darkred` 虚线 · `lw=1` · `alpha=0.67`。"
         f" 末个非空值 **{float(_last.iloc[0]):.4f}**（近 {int(coef.notna().sum())} 根有值）。"
     )
 
-st.caption("⚠️ 三者**没有共同的数学基础**：中枢是「三笔重叠」的**结构**，RENKO 是「固定砖高」"
-           "的**趋势**，上升系数是四量图链的**优先级权重**。图上分歧是常态，**本页不做融合**。"
-           "RENKO 是 review 的 as-of 落库值（每交易日 15:00、≤T 的 2160 根），"
-           "不是本页重算 —— 所以同一交易日的 4 根是同一个台阶。")
+st.caption("⚠️ 各层**没有共同的数学基础**：中枢是「三笔重叠」的结构，RENKO 是"
+           "「固定砖高」的趋势，上升系数是四量图链的优先级权重，ChartScan 是 "
+           "CV 的 Buy/Sell 检出。图上分歧是常态，**本页不做融合**。")
 
 # --------------------------------------------------------------------------- #
 # 明细
@@ -653,7 +357,7 @@ with st.expander("RENKO 特征明细（末 200 行）"):
                         FLD.RENKO_TREND_S_UB, FLD.RENKO_TREND_L, FLD.RENKO_TREND_L_LB,
                         FLD.RENKO_TREND_L_UB, FLD.RENKO_TREND, FLD.RENKO_TREND_S_TIMING_LAG,
                         FLD.RENKO_BOOST_S_TIMING_LAG, FLD.RENKO_TREND_L_TIMING_LAG,
-                        FLD.RENKO_BOOST_L_TIMING_LAG, COEF_COL) if c in feats.columns]
+                        FLD.RENKO_BOOST_L_TIMING_LAG, app.COEF_COL) if c in feats.columns]
     if cols:
         st.dataframe(feats[cols].tail(200), width='stretch')
     else:

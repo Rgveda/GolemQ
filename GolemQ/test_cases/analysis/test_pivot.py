@@ -31,13 +31,16 @@ import unittest
 from datetime import datetime, timedelta
 
 import numpy as np
+import pandas as pd
 
 from czsc import CZSC
 from czsc.objects import Freq, RawBar
 
 from GolemQ.analysis.pivot import (
-    _mark_to_str, bi_list_to_points, calc_pivots, classify_pivots, pivots_to_df,
+    _mark_to_str, bi_list_to_points, calc_pivots, causal_pivot_series,
+    classify_pivots, pivots_to_df,
 )
+from GolemQ.analysis.timing import calc_event_timing_lag
 
 
 # --------------------------------------------------------------------------- #
@@ -210,6 +213,30 @@ class TestPivotNoLookahead(unittest.TestCase):
                                      f'截断改写了 direction @ {cut:%Y-%m-%d}')
                     checked += 1
         self.assertGreater(checked, 0, '没有查到一个已闭合中枢 —— 夹具没有覆盖到该不变量')
+
+    def test_open_pivot_extends_to_last_bar(self):
+        """未完成中枢的 `end_dt` 只是最后分型点，因果展开要铺到当前 bar。
+
+        旧实现把 `end_dt` 当成「中枢已结束」：最后一个分型点之后 ZD 变 NaN，
+        `ZenPivotLag` 在中枢内也会一直是负值（review 全负的根因）。
+        """
+        cut = self.bars[int(len(self.bars) * 0.75)].dt
+        cut_bars = [b for b in self.bars if b.dt <= cut]
+        pivots = calc_pivots(
+            bi_list=CZSC(cut_bars, max_bi_count=126, verbose=False).bi_list)
+        open_pivots = [p for p in pivots if p.get('is_open')]
+        self.assertTrue(open_pivots, '截断点应留下一个未完成中枢')
+
+        p = open_pivots[-1]
+        self.assertLess(p['end_dt'], cut,
+                        '未完成中枢的 end_dt 应停在最后分型点，而不是截断点')
+        dts = pd.DatetimeIndex([b.dt for b in cut_bars])
+        zd, *_ = causal_pivot_series(pivots, dts)
+        self.assertFalse(np.isnan(zd[-1]), '未完成中枢在最后一根 bar 上不应变 NaN')
+
+        lag = calc_event_timing_lag(np.where(~np.isnan(zd), 1, -1))
+        self.assertGreater(int(lag[-1]), 0,
+                           '中枢内 lag 应为正（+1 累计），不能因为 open 标记丢失变负')
 
 
 # --------------------------------------------------------------------------- #

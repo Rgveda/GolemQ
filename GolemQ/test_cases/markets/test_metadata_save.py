@@ -349,6 +349,69 @@ class TestFillTurnover(unittest.TestCase):
             fill_turnover([])
 
 
+class TestRefreshTurnoverShortCircuit(unittest.TestCase):
+    """换手率也要**短路**（用户 2026-11-14）：与 moneyflow/diagnosis 同口径 ——
+    上一交易日覆盖 ≥ `COVERAGE_SKIP_RATIO`（90%）就不再逐码现算。
+
+    为什么值得单测：不短路时全市场 5,582 码 × ~33ms ≈ 3~5 分钟，屏上只有一个绿点，
+    看起来就是卡死；而短路判断要是写错（比如只数一列），要么白跑要么永远不跳。
+    """
+
+    UNIVERSE = ['6%05d' % i for i in range(10)]
+    DAY = '2026-11-13'
+
+    def _run(self, covered):
+        import pandas as pd
+        from unittest import mock
+        from GolemQ.markets.StockCN import metadata_save as ms
+
+        df = pd.DataFrame({'code': list(self.UNIVERSE)})
+        half = len(covered) // 2
+        calls = {'n': 0}
+
+        def fake_covered(field, day, codes=None, db=None):
+            calls['n'] += 1
+            part = covered[:half] if calls['n'] == 1 else covered[half:]
+            return {'day': day, 'field': field, 'covered': len(part),
+                    'codes': set(part)}
+
+        filled = {'called': False}
+
+        def fake_fill(*args, **kwargs):
+            filled['called'] = True
+            return {'codes': len(self.UNIVERSE), 'filled': 1,
+                    'skipped': 0, 'upserted': 1, 'modified': 0}
+
+        with mock.patch.object(ms, 'metadata_covered', side_effect=fake_covered), \
+             mock.patch('GolemQ.markets.StockCN.refdata.GQ_fetch_stock_list',
+                        return_value=df), \
+             mock.patch('GolemQ.markets.StockCN.date_utils.GQ_util_get_last_day',
+                        return_value=self.DAY), \
+             mock.patch.object(ms, 'fill_turnover', side_effect=fake_fill):
+            out = ms.refresh_turnover(verbose=False, echo=lambda *a: None)
+        return out, filled['called']
+
+    def test_covered_universe_short_circuits(self):
+        """9/10 覆盖（= 90%）⇒ 跳过，**绝不**再调 `fill_turnover`。"""
+        out, called = self._run(self.UNIVERSE[:9])
+
+        self.assertTrue(out.get('short_circuit'))
+        self.assertEqual(out['covered'], 9)
+        self.assertFalse(called, '覆盖达标还去逐码现算，短路就白写了')
+
+    def test_below_threshold_still_computes(self):
+        """5/10 ⇒ 低于阈值，照常现算（半途失败留下的部分行必须被补齐）。"""
+        out, called = self._run(self.UNIVERSE[:5])
+
+        self.assertNotIn('short_circuit', out)
+        self.assertTrue(called)
+
+    def test_two_columns_are_unioned(self):
+        """覆盖 = `turnover` ∪ `TurnoverRate`（两列口径不同，任一有值即算）。"""
+        out, called = self._run(self.UNIVERSE[:9])
+        self.assertTrue(out.get('short_circuit'), '并集口径下 9/10 应达标')
+
+
 class TestMetadataCovered(unittest.TestCase):
     """短路判断的读口：按 `date_stamp` 精确取已覆盖的 code。"""
 

@@ -37,7 +37,6 @@ LOOKBACK_DAYS = 800
 #: as-of 缠论的回看 bar 数（800 自然日 ≈ 530 交易日 × 4 根 = 2,120 根 60min）。
 #: ⚠️ 别写成 770 —— 770 根只有约 9 个月，2026-06 的笔会整段错位。
 ZEN_WINDOW_BARS = 2120
-CHUNK_SIZE = 100
 
 
 def _frame(res):
@@ -260,45 +259,38 @@ class MainstreamPipeline(BasePipeline):
             snap['MAGIC_NINE_TURNS_TIMING_LAG_COMPOUNDED'] = _lag
         return snap
 
-    def _chunk_counts(self, codes: List[str], timeline: np.ndarray,
-                      as_of) -> np.ndarray:
-        counts = np.zeros((3, len(timeline)), dtype=np.int32)
+    def run_market(self, codes: Iterable[str], as_of=None,
+                   pool_size: int = 0) -> pd.DataFrame:
+        """全市场横截面 → 每根 60min bar 的仓位行。
+
+        **并行执行走 `BasePipeline.run_codes`**（与 compact / review 同一套）：
+        一码一个任务、统一进度条、统一超时与统计。本类**不再自己写 `Parallel`** ——
+        平行实现只会分叉（用户 2026-11-12 明确）。
+        """
+        as_of = pd.Timestamp(as_of or GQ_util_last_trade_as_of())
+        codes = [str(c) for c in codes]
+        timeline = self.market_timeline(as_of)
+        results, _stats = self.run_codes(codes, pool_size=pool_size,
+                                         verbose=self.verbose, as_of=as_of)
+
+        total = np.zeros((3, len(timeline)), dtype=np.int32)
         T = len(timeline)
-        for code in codes:
-            try:
-                masks = self.code_masks(code, as_of)
-            except Exception:                       # noqa: BLE001 单码失败不拖垮整片
+        for r in results:
+            if not r.ok or not isinstance(r.result, dict):
                 continue
-            if masks is None:
+            ts = np.asarray(r.result['ts'])
+            bull = np.asarray(r.result['bull'], dtype=bool)
+            bear = np.asarray(r.result['bear'], dtype=bool)
+            if len(ts) == 0:
                 continue
-            ts, bull, bear = masks
             pos = np.searchsorted(timeline, ts)
             ok = (pos < T) & (timeline[np.clip(pos, 0, T - 1)] == ts)
             if not ok.any():
                 continue
             p = pos[ok]
-            counts[0] += np.bincount(p[bull[ok]], minlength=T).astype(np.int32)
-            counts[1] += np.bincount(p[bear[ok]], minlength=T).astype(np.int32)
-            counts[2] += np.bincount(p, minlength=T).astype(np.int32)
-        return counts
-
-    def run_market(self, codes: Iterable[str], as_of=None,
-                   pool_size: int = 0) -> pd.DataFrame:
-        """全市场横截面 → 每根 60min bar 的仓位行。"""
-        as_of = pd.Timestamp(as_of or GQ_util_last_trade_as_of())
-        codes = [str(c) for c in codes]
-        timeline = self.market_timeline(as_of)
-        chunks = [codes[i:i + CHUNK_SIZE] for i in range(0, len(codes), CHUNK_SIZE)]
-        if pool_size > 0 and len(chunks) > 1:
-            from joblib import Parallel, delayed
-            parts = Parallel(n_jobs=pool_size, backend='loky')(
-                delayed(_chunk_counts_job)(self.lookback_days, chunk, timeline,
-                                           as_of)
-                for chunk in chunks)
-        else:
-            parts = [self._chunk_counts(c, timeline, as_of) for c in chunks]
-        total = np.sum(parts, axis=0) if parts else np.zeros((3, len(timeline)),
-                                                             dtype=np.int32)
+            total[0] += np.bincount(p[bull[ok]], minlength=T)
+            total[1] += np.bincount(p[bear[ok]], minlength=T)
+            total[2] += np.bincount(p, minlength=T)
 
         res = calc_position_series(total[2], total[0], total[1])
         # 快照契约（一次 groupby(bar)）：STAGE_MODE / 各 MEDIAN / COMBO
@@ -374,9 +366,31 @@ class MainstreamPipeline(BasePipeline):
         return out[out['mberCnt'] > 0].reset_index(drop=True)
 
 
-def _chunk_counts_job(lookback_days, codes, timeline, as_of):
-    pipe = MainstreamPipeline(lookback_days=lookback_days)
-    return pipe._chunk_counts(codes, timeline, as_of)
+def worker_count(pct_of_cores, cores: int = None) -> int:
+    """`--pct-of-cores` → worker 数。``>1`` 按**百分数**、``(0,1]`` 按**比例**、
+    ``<=0`` → 0（串行）。
+
+    ⚠️ **不能先 `int()`**：默认值是比例 `0.32`，`int(0.32) == 0` 会让整条流水线
+    退化到**串行**（5,582 码 × ~2.6s ≈ 4 小时），且 `Parallel` 之前没有任何输出
+    —— 2026-11-12 用户实报「直接卡死没提示」。
+
+    >>> worker_count(0.32, 20)
+    6
+    >>> worker_count(25, 20)
+    5
+    >>> worker_count(1.0, 20)
+    20
+    >>> worker_count(0, 20)
+    0
+    """
+    import multiprocessing
+    cores = int(cores or multiprocessing.cpu_count())
+    pct = float(pct_of_cores or 0)
+    if pct > 1:                      # 百分数（23 = 23%）
+        return max(1, int((pct / 100.0) * cores))
+    if pct > 0:                      # 比例（0.32 = 32%）
+        return max(1, int(pct * cores))
+    return 0
 
 
 def run_mainstream(eval_range: str = 'all', codes=None, as_of: str = '',
@@ -402,13 +416,7 @@ def run_mainstream(eval_range: str = 'all', codes=None, as_of: str = '',
             raise ValueError(f'无法解析 eval_range={eval_range!r}')
         codelist = list(got)
 
-    cpu = int(pct_of_cores) if pct_of_cores else 0
-    if cpu > 1:
-        import multiprocessing
-        cpu = max(1, int((cpu / 100.0) * multiprocessing.cpu_count()))
-    elif 0 < cpu <= 1:
-        import multiprocessing
-        cpu = max(1, int(cpu * multiprocessing.cpu_count()))
+    cpu = worker_count(pct_of_cores)
 
     pipe = MainstreamPipeline(lookback_days=lookback_days, verbose=verbose)
     df = pipe.run_market(codelist, as_of=(as_of or None), pool_size=cpu)

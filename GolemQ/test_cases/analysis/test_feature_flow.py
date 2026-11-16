@@ -147,6 +147,57 @@ class TestFeatureFlow(unittest.TestCase):
         self.assertTrue(frame.index.equals(f60.index))
         self.assertTrue(frame[LTT.QUADRANT_GEAR_O_BEFORE].notna().all())
 
+    def test_mainstream_rewind_stoploss_before_major(self):
+        idx = pd.bdate_range('2024-01-02', periods=8)
+        ms60 = pd.DataFrame({
+            LTT.MAINSTREAM_LEADIN_BEFORE: [9, 9, 9, 9, 9, 10, 10, 10],
+            LTT.MAINSTREAM_LEADOUT_BEFORE: [9, 9, 9, 9, 9, 10, 10, 10],
+        }, index=idx)
+        qlev = pd.Series(100.0, index=idx)
+        leadin_maj = pd.Series(10.0, index=idx)
+        leadout_maj = pd.Series(10.0, index=idx)
+        # 4QPwrlnLagMaj：STOPLOSS 要 < -1e-12，REWIND 要 > 1e-12。
+        pw_stop = pd.Series([0, 0, 0, 0, -1, 0, 0, 0], index=idx, dtype=float)
+        pw_rew = pd.Series([0, 0, 0, 0, 1, 0, 0, 0], index=idx, dtype=float)
+        pw_major = pd.Series(1.0, index=idx)  # 0.8 < 1.0 < 1.6
+        ohlc = pd.DataFrame(index=idx)
+
+        stop = ff.ms_leadout_stoploss_before_major(
+            qlev, leadin_maj, ms60, pw_major, pw_stop, ohlc)
+        rew = ff.ms_leadin_rewind_before_major(
+            qlev, leadout_maj, ms60, pw_major, pw_rew, ohlc)
+
+        # 只有第 4 行条件成立；第 5~7 行 leadin/leadout=10 不满足 <=9。
+        want = [1, 2, 3, 4, 0, 1, 2, 3]
+        self.assertEqual(stop.tolist(), want)
+        self.assertEqual(rew.tolist(), want)
+        self.assertEqual(stop.name,
+                         LTT.MAINSTREAM_LEADOUT_STOPLOSS_BEFORE_MAJOR)
+        self.assertEqual(rew.name,
+                         LTT.MAINSTREAM_LEADIN_REWIND_BEFORE_MAJOR)
+
+        # QLevMACDLagD == -1 的 bar 也强制视为 STOPLOSS 事件。
+        qlev_neg = qlev.copy()
+        qlev_neg.iloc[4] = -1.0
+        stop_neg = ff.ms_leadout_stoploss_before_major(
+            qlev_neg, leadin_maj, ms60, pw_major, pw_stop, ohlc)
+        self.assertEqual(stop_neg.tolist(), want)
+
+    def test_mainstream_rewind_stoploss_nodes_execute(self):
+        f60, f15, fd = _frames(40)
+        dr = ff.build_driver()
+        out = dr.execute(
+            ['pwrln_timing_lag_major',
+             'ms_leadout_stoploss_before_major',
+             'ms_leadin_rewind_before_major'],
+            inputs={'code': '600519', 'ohlc60': f60, 'ohlc15': f15,
+                    'ohlc_day': fd})
+        for key in ('pwrln_timing_lag_major',
+                    'ms_leadout_stoploss_before_major',
+                    'ms_leadin_rewind_before_major'):
+            self.assertEqual(len(out[key]), len(f60))
+            self.assertTrue(out[key].index.equals(f60.index))
+
     def test_mainstream_code_features_matches_manual(self):
         """`MainstreamPipeline._features_from_frames` 与旧手写链逐值一致。"""
         f60, f15, fd = _frames(300)

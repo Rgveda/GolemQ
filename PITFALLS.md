@@ -119,6 +119,16 @@ pytdx 是请求/响应式 socket，一个畸形响应让**字节流错位**，�
 - 若日后确要重试北交所，**必须用独立连接，用完即弃**
 - **更一般的教训**：pytdx 的调用返回 `None`/空时，先怀疑连接已错位，
   而不是「上游没这个数据」
+- **`get_security_count` 同样会被毒死**（2026-11-12 `--save tdx` 实报）：
+  前四张表全 `ok`，`index_list` 单独报
+  `TypeError: 'NoneType' object cannot be interpreted as an integer` ——
+  连接是 `stock_info` 打了 5,582 次 `get_finance_info` 之后死的，`None` 被直接
+  喂进 `range(0, total, 1000)`。现在 `_iter_security_rows` 遇到非正整数会
+  `close()` + 换连接重试一次，**仍失败则抛 `DataSourceNotAvailable`** ——
+  **不能返回部分清单**（`stock_list`/`stock_info` 带差量删除，少一个市场就是
+  静默删掉该市场全部标的，见 P19）；`new_api()` 的探活也改成**看返回值**
+  （探活返回 `None` 的服务器不再算可用）。回归测试
+  `test_cases/markets/test_pytdx_poisoned.py`。
 
 ### P4. 静默覆盖落盘产物
 
@@ -565,8 +575,12 @@ cli/__main__.py  顶层 → supervisor/scheduler.py:15 顶层
 把本次没取到的标的全部删掉。实测：`stock_info` 从 **5,574 行删到 250 行**。
 
 **规矩**：**部分取数与差量删除互斥**。`save_refdata` 现在在 `codelist is not None`
-时自动把 `delete_delta_key` 置空并打印一行说明 —— 这条护栏放在**函数里**而不是
-各调用点，否则每加一个调用方就得记得一次。
+时**跳过退市归档**并打印一行说明 —— 这条护栏放在**函数里**而不是各调用点，
+否则每加一个调用方就得记得一次。
+
+⚠️ **2026-11-12 更新**：硬删除整体废掉了 —— `stock_info` 不删不归档，
+`stock_list`/`etf_list`/`index_list` 改成「名单 + 行情（+ 官方清单）确认后
+搬进 `*_delisted`」，见 P48。
 
 **推广**：任何「带 delta 语义的写入」，只要上游可能给**部分结果**，
 就必须显式区分「全集」与「子集」；判断不了就**不删**。
@@ -1541,3 +1555,112 @@ out[FIELD.ATR_Stopline_PRICE_WEEKLY] = stop_line.round(3).astype(np.float16)
 **验证**：`test_xgboost_compact.TestCalcCompactFeatures
 .test_weekly_atr_price_does_not_overflow_float16`（用 ~200 元日线复现，
 断言 `isfinite` 且确实覆盖 >65.5 区间）。
+
+### P46. 未完成中枢的 `end_dt` 只给绘图用，逐 bar 特征必须看 `is_open`
+
+**位置**：`analysis/pivot.py::calc_pivots` / `causal_pivot_series`（2026-11-11）。
+
+**症状**：60min review 的 `ZenPivotLag` 全市场全为负（-1、-3、…、-295），
+中枢内也不出现 +1 累计。
+
+**机制**：`calc_pivots` 在 `end_point is None`（中枢尚未结束）时，把
+`end_dt` 写成**最后一个分型点**，本来只是给绘图一个右端。但
+`causal_pivot_series` 把 `end_dt` 当成「中枢已结束」：ZD 只铺到最后一个
+分型点，到当前 bar 又变 NaN ⇒ `calc_event_timing_lag` 判成「出中枢」⇒
+lag 永远为负。**不是 as-of 永远在中枢外**。
+
+**怎么办**：`calc_pivots` 保留 `is_open = end_point is None`；
+`causal_pivot_series` 对 `is_open` 的中枢把右端铺到 `dts[-1]`（当前 bar），
+不能只铺到 `end_dt`。`causal_pivot_count` 用的是 `known_dt`，不受影响。
+
+**验证**：`test_pivot.TestPivotNoLookahead.test_open_pivot_extends_to_last_bar`
+（截断到中枢中段，断言 `is_open`、`end_dt < cut`、最后 bar 的 ZD 非 NaN、
+lag > 0）。
+
+### P47. 60min review 列接到 15min/1min 帧：精确 join 会在整点之间留空
+
+**位置**：`analysis/reality_attach.py::_join_60min`（2026-11-11）。
+
+**症状**：`se`（样本熵）在 15min/5min/1min 图上呈锯齿、曲线上有空洞，
+最末尾还有断点。
+
+**机制**：review 的 `se` / `ZenPivotCnt` / `ZenPivotLag` / Renko / native /
+chip 都只落 **60min 行**。旧 attach 对它们做**精确时间戳 join**：15min 帧
+只有每小时的整点有值，其余 bar 全是 NaN；折线自然成锯齿/断点。`se` 本身
+还是按日 15:00 计算、盘中沿用上一交易日的值，精确 join 更明显。
+
+**怎么办**：`features` 的中位 bar 间隔 < 60min 时，按 `ts` 做**因果 ffill**
+（每个盘中 bar 取 `<=T` 的最后一个 60min 行；`reindex(method='ffill')` 后再
+`.ffill()`，因为 review 末尾常有「行在、列空」的 CV-only 行）。60min 帧
+仍保持精确 join。
+
+**验证**：`test_reality_attach.TestAttachRealityFeats
+.test_sub60min_features_use_causal_ffill_for_60min_columns`。
+
+### P48. **名单差集 ≠ 退市** —— 数据源停止推送不等于标的终止
+
+**位置**：`markets/StockCN/refdata_save.py::archive_delisted` /
+`confirm_delisted`；否决源 `datasource/akshare_source.index_roster_codes`。
+
+**症状**：`index_list` 里有 70 条 pytdx 不再返回，其中一批**指数还在正常编制
+发布**，只是数据源换了渠道、不再推行情。
+
+**实证（2026-11-12，联网核实）**：
+
+| 代码 | 名称 | 真相 |
+|:--|:--|:--|
+| `000013` | 上证企债指数 | 仍在编制（百度百科 2024-12-09 仍报 292.75 点） |
+| `000805` | 中证A股资源 | 上交所 SH000805 自 **2021-02-05** 起改渠道停推；中证 `CSI000805` 一直有行情 |
+
+中证指数公司官方清单（`ak.index_stock_info`，732 条）里 70 只中有 **27 只**
+仍然在列 —— 拿「TDX 名单差集 + 30 天无行情」直接判退市会把它们误搬。
+
+**规矩：多重信源，缺一不搬。**
+
+1. 名单源本次没返回（差集只是**候选**）；
+2. 行情库最新交易日前 `DELIST_QUIET_DAYS` 天内**没有日线**（基准取行情库自己
+   的最新交易日，不是墙钟 —— 行情整体断更时整批自动落空）；
+3. `index_list` 再加一票**否决**：中证官方清单里还有它 ⇒ 不搬；清单取不到时
+   整段不归档（两源皆无不足以替官方清单拍板）。
+
+搬走的行进 `*_delisted`，带 `delisted_at` / `delisted_from` / `delisted_reason`
+（`no_feed` = 指数；`no_list_no_bar` = 股票/ETF）。**误判可回溯**：把行挪回去即可。
+
+**实测结果**：`index_list` 1,291 → 1,248（43 只 `395xxx`/`880xxx` 搬走，
+27 只仍在编制的不动）；`etf_list` 的 810 只差集**全部昨天还在交易**
+（akshare 只枚举 927/1,737），全部落 `pending`，一只都没搬。
+
+**推广**：任何「源里没了 ⇒ 删」的规则，先问一句「是这个标的死了，还是这个源
+不再供它了」。答案说不清时**只报告、不动数据**。
+
+### P49. 8.3 reality 表里的**重复 `datetime` 与截断 `time_stamp`** —— 按 `time_stamp` 更新会漏
+
+**位置**：`stock_reality_feat_60min`（实测 000009，2026-11-16）。
+
+**症状**：同一 `(code, datetime)` 有**多行**（000009 有 1,743 个重复），且其中一部分行的
+`time_stamp` 被**截断**（`1711436` vs 正常的 `1711436400`）。按 `(code, time_stamp)` 做主键
+做 `$set`/`UpdateOne` 只会命中**其中一份**，其余行保留旧值 —— 从探针看就是「写过了但值没变」，
+对拍时大面积 mismatch（搬迁 stage 时实测 224,928 行）。
+
+**规矩**：往这张表写「同一 bar 的所有副本都要一致」的列时，**按 `(code, datetime)`
+用 `UpdateMany`**，并对连续相同 payload 的行合并成 `{"datetime": {"$in": [...]}}` 一次更新
+（stage/garP 只在 checkpoint 变，单码几十次而不是几千次；实测 66s → 6.4s）。
+
+**别顺手去重**：这些坏行是既有数据（来源未查），清理要先拍板。`migrate_stage_from44`
+只在它们上面写值，不动行本身。
+
+### P50. pandas **高度碎片化**帧的 `PerformanceWarning` —— 逐列 insert 之后别再逐列赋值
+
+**位置**：`analysis/compact.py::calc_compact_features`（2026-11-16）。
+
+**症状**：控制台刷
+`PerformanceWarning: DataFrame is highly fragmented. ... Consider joining all columns at once using pd.concat(axis=1)`。
+
+**机制**：函数前面用循环把 `COMPACT_COLUMNS`（30+）与 `major` 的列**逐列** `out[col] = ...`
+插进同一个帧，块数上百；随后再逐列写 OHLCV 时 pandas 提示性能问题。
+
+**改法**：把这批列**一次 `pd.concat([...], axis=1)`**；已存在的列先 `drop` 防重复列名。
+
+**排查**：`warnings.simplefilter('error', pd.errors.PerformanceWarning)` 下跑一遍
+`attach_reality_feats` / `build_hour_extra_frame` / `calc_compact_features` —— 前两者实测不触发，
+只有 compact 触发。

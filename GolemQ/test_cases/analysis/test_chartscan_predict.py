@@ -371,7 +371,8 @@ class TestPersistenceReadsAcrossFamilies(unittest.TestCase):
         today, frame = self._recent_frame(maj_current=True)
         with mock.patch('GolemQ.markets.StockCN.reality_save.fetch_reality_feat',
                         return_value=frame), \
-                mock.patch.object(predict, '_last_day', return_value=today):
+                mock.patch.object(predict, '_last_day', return_value=today), \
+                mock.patch.object(predict, '_if_tradetime', return_value=False):
             req = predict.calc_ChartScaned_persistence(
                 '000711', market_type='stock_cn')
         self.assertEqual(req[2], 0)

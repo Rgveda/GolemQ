@@ -22,6 +22,10 @@
 ⚠️ 本模块**只读**：不写库、不写水位。**不在 notebook/attach 里重算 review 的
 特征**（coldstart/day/zen 等一律以落库行为准；缺行就是 NaN，需跑 review 补齐）。
 `DEA_NORM_WEK` 是新 review 契约没有的列，才在这里由日线/周线现算。
+
+**例外**：`DEA_NORM_WEK`（日/周线现算）；以及 `bstStgBf`/`epStgBf` ——
+用户 2026-11-16 指定由 attach 现算（`stage` 用 4.4 搬运值，`garP` 由
+`garPD` 还原，见 `_stage_before_fill`）。这两列**不落库**。
 """
 from __future__ import annotations
 
@@ -41,6 +45,7 @@ from GolemQ.core.constants import AKA, FIELD as FLD
 from GolemQ.markets.StockCN.reality_save import (PRICE_RATIO_COLUMNS,
                                                  fetch_reality_feat)
 from GolemQ.pipeline.review.contract import (COLDSTART_COLUMNS, DAY_COLUMNS,
+                                             STAGE_COLUMNS,
                                              HOUR_CHIP_COLUMNS,
                                              HOUR_EXTRA_COLUMNS,
                                              HOUR_NATIVE_COLUMNS,
@@ -78,13 +83,43 @@ def _as_multi(df: pd.DataFrame) -> pd.DataFrame:
          df.index.get_level_values(1)], names=['ts', 'code']))
 
 
+def _join_60min(features: pd.DataFrame, r60: Optional[pd.DataFrame],
+                cols) -> pd.DataFrame:
+    """把 60min review 列接到 ``features``。
+
+    * features 是 **60min**（或更粗）：精确时间戳 join —— 保持原口径；
+    * features 是 **1/5/15/30min**：按 ``ts`` 做**因果 ffill**（每个盘中
+      bar 取 ``<=T`` 的最后一个已完成 60min 行）。否则精确 join 只会在
+      60min 时刻有值，15min/1min 图上就是锯齿/断点（用户 2026-11-11）。
+    """
+    cols = [c for c in cols
+            if r60 is not None and c in r60.columns and c not in features.columns]
+    if not cols:
+        return features
+    ts = pd.DatetimeIndex(pd.to_datetime(features.index.get_level_values(0)))
+    gaps = pd.Series(ts).diff().dropna()
+    med = gaps.median() if len(gaps) else pd.Timedelta(hours=1)
+    if med >= pd.Timedelta(minutes=60):
+        return features.join(r60[cols], how='left')
+
+    r = r60[cols].copy()
+    r.index = pd.DatetimeIndex(pd.to_datetime(r.index.get_level_values(0)))
+    r = r[~r.index.duplicated(keep='last')].sort_index()
+    # `reindex(method='ffill')` 只补**缺失的时间戳**，不补行内 NaN；
+    # review 末尾常出现「行在、列空」（CV-only 行），必须再 `.ffill()`
+    # 才能把最后一个真值带到最新盘中 bar，否则曲线末尾仍有断点。
+    mapped = r.reindex(ts, method='ffill').ffill()
+    mapped.index = features.index
+    return pd.concat([features, mapped], axis=1)
+
+
 def _attach_60min(features: pd.DataFrame, r60: Optional[pd.DataFrame],
                   loaded: Dict[str, list]) -> pd.DataFrame:
     if r60 is None:
         return features
     r60 = _as_multi(r60)
     # coldstart 是日派生连续量：按日最后值 + 上一可用交易日映射
-    cold = [c for c in COLDSTART_COLUMNS
+    cold = [c for c in (*COLDSTART_COLUMNS, *STAGE_COLUMNS)
             if c in r60.columns and c not in features.columns]
     if cold:
         tmp = r60[cold].copy()
@@ -100,31 +135,31 @@ def _attach_60min(features: pd.DataFrame, r60: Optional[pd.DataFrame],
     extra = [c for c in HOUR_EXTRA_COLUMNS
              if c in r60.columns and c not in features.columns]
     if extra:
-        features = features.join(r60[extra], how='left')
+        features = _join_60min(features, r60, extra)
         loaded['60min_extra'] = extra
-    # zen 组（含 ZenPivotLag，D78 补全）：精确时间戳 join
+    # zen 组（含 ZenPivotLag，D78 补全）
     zen = [c for c in HOUR_ZEN_COLUMNS
            if c in r60.columns and c not in features.columns]
     if zen:
-        features = features.join(r60[zen], how='left')
+        features = _join_60min(features, r60, zen)
         loaded['60min_zen'] = zen
     # ChipDist 四列（cost*PrzD，还原由 PRICE_RATIO_COLUMNS 负责）
     chip = [c for c in HOUR_CHIP_COLUMNS
             if c in r60.columns and c not in features.columns]
     if chip:
-        features = features.join(r60[chip], how='left')
+        features = _join_60min(features, r60, chip)
         loaded['60min_chip'] = chip
-    # 60min 原生组（STAGE/M9T/Poly9/RegTree/Prophet，D78）：精确时间戳 join
+    # 60min 原生组（STAGE/M9T/Poly9/RegTree/Prophet，D78）
     nat = [c for c in HOUR_NATIVE_COLUMNS
            if c in r60.columns and c not in features.columns]
     if nat:
-        features = features.join(r60[nat], how='left')
+        features = _join_60min(features, r60, nat)
         loaded['60min_native'] = nat
-    # Renko 14：60min 行原生列（D78），精确时间戳 join
+    # Renko 14：60min 行原生列（D78）
     renko = [c for c in RENKO_DAY_COLUMNS
              if c in r60.columns and c not in features.columns]
     if renko:
-        features = features.join(r60[renko], how='left')
+        features = _join_60min(features, r60, renko)
         loaded['60min_renko'] = renko
     # ChartScan 是稀疏事件：精确时间戳 join
     chart = [c for c in _CHART_COLS_60
@@ -269,6 +304,49 @@ def _restore_garident_bands(features: pd.DataFrame,
     return features
 
 
+def _stage_before_fill(features: pd.DataFrame, day_ohlc,
+                       loaded: Dict[str, list]) -> pd.DataFrame:
+    """`bstStgBf / epStgBf` **只在 attach 现算**（用户 2026-11-16）。
+
+    * `stage` 是 **4.4 搬运值**（`tools/migrate_stage_from44.py`），这里**不覆盖**；
+    * `bstStgBf = Timeline_duration(stage < -0.00168)`；
+    * `epStgBf  = Timeline_duration((garPClr < 0.927) &
+                                    (DEA_ZERO_TIMING_LAG < MACD_CROSS_JX_BEFORE))`
+      —— DEA/金叉在本帧上算（与老树 `features/reviews.py:670` 同式）。
+
+    这两列**不落库**：库里只存 `stage / garPD / garPAnchor / garPCount / garPClr`
+    （4.4 搬运），bst/ep 由读方（本函数）现算。
+    """
+    if AKA.STAGE not in features.columns:
+        return features
+    from GolemQ.analysis.indicators import calc_macd_qa
+    from GolemQ.analysis.timing import (Timeline_duration,
+                                        calc_feature_event_timing_lag)
+
+    out = features.copy()
+    stage = pd.to_numeric(out[AKA.STAGE], errors='coerce').to_numpy(float)
+    out[FLD.BOOTSTRAP_STAGE_BEFORE] = Timeline_duration(
+        np.where(stage < -0.00168, 1, 0)).astype(np.int16)
+
+    clr = out.get(FLD.GARIDENT_PRICE_CLEARANCE)
+    if clr is None:
+        cnt = pd.to_numeric(out.get(FLD.GARIDENT_PRICE_COUNT), errors='coerce')
+        clr = cnt - pd.Series(stage, index=out.index)
+    clr = pd.to_numeric(clr, errors='coerce').to_numpy(float)
+    close = pd.to_numeric(out[AKA.CLOSE], errors='coerce')
+    dif, dea, _hist = calc_macd_qa(close)
+    dea_lag = calc_feature_event_timing_lag(
+        pd.DataFrame({FLD.DEA: dea.to_numpy()}, index=out.index), FLD.DEA)
+    jx_bf = Timeline_duration(
+        ((dif > dea) & (dif.shift(1) <= dea.shift(1)))
+        .to_numpy().astype(np.int16))
+    out[FLD.ENDPOINT_STAGE_BEFORE] = Timeline_duration(
+        ((clr < 0.927) & (dea_lag < jx_bf)).astype(np.int16)).astype(np.int16)
+    loaded['stage_before'] = [FLD.BOOTSTRAP_STAGE_BEFORE,
+                              FLD.ENDPOINT_STAGE_BEFORE]
+    return out
+
+
 def _ffill_prophet(features: pd.DataFrame,
                     loaded: Dict[str, list]) -> pd.DataFrame:
     """Prophet 连续量缺口 ffill（只填 NaN，不覆盖已有值）。"""
@@ -330,6 +408,12 @@ def attach_reality_feats(features: pd.DataFrame,
     if code is None:
         code = str(features.index.get_level_values(1)[0])
     code = str(code)[:6]
+    # ⚠️ `features` 的索引必须显式命名 `(ts, code)`：市场取数返回的第一层
+    # 常常是 `None`，而 `_fetch()` 返回的 reality 帧是 `(datetime, code)`。
+    # pandas 对**名字不一致**的 MultiIndex join 会退化成笛卡尔积（实测
+    # 000711：2,061 × 320 = 659,520 行），不是报错，后面所有列都错位。
+    features = features.copy()
+    features.index = features.index.set_names(['ts', 'code'])
     ts_all = pd.DatetimeIndex(pd.to_datetime(features.index.get_level_values(0)))
     if start is None:
         start = str(ts_all.min().date())
@@ -368,6 +452,8 @@ def attach_reality_feats(features: pd.DataFrame,
         features = restore_price_columns(features, features[AKA.CLOSE],
                                          PRICE_RATIO_COLUMNS)
     features = _restore_garident_bands(features, day_ohlc)
+    # 补 `bstStgBf` / `epStgBf`（缺才填；garPD → garP → stage → before）
+    features = _stage_before_fill(features, day_ohlc, loaded)
     if FLD.BOTTOM_PRICE in features.columns:
         loaded['garident'] = [FLD.GARIDENT_PRICE, FLD.BOTTOM_PRICE,
                               FLD.ROOF_PRICE]

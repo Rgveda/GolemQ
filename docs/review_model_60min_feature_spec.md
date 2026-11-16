@@ -228,6 +228,9 @@ ChartScan 单独写（attach 时改名 `Cls60/Conf60/Coord60/ChartScaned60`）�
 ### 已知缺口（待补）
 
 1. ~~`ZenPivotLag`~~ —— **已补**：与 `ZenPivotCnt` 同一批 CZSC 中枢，
-   `causal_pivot_series` 展开 ZD 后做事件 lag；
+   `causal_pivot_series` 展开 ZD 后做事件 lag。
+   ⚠️ 未完成中枢的 `end_dt` 只到最后一个分型点，只能用于绘图；
+   `causal_pivot_series` 必须看 `is_open` 把 ZD 铺到当前 bar，否则
+   `ZenPivotLag` 在中枢内也会全负（`PITFALLS.md` P46，2026-11-11）；
 2. ~~ChipDist `cost5/15/85/95`~~ —— **已补**：`cost*PrzD`（÷close），
    前缀稳定，**每码整条序列算一次**（≈2s/码），不进逐日重算。

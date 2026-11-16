@@ -43,6 +43,7 @@ class LTT:
     QUADRANT_POWERLINE = '4QPwrln'
     QUADRANT_POWERLINE_MINOR = '4QPwrlnMin'
     QUADRANT_POWERLINE_MAJOR = '4QPwrlnMaj'
+    QUADRANT_POWERLINE_TIMING_LAG_MAJOR = '4QPwrlnLagMaj'
     #: 15min 重命名族（老树 `reviews.py:1815-1835`）。
     ONE_QUADRANT_UPRISING_TIMING_LAG_MINOR = '1QUprLagMin'
     TWO_QUADRANT_UPRISING_TIMING_LAG_MINOR = '2QUprLagMin'
@@ -116,6 +117,10 @@ class LTT:
     #: 日线 MAJOR 版（`calc_mainstream_major_feats` 在日线帧上算，示例里贴到 60min）。
     MAINSTREAM_LEADIN_BEFORE_MAJOR = 'MsLeadinBfMaj'
     MAINSTREAM_LEADOUT_BEFORE_MAJOR = 'MsLeadoutBfMaj'
+    #: 60min 研判放大（`Timeline_duration(np.where(cond, 1, 0))`）：
+    #: REWIND / STOPLOSS 的 `*_BEFORE_MAJOR` 持续计数。
+    MAINSTREAM_LEADIN_REWIND_BEFORE_MAJOR = 'MsLeadinRwdBfMaj'
+    MAINSTREAM_LEADOUT_STOPLOSS_BEFORE_MAJOR = 'MsLeadoutSlBfMaj'
     BS_REF_LINE = 'BSRefLn'
     BS_BORDER_LINE = 'BSBrdLn'
     BS_BUY = 'BSBu'

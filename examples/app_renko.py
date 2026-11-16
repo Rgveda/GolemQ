@@ -45,9 +45,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from GolemQ import get_active_market
-from GolemQ.analysis.reality_attach import attach_reality_feats
-from GolemQ.core.constants import AKA, FIELD as FLD
+from GolemQ.core.constants import FIELD as FLD
+
+import _app_common as app
 
 #: review 的 Renko 只落 60min 表（D78）；本页因此只做 60min。
 RENKO_FREQ = '60min'
@@ -113,30 +113,30 @@ def _snapshot_bricks(feats: pd.DataFrame) -> pd.DataFrame:
     return sub.loc[keep].reset_index(drop=True)
 
 
-@st.cache_data(show_spinner=False, ttl=600)
 def load(symbol: str, max_bars: int):
-    """60min K 线 → attach `*_reality_feat_60min` → Renko 砖序 + 特征帧。"""
-    market = get_active_market()
-    start = str(pd.Timestamp.now() - pd.Timedelta(days=LOOKBACK_DAYS))
-    d, name = market.get_kline_price_min(symbol, start=start,
-                                         frequency=RENKO_FREQ,
-                                         realtime=True, verbose=False)
-    if d is None or len(getattr(d, 'data', ())) == 0:
-        return None, name, None, None, None
+    """60min K 线 → attach `*_reality_feat_60min` → Renko 砖序 + 特征帧。
 
-    df = d.data.tail(int(max_bars)).copy()
+    与其它 `app_*` 共用 `_app_common.load_base`（60min、不算 coef/DAG/czsc）；
+    这里再按侧边栏的 `max_bars` 截窗口并压出砖序。
+    """
+    data = app.load_base(symbol, app.RENKO_FREQ, long_history=True,
+                         with_coef=False, with_dag=False, with_czsc=False)
+    if data is None:
+        return None, None, None, None, None
+    feats0 = data['feats']
+    err = data.get('feats_err')
+    df_full = data['df']
+    if feats0 is None or feats0.empty or data.get('ohlc') is None:
+        return df_full, data.get('name'), None, feats0, err
+    n = min(int(max_bars), len(df_full))
+    df = df_full.tail(n).reset_index(drop=True)
+    feats = feats0.tail(n)
     if len(df) < 30:
-        return df, name, None, None, None
-
-    try:
-        feats, loaded = attach_reality_feats(df.copy(), symbol, verbose=False)
-    except Exception as exc:                       # noqa: BLE001
-        # ⚠️ 返回**字符串**：`st.cache_data` 要 pickle 返回值，别掺异常实例。
-        return df, name, None, None, f"{type(exc).__name__}: {exc}"
-
-    if not loaded.get('60min_renko'):
-        return df, name, None, feats, None
-    return df, name, _snapshot_bricks(feats), feats, None
+        return df, data.get('name'), None, feats, err
+    if FLD.RENKO_TREND_S_LB not in feats.columns:
+        return df, data.get('name'), None, feats, err
+    bricks = _snapshot_bricks(feats)
+    return df, data.get('name'), bricks, feats, err
 
 
 try:
@@ -241,8 +241,8 @@ with tab_feat:
     f = feats
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
-        x=df.index.get_level_values(0),
-        open=df[AKA.OPEN], high=df[AKA.HIGH], low=df[AKA.LOW], close=df[AKA.CLOSE],
+        x=df['dt'],
+        open=df['open'], high=df['high'], low=df['low'], close=df['close'],
         increasing_line_color='red', increasing_fillcolor='red',
         decreasing_line_color='green', decreasing_fillcolor='green',
         name='K线'))
@@ -259,7 +259,7 @@ with tab_feat:
                 line_shape='hv'))
     # 合成信号：S、L 同向才给 ±1
     sig = pd.to_numeric(f[FLD.RENKO_TREND], errors='coerce').to_numpy()
-    close = pd.to_numeric(df[AKA.CLOSE], errors='coerce').to_numpy()
+    close = pd.to_numeric(df['close'], errors='coerce').to_numpy()
     x_all = f.index.get_level_values(0)
     for val, col, nm in ((1, 'red', 'RENKO_BAR = +1'), (-1, 'green', 'RENKO_BAR = -1')):
         m = sig == val

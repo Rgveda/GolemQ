@@ -22,11 +22,14 @@ class _FakeSource:
 
 
 class TestPartialScopeNeverDeletes(unittest.TestCase):
-    """**部分取数 × 差量删除 = 静默删掉其余全部**（`PITFALLS.md` P19）。
+    """**部分取数 × 差量归档 = 把其余标的全判成退市**（`PITFALLS.md` P19）。
 
     实测踩过：`--save-codes` 跑一次把 `stock_info` 从 5,574 行删到 250 行 ——
-    因为 `delete_delta_key` 的语义是「本次取到的就是全部」，而 `codelist`
-    恰恰是「本次故意只取一部分」。护栏在 `save_refdata` 里。
+    因为差集的语义是「本次取到的就是全部」，而 `codelist` 恰恰是
+    「本次故意只取一部分」。护栏在 `save_refdata` 里。
+
+    ⚠️ 2026-11-12 起 `stock_info` **不删不归档**（用户决定）；名单类三张改成
+    「名单 + 行情双重确认后搬进 `*_delisted`」，见 `test_refdata_archive.py`。
     """
 
     def _run(self, codelist):
@@ -50,11 +53,11 @@ class TestPartialScopeNeverDeletes(unittest.TestCase):
         self.assertEqual(report['stock_info']['status'], 'ok')
         coll.delete_many.assert_not_called()          # ← 本次没取到的标的一个都不许删
 
-    def test_full_scope_still_deletes_delta(self):
-        """不给 codelist 时语义仍是「全量」，差量删除照旧（别把护栏扩大成不删）。"""
+    def test_full_scope_never_deletes(self):
+        """`stock_info` 全量也不删 —— 退市后财务元数据仍要可查。"""
         coll, _ = self._run(None)
 
-        self.assertTrue(coll.delete_many.called)
+        coll.delete_many.assert_not_called()
 
 
 class TestOnProgressCallback(unittest.TestCase):

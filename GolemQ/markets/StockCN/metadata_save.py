@@ -463,7 +463,39 @@ def refresh_turnover(days: int = 7, verbose: bool = True, echo=None, **kwargs) -
     """
     from datetime import date, timedelta
 
+    say = echo or print
     since = (date.today() - timedelta(days=days)).isoformat()
+
+    # 短路：**上一交易日**的换手率已覆盖 ≥90% ⇒ 不再逐码现算。
+    # 与 `moneyflow`/`diagnosis` 同口径、同阈值（`COVERAGE_SKIP_RATIO`）：
+    # 全市场 5,582 码 × ~33ms ≈ 3~5 分钟，而重复跑没有新信息。
+    # ⚠️ 「覆盖」= `turnover`（流通股本口径）与 `TurnoverRate`（自由流通口径）
+    # **任一列有值** —— 与 `fill_turnover` 的补算判据一致，不是只数一列。
+    try:
+        import math
+        from .date_utils import GQ_util_get_last_day   # 本包内；`..` 会跳到 GolemQ.markets
+        from .refdata import GQ_fetch_stock_list
+        day = str(GQ_util_get_last_day())[:10]
+        df = GQ_fetch_stock_list()
+        universe = ([] if df is None or len(df) == 0
+                    else [str(c)[:6] for c in df['code']])
+        if universe:
+            covered = set()
+            for f in (TURNOVER_BS, TURNOVER_DC):
+                covered |= metadata_covered(f, day, codes=universe)['codes']
+            threshold = max(1, math.ceil(COVERAGE_SKIP_RATIO * len(universe)))
+            if len(covered) >= threshold:
+                say('[turnover] 短路：{} 已覆盖 {}/{} 只，跳过现算'
+                    .format(day, len(covered), len(universe)))
+                return {'codes': len(universe), 'filled': 0, 'skipped': 0,
+                        'upserted': 0, 'modified': 0,
+                        'short_circuit': True, 'covered': len(covered)}
+    except Exception as exc:          # noqa: BLE001 短路判断失败 ⇒ 照常现算
+        if verbose:
+            # ⚠️ 只报**类型名**：这行走 banner.echo，超过终端宽度会折行、把 banner
+            # 的光标记账打乱（2026-11-13 实报）；异常全文不进屏。
+            say('[turnover] 短路判断失败（{}），照常现算'.format(type(exc).__name__))
+
     try:
         # `codes=None` ⇒ 全市场（`refdata.GQ_fetch_stock_list`）
         return fill_turnover(None, start=since, verbose=verbose, echo=echo, **kwargs)
@@ -595,7 +627,14 @@ def fill_turnover(codes, start=None, end=None, verbose: bool = True, echo=None,
     db = _db()
     out = {'codes': len(codes), 'filled': 0, 'skipped': 0, 'upserted': 0, 'modified': 0}
 
-    for code in codes:
+    # 全市场 5,582 码 × 约 33ms ≈ 3~5 分钟，且逐码两条 DB 查询 —— **必须给进度**，
+    # 否则屏上就是「换手率不出进度条、也没有下一步」（2026-11-14 用户实报）。
+    # ⚠️ `leave=False` 是承重的：`--save` 的 banner 靠光标上移原地重画，
+    # 进度条留在屏上会让它的行数记账错位（同 `fetch_stock_info` 那条说明）。
+    from tqdm import tqdm
+    bar = tqdm(codes, unit='stock', disable=None, leave=False)
+    for code in bar:
+        bar.set_description(str(code))
         # ① 现有覆盖：两列任一有值就算这天有了
         have = GQ_fetch_stock_reality_feat_day(code, start=start, end=end)
         covered = set()

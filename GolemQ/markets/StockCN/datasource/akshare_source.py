@@ -84,6 +84,22 @@ def _to_quarter(report_date: str):
         return None, None
 
 
+def index_roster_codes() -> set:
+    """中证指数公司**官方指数清单**（`ak.index_stock_info`，732 条）的 6 位码集合。
+
+    只用作**退市判定的否决源**：出现在这里 ⇒ 该指数仍在编制发布，不能归档。
+    2026-11-12 实测它救下了 `000013`（上证企债）、`000805`（中证A股资源）——
+    TDX 只是停止推送它们的行情，指数本身没终止。
+
+    ⚠️ **只能否决，不能确认**：这份清单只覆盖中证系 732 条，`395xxx`（深交所旧
+    指数）、`880xxx`（通达信自编）根本不在里面 —— **缺席不等于退市**。
+    """
+    import akshare as ak
+    df = ak.index_stock_info()
+    col = 'index_code' if 'index_code' in df.columns else df.columns[0]
+    return {str(c).zfill(6) for c in df[col].astype(str)}
+
+
 @register
 class AkshareSource(DataSource):
     name = 'akshare'

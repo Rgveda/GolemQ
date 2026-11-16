@@ -646,9 +646,11 @@ def check_calendar(calendar=None, today=None):
     if last >= yearend:
         if today_s <= renew_at:
             return OK, '覆盖到 {}（{} 个交易日）'.format(last, len(calendar))
-        return WARN, ('末端 {} 只到今年年底，而今天已过 {} —— **该续下一年了**'
+        return WARN, ('末端 {} 只到今年年底，而今天已过 {} —— **该更新交易日历了**：'
+                      '在 `markets/StockCN/constants.py` 的 `TRADE_DATE_SSE` 补下一年'
                       .format(last, renew_at))
-    return WARN, ('末端 {} **早于今年年底 {}** —— 还能跑，但覆盖不够长'
+    return WARN, ('末端 {} **早于今年年底 {}** —— 还能跑，但覆盖不够长；'
+                  '建议把 `TRADE_DATE_SSE` 补到年底'
                   .format(last, yearend))
 
 
@@ -875,6 +877,14 @@ def check_environment(verbose=False, strict=False):
             sys.exit(EXIT_FAILURE)
 
     if not verbose:
+        # 黄点也要说「为什么」（用户 2026-11-12）：banner 上只有一个黄点，
+        # 而黄的那几档恰恰是**可行动**的（交易日历该续了 / 线程数被改过 / 时区不对）。
+        # 红点已在上面按节点逐行处理；这里只管非红的告警。
+        for node, state, lines in results:
+            if state != WARN:
+                continue
+            for line in lines:
+                print('⚠️ {}: {}'.format(node, line), flush=True)
         for label, detail, bad in notes:
             if bad:
                 print('⚠️ {}: {}'.format(label, detail), flush=True)

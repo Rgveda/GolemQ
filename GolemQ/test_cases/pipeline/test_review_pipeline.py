@@ -374,9 +374,10 @@ class TestColdstart(unittest.TestCase):
         }
         out = coldstart_step(
             ctx, pd.DatetimeIndex(['2025-01-03 10:30', '2025-01-03 15:00']))
-        # `stage` 已改为 60min 原生（D78），这里用 coldstart 的另一列验映射
-        self.assertEqual(float(out.iloc[0]['garPCount']), 1.0, '盘中必须用上一交易日')
-        self.assertEqual(float(out.iloc[1]['garPCount']), 2.0, '15:00 用当日收盘')
+        # `stage` 族（含 garPCount）已移到 60min 链（2026-11-16），
+        # 这里用 coldstart 剩余的一列（`m9tMaj`）验证盘中/收盘的映射口径。
+        self.assertEqual(float(out.iloc[0]['m9tMaj']), 1.0, '盘中必须用上一交易日')
+        self.assertEqual(float(out.iloc[1]['m9tMaj']), 2.0, '15:00 用当日收盘')
 
 
 class TestRouting(unittest.TestCase):

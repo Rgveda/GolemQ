@@ -211,8 +211,11 @@ def calc_pivots(
         ep = pv['end_point']
         pts = pv.get('points', [])
         start_dt = sp['dt']
+        # `ep is None` = 中枢尚未结束；`end_dt` 仍取最后标记点**仅供绘图**，
+        # 逐 bar 特征必须另看 `is_open` 并一直铺到当前 bar（否则 ZD 会在最后
+        # 一个分型点后又变 NaN，`ZenPivotLag` 永远为负）。
+        is_open = ep is None
         if ep is None and pts:
-            # 未完成的中枢，用最后一个标记点作为终点便于绘图
             end_dt = pts[-1]['dt']
         else:
             end_dt = ep['dt'] if ep else None
@@ -245,6 +248,7 @@ def calc_pivots(
             'D': max(d_vals) if d_vals else pv.get('D', pv['ZD']),
             'start_dt': start_dt,
             'end_dt': end_dt,
+            'is_open': is_open,
             'known_dt': pivot_known,
             'direction': 'up' if sp['fx_mark'] == 'd' else 'down',
             'points': pts,
@@ -488,7 +492,12 @@ def causal_pivot_series(pivots: List[Dict], dts, strict: bool = True) -> tuple:
         if not pts:
             continue
         start_ns = pd.Timestamp(p['start_dt']).value
-        end_ns = pd.Timestamp(p['end_dt']).value if p['end_dt'] is not None else last_ns
+        # 未完成中枢：`end_dt` 只是最后分型点（绘图用），逐 bar 特征要铺到
+        # 当前 bar；否则 ZD 在最后分型点之后又变 NaN，lag 永远为负。
+        if p.get('is_open') or p['end_dt'] is None:
+            end_ns = last_ns
+        else:
+            end_ns = pd.Timestamp(p['end_dt']).value
         lo = int(np.searchsorted(dt_ns, start_ns, side='left'))
         hi = int(np.searchsorted(dt_ns, end_ns, side='right'))
         if hi <= lo:

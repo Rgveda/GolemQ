@@ -84,6 +84,31 @@ class TestAttachRealityFeats(unittest.TestCase):
                 _features(), '600519', market_type='stock_cn', db=object(),
                 day_ohlc=pd.DataFrame())
 
+    def test_unnamed_first_level_does_not_cartesian_expand(self):
+        """市场取数返回的索引首层常是 None；join 前必须显式命名 `(ts, code)`。
+
+        否则 pandas 会按不同名字的 MultiIndex 做笛卡尔积（000711 实测
+        2,061 × 320 = 659,520 行），不报错但整张表错位。
+        """
+        def _fetch(codes, start, end, family=None, market_type=None, db=None,
+                   **kwargs):
+            if family == '60min':
+                return _r60()
+            if family == 'day':
+                return _rday()
+            return None
+
+        feats = _features()
+        feats.index = feats.index.set_names([None, 'code'])
+        with mock.patch('GolemQ.analysis.reality_attach.fetch_reality_feat',
+                        side_effect=_fetch):
+            out, _ = attach_reality_feats(
+                feats, '600519', market_type='stock_cn', db=object(),
+                day_ohlc=pd.DataFrame())
+        self.assertEqual(len(out), len(feats))
+        self.assertEqual(out.index.nlevels, 2)
+        self.assertEqual(out.index.names, ['ts', 'code'])
+
     def test_coldstart_uses_previous_available_day(self):
         out, loaded = self._call()
         s = out['garPCount']
@@ -123,6 +148,45 @@ class TestAttachRealityFeats(unittest.TestCase):
         self.assertEqual(out.loc[i, 'renkoSbar'], 1.0)
         self.assertAlmostEqual(out.loc[i, 'renkoSprice'], 0.1 * out.loc[i, 'close'])
 
+    def test_sub60min_features_use_causal_ffill_for_60min_columns(self):
+        """15min/1min 帧上接 60min review：按 ts 因果 ffill，不能只 join 整点。
+
+        否则 `se` / `ZenPivotCnt` 只在 60min 时刻有值，曲线出现锯齿和断点。
+        """
+        idx = pd.MultiIndex.from_tuples([
+            (pd.Timestamp('2026-01-09 10:15'), '600519'),
+            (pd.Timestamp('2026-01-09 10:30'), '600519'),
+            (pd.Timestamp('2026-01-09 10:45'), '600519'),
+            (pd.Timestamp('2026-01-09 15:00'), '600519'),
+            (pd.Timestamp('2026-01-09 15:15'), '600519'),
+        ], names=['ts', 'code'])
+        feats = pd.DataFrame({'close': [1.0, 2.0, 3.0, 4.0, 5.0]}, index=idx)
+
+        def _fetch(codes, start, end, family=None, market_type=None, db=None,
+                   **kwargs):
+            if family == '60min':
+                return _r60()
+            if family == 'day':
+                return _rday()
+            return None
+
+        with mock.patch('GolemQ.analysis.reality_attach.fetch_reality_feat',
+                        side_effect=_fetch):
+            out, loaded = attach_reality_feats(
+                feats, '600519', market_type='stock_cn', db=object(),
+                day_ohlc=pd.DataFrame())
+
+        self.assertIn('se', loaded.get('60min_extra', []))
+        se = out['se']
+        self.assertEqual(se.loc[(pd.Timestamp('2026-01-09 10:15'), '600519')], 0.1)
+        self.assertEqual(se.loc[(pd.Timestamp('2026-01-09 10:30'), '600519')], 0.2)
+        self.assertEqual(se.loc[(pd.Timestamp('2026-01-09 10:45'), '600519')], 0.2)
+        self.assertEqual(se.loc[(pd.Timestamp('2026-01-09 15:00'), '600519')], 0.3)
+        self.assertEqual(se.loc[(pd.Timestamp('2026-01-09 15:15'), '600519')], 0.3)
+        # ZenPivotLag 走同一路径（本 fixture 里没有该列，用 ZenPivotCnt 验证）
+        self.assertEqual(out.loc[(pd.Timestamp('2026-01-09 10:45'), '600519'),
+                                 'ZenPivotCnt'], 4.0)
+
     def test_60min_chip_wins_over_day_chip(self):
         """两张表都有 ChipDist 列时，60min 的 ÷本 bar close 口径优先。
 
@@ -161,6 +225,54 @@ class TestAttachRealityFeats(unittest.TestCase):
         self.assertFalse(out[FLD.FBPROPHET_LB].isna().any())
         # D 后缀列不再进入 attach 帧
         self.assertNotIn(FLD.FBPROPHET_LB_DUMMY, out.columns)
+
+
+class TestStageBeforeFill(unittest.TestCase):
+    """`bstStgBf / epStgBf` 由 attach **现算**（用户 2026-11-16）。
+
+    `stage` 是 4.4 搬运值（`tools/migrate_stage_from44.py`），attach **不覆盖**；
+    bst 由 `stage < -0.00168` 判，ep 由 `garPClr < 0.927 & DEA 金叉时序` 判。
+    """
+
+    @staticmethod
+    def _frame(stage, clearance=None, with_stage=True, close=None):
+        n = len(stage)
+        idx = pd.MultiIndex.from_arrays(
+            [pd.date_range('2026-10-01 15:00', periods=n, freq='D'),
+             ['600000'] * n], names=['ts', 'code'])
+        data = {'close': close if close is not None else [10.0] * n,
+                FLD.GARIDENT_PRICE_CLEARANCE:
+                    clearance if clearance is not None else [0.5] * n}
+        if with_stage:
+            data['stage'] = stage
+        return pd.DataFrame(data, index=idx)
+
+    def _fill(self, frame):
+        from GolemQ.analysis import reality_attach as ra
+        loaded = {}
+        return ra._stage_before_fill(frame, None, loaded), loaded
+
+    def test_bst_is_timeline_duration_of_stage_below_threshold(self):
+        out, loaded = self._fill(self._frame([1.0, -0.5, 1.0, -0.5, 0.0]))
+        self.assertEqual(out[FLD.BOOTSTRAP_STAGE_BEFORE].tolist(), [1, 0, 1, 0, 1])
+        self.assertIn(FLD.BOOTSTRAP_STAGE_BEFORE, loaded['stage_before'])
+
+    def test_stage_is_never_overwritten(self):
+        """`stage` 一律保持原值（4.4 搬运值优先）。"""
+        frame = self._frame([1.0, -0.5, 2.0])
+        out, _ = self._fill(frame)
+        self.assertEqual(out['stage'].tolist(), [1.0, -0.5, 2.0])
+
+    def test_clearance_above_threshold_never_triggers_ep(self):
+        out, _ = self._fill(self._frame([1.0] * 6, clearance=[1.0] * 6))
+        self.assertEqual(int((out[FLD.ENDPOINT_STAGE_BEFORE] == 0).sum()), 0)
+
+    def test_no_stage_column_is_a_noop(self):
+        out, loaded = self._fill(self._frame([None] * 3, with_stage=False))
+        self.assertNotIn(FLD.BOOTSTRAP_STAGE_BEFORE, out.columns)
+        self.assertEqual(loaded, {})
+
+
 
 
 if __name__ == '__main__':

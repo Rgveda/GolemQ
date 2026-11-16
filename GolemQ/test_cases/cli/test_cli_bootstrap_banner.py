@@ -303,6 +303,13 @@ class TestTradingCalendarCheck(unittest.TestCase):
     def test_after_nov10_should_renew_is_warn(self):
         self.assertEqual(self._state(self.CAL, '2026-11-11'), WARN)
 
+    def test_renew_warning_says_where_to_update(self):
+        """黄点必须**说到点子上**：在哪张表补、补什么（用户 2026-11-12）。"""
+        state, detail = bootstrap.check_calendar(self.CAL, '2026-11-11')
+        self.assertEqual(state, WARN)
+        self.assertIn('该更新交易日历了', detail)
+        self.assertIn('TRADE_DATE_SSE', detail)
+
     def test_nov10_boundary_itself_is_still_ok(self):
         """边界取**含** 11-10（用户口径「11月10日以前」）。"""
         self.assertEqual(self._state(self.CAL, '2026-11-10'), OK)
@@ -330,19 +337,24 @@ class TestTradingCalendarCheck(unittest.TestCase):
         self.assertNotIn('交易日历', bootstrap.ENV_GATE_NODES)
 
     def test_real_calendar_is_current(self):
-        """真日历此刻应该是**绿**（覆盖到今年年底）。
+        """真日历此刻应该是**绿**（至少覆盖到今年年底）。
 
         ⚠️ 这条会在**跨年且没续日历**时变红 —— 那是对的（它就该提醒你去续），
         若那天到了而这条红了，请**更新 `TRADE_DATE_SSE`**，别改这条用例。
+
+        ⚠️ 断言的是**日历自己的末端**，不是「今天的年份」：日历可以（也应该）
+        提前续到下一年，那时 `detail` 里的年份已经是明年了（2026-11-12 补 2027 后
+        这条就踩过）。
         """
         import datetime as _dt
+        from GolemQ.markets.StockCN.constants import TRADE_DATE_SSE
         state, detail = bootstrap.check_calendar()
-        year = _dt.date.today().year
         if state == WARN:
             self.skipTest('已过 11-10 且日历未续下一年 —— 这正是黄点要提示的：{}'
                           .format(detail))
         self.assertEqual(state, OK)
-        self.assertIn('{}-12-31'.format(year), detail)
+        self.assertGreaterEqual(int(TRADE_DATE_SSE[-1][:4]), _dt.date.today().year)
+        self.assertIn(TRADE_DATE_SSE[-1], detail)
 
 
 class TestBannerTwoColumns(unittest.TestCase):

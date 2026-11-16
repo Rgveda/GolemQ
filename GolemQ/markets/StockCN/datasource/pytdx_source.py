@@ -395,8 +395,14 @@ class TdxSource(DataSource):
             try:
                 api = TdxHq_API(heartbeat=False)
                 api.connect(host, port, time_out=10)
-                # 探一次真实取数，确认连接可用（connect 本身不验证协议层）
-                api.get_security_count(0)
+                # 探一次真实取数，确认连接可用（connect 本身不验证协议层）。
+                # ⚠️ **必须看返回值**：探活返回 `None` 说明这条连接已经被打歪
+                # （P3b：畸形响应后同连接所有调用静默返回 None），当可用返回去
+                # 只会把「静默取空」扩散到整批取数。
+                probe = api.get_security_count(0)
+                if not isinstance(probe, int) or probe <= 0:
+                    raise ConnectionError(
+                        f'探活 get_security_count(0) 返回 {probe!r}')
                 self._host = (host, port)             # 排障信息（`host` 属性）
                 self._local.host = (host, port)       # 本线程的**粘性**选择
                 return api
@@ -518,13 +524,43 @@ class TdxSource(DataSource):
 
         seen: set = set()
         for market, sse in market_enum:
-            try:
-                total = api.get_security_count(market)
-            except Exception:
-                # 北交所在部分服务器上不可用 —— 跳过而不是整批失败
+            # ⚠️ **`get_security_count` 返回 `None` 时不能直接进 `range()`。**
+            # P3b：None 不是「这个市场没有证券」，是**连接已被打歪**（返回 None
+            # 而不抛异常），唯一处置是换一条新连接。2026-11-12 `--save tdx` 实报：
+            # `stock_info` 在同一常驻连接上打了 5,582 次 `get_finance_info` 之后，
+            # 这里拿到 None，`range(0, None, 1000)` 抛
+            # `TypeError: 'NoneType' object cannot be interpreted as an integer`，
+            # 整张 `index_list` 失败（前面几张表早已 ok，看不出连接已死）。
+            total = None
+            unsupported = False
+            for _attempt in (1, 2):
+                try:
+                    total = api.get_security_count(market)
+                except Exception:
+                    # 市场本身在服务器上不可用（如北交所）—— 跳过而不是整批失败
+                    unsupported = True
+                    break
+                if isinstance(total, int) and total > 0:
+                    break
+                if _attempt == 1:
+                    if verbose:
+                        print(f'[pytdx] get_security_count({market}) -> {total!r}，'
+                              '疑似连接错位（P3b），换连接重试')
+                    self.close()             # 毒死的连接不能复用，必须重连
+                    api = self._connect()
+            if unsupported:
                 if verbose:
                     print(f'[pytdx] market={market} 不可用，跳过')
                 continue
+            if not (isinstance(total, int) and total > 0):
+                # ⚠️ **必须抛，不能返回部分清单。** 差额删除的语义是「本次取到的
+                # 就是全部」——`stock_list` / `stock_info` 都带 `delta_key`，少一个
+                # 市场就会把该市场的全部标的**静默删掉**（PITFALLS P19）。抛出去
+                # 让 `save_refdata` 记 failed、不落库，比「安静地删一半」好得多。
+                raise DataSourceNotAvailable(
+                    f'pytdx 取 market={market} 的证券数时连接失效'
+                    f'（get_security_count 返回 {total!r}），重连后仍失败 —— '
+                    '拒绝返回部分清单（部分取数 × 差量删除会静默删库）')
             for start in range(0, total, 1000):
                 self.gate()
                 try:

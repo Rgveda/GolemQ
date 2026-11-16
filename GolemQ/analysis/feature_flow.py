@@ -57,16 +57,19 @@ from GolemQ.analysis.quadrant_jit import (calc_bs_before, calc_bs_signals,
                                           calc_quadrant_leverage_macd_timing_lag,
                                           calc_quadrant_powerline_uprisal_lag,
                                           calc_quadrant_stardown_count)
+from GolemQ.analysis.timing import (Timeline_duration,
+                                    calc_feature_event_timing_lag)
 from GolemQ.core.constants import AKA, FIELD as FLD
 from GolemQ.models.alias import LTT
 
 __all__ = ['q60', 'q15', 'qd', 'macd60', 'macd_day_full', 'macd_day',
            'dea_day', 'dea_major', 'macd_delta_major',
-           'pwrln', 'pwrln_minor', 'pwrln_major',
+           'pwrln', 'pwrln_minor', 'pwrln_major', 'pwrln_timing_lag_major',
            'qlev_frame', 'qlev_macd_lag', 'quad_downrisk',
            'quad_downrisk_major', 'cost15_prz', 'qlev_pwrln_upr_lag',
            'ms60', 'ms_day', 'ms_leadout', 'ms_leadin_maj',
-           'ms_leadout_maj', 'bs_day',
+           'ms_leadout_maj', 'ms_leadout_stoploss_before_major',
+           'ms_leadin_rewind_before_major', 'bs_day',
            'bs_star_up_bf_maj', 'bs_star_dwn_bf_maj', 'bs_bu_bf_maj',
            'bs_sel_bf_maj', 'charm_frame', 'zd_lag', 'prelude_frame',
            'quad_gear0', 'quadrant_gear_features', 'quadrant_gear_frame',
@@ -78,6 +81,11 @@ NODE_ALIASES = {
     'quad_downrisk_major': LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR,
     'ms_leadin_maj': LTT.MAINSTREAM_LEADIN_BEFORE_MAJOR,
     'ms_leadout_maj': LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR,
+    'ms_leadout_stoploss_before_major':
+        LTT.MAINSTREAM_LEADOUT_STOPLOSS_BEFORE_MAJOR,
+    'ms_leadin_rewind_before_major':
+        LTT.MAINSTREAM_LEADIN_REWIND_BEFORE_MAJOR,
+    'pwrln_timing_lag_major': LTT.QUADRANT_POWERLINE_TIMING_LAG_MAJOR,
     LTT.QUADRANT_LEVERAGE_CHARM_O_BEFORE:
         LTT.QUADRANT_LEVERAGE_CHARM_O_BEFORE,
     'bs_star_up_bf_maj': LTT.BS_STAR_UP_BEFORE_MAJOR,
@@ -193,6 +201,17 @@ def pwrln_major(qd: pd.DataFrame, ohlc60: pd.DataFrame) -> pd.Series:
         LTT.QUADRANT_POWERLINE_MAJOR)
 
 
+def pwrln_timing_lag_major(pwrln_major: pd.Series) -> pd.Series:
+    """`calc_feature_event_timing_lag(4QPwrlnMaj)` → `4QPwrlnLagMaj`。
+
+    `>0` = 距上一次金叉的 bar 数，`<0` = 距上一次死叉。
+    """
+    f = pd.DataFrame({LTT.QUADRANT_POWERLINE_MAJOR: pwrln_major})
+    lag = calc_feature_event_timing_lag(f, LTT.QUADRANT_POWERLINE_MAJOR)
+    return pd.Series(lag, index=pwrln_major.index,
+                     name=LTT.QUADRANT_POWERLINE_TIMING_LAG_MAJOR)
+
+
 def qlev_frame(pwrln: pd.Series, pwrln_minor: pd.Series,
                pwrln_major: pd.Series, macd_delta_major: pd.Series,
                ohlc60: pd.DataFrame) -> pd.DataFrame:
@@ -306,6 +325,73 @@ def ms_leadin_maj(ohlc60: pd.DataFrame, ms_day: pd.DataFrame) -> pd.Series:
 def ms_leadout_maj(ohlc60: pd.DataFrame, ms_day: pd.DataFrame) -> pd.Series:
     """日线 `MsLeadoutBf` → 60min（`MsLeadoutBfMaj`，日线计数不换单位）。"""
     return _align_daily(ms_day[LTT.MAINSTREAM_LEADOUT_BEFORE], ohlc60.index)
+
+
+def ms_leadout_stoploss_before_major(
+        qlev_macd_lag: pd.Series, ms_leadin_maj: pd.Series,
+        ms60: pd.DataFrame, pwrln_major: pd.Series,
+        pwrln_timing_lag_major: pd.Series,
+        ohlc60: pd.DataFrame) -> pd.Series:
+    """60min 研判放大：`LEADOUT_STOPLOSS_BEFORE_MAJOR`。
+
+    条件（用户 2026-11 最终口径）：
+      QLevMACDLagD > 1e-12
+      & QLevMACDLagD > LEADIN_BEFORE_MAJOR
+      & LEADIN_BEFORE_MAJOR <= 20
+      & LEADOUT_BEFORE <= LEADIN_BEFORE_MAJOR
+      & LEADOUT_BEFORE <= 9
+      & 4QPwrlnMaj < 1.2
+      & 4QPwrlnLagMaj < -1e-12
+
+    另外把 `QLevMACDLagD == -1` 的 bar 也强制置 1（用户 2026-11 口径）。
+    输出 `Timeline_duration(np.where(cond, 1, np.where(qlev == -1, 1, 0)))`：
+    事件当根 0，之后 1、2、…
+    """
+    cond = (
+        (qlev_macd_lag > 1e-12)
+        & (qlev_macd_lag > ms_leadin_maj)
+        & (ms_leadin_maj <= 20)
+        & (ms60[LTT.MAINSTREAM_LEADOUT_BEFORE] <= ms_leadin_maj)
+        & (ms60[LTT.MAINSTREAM_LEADOUT_BEFORE] <= 9)
+        & (pwrln_major < 1.2)
+        & (pwrln_timing_lag_major < -1e-12)
+    )
+    seq = np.where(cond, 1, np.where(qlev_macd_lag == -1, 1, 0))
+    return pd.Series(
+        Timeline_duration(seq),
+        index=ohlc60.index,
+        name=LTT.MAINSTREAM_LEADOUT_STOPLOSS_BEFORE_MAJOR)
+
+
+def ms_leadin_rewind_before_major(
+        qlev_macd_lag: pd.Series, ms_leadout_maj: pd.Series,
+        ms60: pd.DataFrame, pwrln_major: pd.Series,
+        pwrln_timing_lag_major: pd.Series,
+        ohlc60: pd.DataFrame) -> pd.Series:
+    """60min 研判放大：`LEADIN_REWIND_BEFORE_MAJOR`。
+
+    条件（用户 2026-11 最终口径）：
+      QLevMACDLagD > 1e-12
+      & QLevMACDLagD > LEADOUT_BEFORE_MAJOR
+      & LEADOUT_BEFORE_MAJOR <= 20
+      & LEADIN_BEFORE <= LEADOUT_BEFORE_MAJOR
+      & LEADIN_BEFORE <= 9
+      & 4QPwrlnMaj > 0.8
+      & 4QPwrlnLagMaj > 1e-12
+    """
+    cond = (
+        (qlev_macd_lag > 1e-12)
+        & (qlev_macd_lag > ms_leadout_maj)
+        & (ms_leadout_maj <= 20)
+        & (ms60[LTT.MAINSTREAM_LEADIN_BEFORE] <= ms_leadout_maj)
+        & (ms60[LTT.MAINSTREAM_LEADIN_BEFORE] <= 9)
+        & (pwrln_major > 0.8)
+        & (pwrln_timing_lag_major > 1e-12)
+    )
+    return pd.Series(
+        Timeline_duration(np.where(cond, 1, 0)),
+        index=ohlc60.index,
+        name=LTT.MAINSTREAM_LEADIN_REWIND_BEFORE_MAJOR)
 
 
 # --------------------------------------------------------------------------- #

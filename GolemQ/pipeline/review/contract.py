@@ -94,9 +94,19 @@ HOUR_ZEN_COLUMNS: Tuple[str, ...] = (
 #: 合并了旧 `reality_features` 的日尺度列（`STAGE/BST/m9t`）。
 #: ⚠️ 旧 `M9T_LAG` / `m9tLag` **已删除**：库里全为 None、review 无生产者；
 #: 老树 REAL 常量 `m9tLagR` 仅保留定义，不落库（D67）。
-COLDSTART_COLUMNS: Tuple[str, ...] = (
+#: **stage 族**（用户 2026-11-16 定：**从 4.4 旧库搬运**，新树不再重算）。
+#: ⚠️ 两条重算链（日线 coldstart / 60min `calc_stage_frame`）都已废弃（用户
+#: 2026-11-16：「算法有重大隐患」）。本表是 **read-only 契约**：`tools/migrate_stage_from44.py`
+#: 从 4.4 的 `stock_ta_reviews` 搬 `stage`，并把 `GAR_P` 绝对价带转成 `garPD` 比值；
+#: `bstStgBf/epStgBf` 由 `reality_attach` 用 `garPD → garP` 现算，**不落库**。
+STAGE_COLUMNS: Tuple[str, ...] = (
+    'stage',
     'bstStgBf', 'epStgBf',
     FLD.GARIDENT_PRICE_DUMMY, 'garPCount', 'garPClr', 'garPAnchor', 'garSLag',
+)
+
+#: 日线 coldstart 的 **Maj 列**（与 stage 无关的部分）。
+COLDSTART_COLUMNS: Tuple[str, ...] = (
     'm9tMaj',
     'poly9pwr3Maj',
     FLD.FBPROPHET_LB_MAJOR_DUMMY, FLD.FBPROPHET_UB_MAJOR_DUMMY, 'prophetClrNormMaj',
@@ -118,7 +128,6 @@ HOUR_CHIP_COLUMNS: Tuple[str, ...] = (
 #: 每个交易日 15:00 算一次（用户 2026-10-30：交易日尾部按 60min 实际时间算）。
 #: 与日频版（`m9tMaj` / `poly9MajD` / `rTrePrcMajD` / `prophet*Maj*`）区分。
 HOUR_NATIVE_COLUMNS: Tuple[str, ...] = (
-    'stage',                                                 # STAGE（60min 原生）
     FLD.MAGIC_NINE_TURNS, FLD.MAGIC_NINE_TURNS_TIMING_LAG,   # m9t / m9tLag
     'poly9D', 'poly9NorR',                                   # Poly9 原生
     'rTrePrcD', 'rTreLagR', 'rTreSlopD',                     # RegTree 原生

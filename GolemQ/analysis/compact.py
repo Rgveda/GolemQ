@@ -462,9 +462,16 @@ def calc_compact_features(ohlc_data: pd.DataFrame,
             out[col] = np.nan
 
     # 保留 OHLCV（rank 需要 close；落库/下游也常用）。
-    for col in (AKA.OPEN, AKA.HIGH, AKA.LOW, AKA.CLOSE, AKA.VOLUME, AKA.AMOUNT):
-        if col in ohlc_data.columns:
-            out[col] = ohlc_data[col]
+    # ⚠️ **一次 `pd.concat`，不要逐列 `out[col] = ...`**：上面已经逐列插过
+    # `COMPACT_COLUMNS` / `major`，帧已高度碎片化，再逐列 insert 会抛
+    # `PerformanceWarning: DataFrame is highly fragmented`（2026-11-16 实测）。
+    _ohlcv = {c: ohlc_data[c] for c in (AKA.OPEN, AKA.HIGH, AKA.LOW,
+                                        AKA.CLOSE, AKA.VOLUME, AKA.AMOUNT)
+              if c in ohlc_data.columns}
+    if _ohlcv:
+        out = pd.concat(
+            [out.drop(columns=[c for c in _ohlcv if c in out.columns]),
+             pd.DataFrame(_ohlcv, index=out.index)], axis=1)
 
     # 重新索引回主帧（`_derive_major` 已按 target_index 建索引）
     out = out.reindex(ohlc_data.index)

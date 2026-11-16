@@ -37,6 +37,9 @@ from io import BytesIO
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
+_EX = os.path.dirname(os.path.abspath(__file__))
+if _EX not in sys.path:
+    sys.path.insert(0, _EX)
 
 import pandas as pd
 import streamlit as st
@@ -51,6 +54,8 @@ from GolemQ.markets.StockCN.reality_save import (
     UNIQUE_KEYS, fetch_reality_feat, reality_feat_name,
 )
 from GolemQ.markets.StockCN.symbol import is_stock_cn
+
+import _app_common as app
 
 #: 频率 → reality 族。三族**各有自己的列名**（搬自旧树，别再"统一"——
 #: 8.3 里的历史数据就是按这套存的，见 `reality_save.CV_COLUMNS`）。
@@ -147,11 +152,13 @@ st.set_page_config(page_title='ChartScanAI · 8.3', page_icon='📊', layout='wi
                    initial_sidebar_state='expanded')
 
 with st.sidebar:
-    st.header('⚙️ 参数')
-    code = st.text_input('股票代码（8.3）', value='600519',
-                         help='6 位 A 股代码，如 600519 / 000001 / 510300')
-    family = st.selectbox('K 线周期', FAMILIES, index=0,
-                          help='day → ClsMaj 那套；60min → Class 那套；15min → ClsMin 那套')
+    # 与其它 app 共用的侧边栏（代码 / 频率）；本页只支持三个 reality 族，
+    # 且不需要「加长历史」—— 其余控件保持原样。
+    code, family, _ = app.sidebar_base(
+        default_freq_index=0, freqs=FAMILIES, with_history=False,
+        symbol_default='600519',
+        symbol_help='6 位 A 股代码，如 600519 / 000001 / 510300',
+        freq_help='day → ClsMaj 那套；60min → Class 那套；15min → ClsMin 那套')
     conf = float(st.slider('置信度阈值', 25, 100, int(CONFIDENCE * 100))) / 100
     run = st.button('🔍 识别', width='stretch', type='primary')
     st.caption(f'权重：`{weights_path()}`')

@@ -47,6 +47,10 @@ def main(argv=None) -> int:
     p.add_argument('--from-date', default='', help='只算该日期之后（调试用）')
     p.add_argument('--limit', type=int, default=0, help='只跑前 N 个（调试用）')
     p.add_argument('--dry-run', action='store_true', help='只算不写')
+    p.add_argument('--force', action='store_true',
+                   help='重算已持久化的目标（忽略表里已有行）')
+    p.add_argument('--families', default='day,60min,15min',
+                   help='要写的族，逗号分隔（day,60min,15min）；默认全写')
     p.add_argument('--verbose', action='store_true')
     a = p.parse_args(argv)
 
@@ -57,11 +61,14 @@ def main(argv=None) -> int:
         return 2
 
     from GolemQ.pipeline.review import run_review
+    families = tuple(f.strip() for f in str(a.families).split(',') if f.strip())
     print(f'[review-shard] {os.path.basename(a.file)}: {len(codes)} 码 '
           f'pct={a.pct_of_cores} timeout={a.review_timeout}s '
+          f'families={",".join(families)} force={a.force} '
           f'from={a.from_date or "-"} dry_run={a.dry_run}', flush=True)
     results, stats = run_review(
         codes=codes, pct_of_cores=a.pct_of_cores,
+        families=families, force=a.force,
         dry_run=a.dry_run, verbose=a.verbose,
         from_date=a.from_date, limit=a.limit,
         code_timeout=a.review_timeout)

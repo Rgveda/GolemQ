@@ -82,23 +82,23 @@ class TestEnvironmentChecks(unittest.TestCase):
         self.assertNotIn('终端', buf.getvalue())
 
     def test_non_verbose_prints_only_problems(self):
-        """非 verbose 的**明细**只有出问题才打 —— 一切正常时不该往外铺。
+        """非 verbose 的**明细**只在红/黄时打 —— 一切正常的节点不该往外铺。
 
-        口径变化（2026-10-09）：自检改挂 banner 后，「不通过」不再用 `⚠️` 文字表达，
-        而是**红/黄点**。所以这里改成断言「没有明细行」（明细一律以节点名开头）。
+        口径（2026-11-12 用户）：**黄点也要说为什么** —— banner 上只有一个黄点，
+        而黄的那几档恰恰是可行动的（交易日历该续了 / 线程数被改过 / 时区不对）。
+        红点在 `check_environment` 的 `failed` 分支里另打。
         """
-        # 把依赖包钉成全过：这条测的是「非 verbose 不铺明细」，不是本机 pandas 版本。
-        ok_pkgs = tuple((True, '{} {}'.format(name, want))
-                        for name, want in bootstrap.MIN_PACKAGES)
+        fake = [('python', bootstrap.OK, ['3.12.0']),
+                ('交易日历', bootstrap.WARN, ['该更新交易日历了'])]
         buf = io.StringIO()
-        with unittest.mock.patch.object(bootstrap, 'check_packages',
-                                        return_value=ok_pkgs), \
+        with unittest.mock.patch.object(bootstrap, 'run_checks',
+                                        return_value=fake), \
                 contextlib.redirect_stdout(buf):
             bootstrap.check_environment(verbose=False)
         out = buf.getvalue()
-        self.assertNotIn('✓', out)                       # 老口径的勾也没了
-        for node in bootstrap.SELF_CHECK_NODES:
-            self.assertNotIn('{}: '.format(node), out)   # 明细行的形如「节点: 说明」
+        self.assertNotIn('✓', out)                         # 老口径的勾也没了
+        self.assertNotIn('python: ', out)                  # 绿点不出明细
+        self.assertIn('⚠️ 交易日历: 该更新交易日历了', out)  # 黄点要出明细
 
     def test_verbose_prints_passing_lines_too(self):
         """`-v` 时每个节点的**明细行**都要出来（用户口径：banner 只报结果，`-v` 报文字）。"""
