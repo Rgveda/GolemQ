@@ -74,10 +74,19 @@ def gear_o_before(symbol: str, lookback_days: int = GEAR_LOOKBACK_DAYS) -> pd.Se
             chip = calc_stock_chip_distribution_jit(
                 features=pd.DataFrame(index=fd.index), ohlc_data=fd,
                 annual=252, code=str(symbol), verbose=False)
-            v = broadcast_daily_to_60min(chip[AKA.COST15_PRICE], f60.index)
+            # ⚠️ as-of 口径（D82 / P51）：15:00 用当日，盘中 3 根用**上一交易日**。
+            # `broadcast_daily_to_60min` 是「当日值铺满当日 4 根」的旧树口径，
+            # 直接用它会让盘中拿到当日收盘（未来函数）——与落库/attach 的值差一天。
+            v_today = broadcast_daily_to_60min(chip[AKA.COST15_PRICE], f60.index)
+            v_prev = broadcast_daily_to_60min(
+                chip[AKA.COST15_PRICE].shift(1), f60.index)
+            _t = pd.DatetimeIndex(
+                pd.to_datetime(f60.index.get_level_values(0))).time
+            v = np.where(np.asarray(_t) >= pd.Timestamp('15:00').time(),
+                         np.asarray(v_today, dtype=float),
+                         np.asarray(v_prev, dtype=float))
             f60 = f60.copy()
-            f60[AKA.COST15_PRICE] = pd.Series(
-                np.asarray(v, dtype=float), index=f60.index)
+            f60[AKA.COST15_PRICE] = pd.Series(v, index=f60.index)
         except Exception:                    # noqa: BLE001 缺换手率时退回 Charm_I
             pass
 

@@ -682,7 +682,9 @@ class FIELD(metaclass=_StubMeta):
     REGTREE_MA90_INTERCEPT = 'regtreeMa90Int'
     REGTREE_PRICE = 'regtreePrice'
     REGTREE_PRICE_MAJOR = 'regtreePriceMaj'
-    REGTREE_PRICE_DUMMY = 'regtreePriceD'
+    # ⚠️ 归一化价落库名已随 D77/D78 改成 `rTrePrcD`（`regtreePriceD` 作废）——
+    # 内存列与落库/还原列**同名**，attach 的 `restore_price_columns` 才不用再映射。
+    REGTREE_PRICE_DUMMY = 'rTrePrcD'
     REGTREE_PRICE_MAJOR_DUMMY = 'regtreePriceMajD'
     REGTREE_SLOPE = 'regtreeSlp'
     REGTREE_TIMING_LAG = 'regtreeLag'

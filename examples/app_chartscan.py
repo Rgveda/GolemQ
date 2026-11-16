@@ -100,7 +100,9 @@ def load_detections(code: str, family: str, days: int):
     """库里**已有**的 CV 检出（稀疏：只有识别到买卖点的那几根才有值）。"""
     start = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
     end = datetime.now().strftime('%Y-%m-%d')
-    frame = fetch_reality_feat(code, start, end, family, is_stock_cn(code)[1])
+    # 只读 CV 列：**不要**触发价格还原（那会多取一次 K 线，还原出来的列也用不上）
+    frame = fetch_reality_feat(code, start, end, family, is_stock_cn(code)[1],
+                               restore_price=False)
     if frame is None:
         return pd.DataFrame()
     cols = [c for c in CV_FIELDS[family] if c in frame.columns]

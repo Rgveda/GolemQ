@@ -824,7 +824,8 @@ def calc_regtree_fractal_vXIs(data, *args, **kwargs):
         features[FLD.REGTREE_TIMING_LAG] = calc_event_timing_lag(features[FLD.REGTREE_TREND]).astype(np.int16)
 
     features[FLD.REGTREE_SLOPE] = talib.LINEARREG_SLOPE(features[FLD.REGTREE_PRICE], timeperiod=14).astype(np.float32)
-    # 归一化 RegTree 价格（abs / close）；attach 时 * close 恢复无后缀
+    # 归一化 RegTree 价格（abs / close）；列名 **`rTrePrcD`**（与落库/恢复列同名，
+    # 见 D77/D82 —— `regtreePriceD` 是改名前的值，别再用）。
     _close = pd.to_numeric(data[AKA.CLOSE], errors='coerce').reindex(features.index)
     features[FLD.REGTREE_PRICE_DUMMY] = (
         features[FLD.REGTREE_PRICE] / _close).astype(np.float32)

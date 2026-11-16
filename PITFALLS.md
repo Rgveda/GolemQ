@@ -1687,3 +1687,7 @@ chip 都只落 **60min 行**。旧 attach 对它们做**精确时间戳 join**�
 **别改回去**：直觉上「÷ 当前 bar close」看起来更贴近市价，实际会让**同一份快照的比值
 随盘中价格漂移**，且 `ratio × 当前 close` 还原不出分子的绝对价（attach / 图表会错）。
 两个方向（生产与还原）都用 `asof_close`，只有这一份规则。
+
+⚠️ **同一份规则也管 examples 的兜底**：`examples/_gear_bands.py` 在 attach 缺
+`cost15Prz` 时会用日线 ChipDist 现算，广播时必须「15:00 用当日、盘中用上一交易日」；
+直接用 `broadcast_daily_to_60min`（当日铺满 4 根，D79 的主流口径）会让盘中拿到当日收盘。
