@@ -15,12 +15,12 @@
                                  │ 18 列 + coldstart 12 列按日采样
                                  ▼
          ┌──────────── zen_snapshots (60min 2160 根窗口) ─────────────┐
-60/15min │ zen 5 / minor 17 / se+中枢 2 / Renko 14 / 原生 11 / chip 4 │ ──▶ _feat_60min (79 列)
+60/15min │ zen 5 / minor 17 / se+中枢 2 / Renko 14 / 原生 11 / chip 4 │ ──▶ _feat_60min (80 列)
 K 线 ───▶│ + day_sample 18 + coldstart 12（来自日线，按日映射）        │
          └───────────────┬───────────────────────────────────────────┘
                          │ 19 列按「每小时第 4 根」取样
                          ▼
-                     _feat_15min (19 列)
+                     _feat_15min (20 列)
 ```
 
 ---
@@ -67,7 +67,7 @@ K 线 ───▶│ + day_sample 18 + coldstart 12（来自日线，按日映�
 | Renko | 14 | `zen_snapshots` | 60min K 线、2160 根 as-of；价格列 `*D` |
 | 60min 原生组 | 11 | `zen_snapshots` | `stage`、`m9t`/`m9tLag`、`poly9D`/`poly9NorR`、`rTrePrcD`/`rTreLagR`/`rTreSlopD`、`prophetLbD`/`prophetUbD`/`prophetClrNorm` |
 | ChipDist | 4 | `chip_cost_by_day` | **960 根日线窗口**、逐日 as-of、**补 adj 缩放**；`cost5PrzD` `cost15PrzD` `cost85PrzD` `cost95PrzD` |
-| 日族采样 | 18 | `day_sample` | 日表 18 列；chip 4 列按「绝对成本 ÷ 本 bar close」重算比值 |
+| 日族采样 | 19 | `day_sample` | 日表 19 列（含 `ZenPivotLagMaj`）；chip 4 列按「绝对成本 ÷ as-of 收盘」重算比值 |
 | coldstart | 12 | `coldstart_step` | `bstStgBf` `epStgBf` `garPD` `garPCount` `garPClr` `garPAnchor` `garSLag` `m9tMaj` `poly9pwr3Maj` `prophetLbMajD` `prophetUbMajD` `prophetClrNormMaj`；garP 稀疏、`garPD`/`garPAnchor` **ffill** |
 
 **落库**：`*_reality_feat_60min`，唯一键 `(code, time_stamp)`。
@@ -81,14 +81,16 @@ K 线 ───▶│ + day_sample 18 + coldstart 12（来自日线，按日映�
 
 ---
 
-## 四、15min 模型（`_feat_15min`，19 列）
+## 四、15min 模型（`_feat_15min`，20 列）
 
 **入口**：`pipeline/review/steps/minor.py::minute15_aligned_step`
 
 * **不重算**：60min 的 `zen_snapshots` 在算每个 60min 目标时，已经把该小时 4 根
   15min 的 minor/zen 结果缓存在 `_minute15_rows`；15min 族只是**取样**；
 * 只取「每小时第 4 根」（与 60min 时刻对齐的那根）；
-* 列：`zDLagMinR` `zPLagMinR` + 17 个 minor（`AroUprsgLagMin` … `MsLeadinx5BfMin`）；
+* 列：`zDLagMinR` `zPLagMinR` **`ZenPivotLagMin`** + 17 个 minor
+  （`AroUprsgLagMin` … `MsLeadinx5BfMin`）；`ZenPivotLagMin` 只在 15min 表，
+  attach 时映射到 60min features；
 * 落库：`*_reality_feat_15min`，唯一键 `(code, time_stamp)`。
 
 ---

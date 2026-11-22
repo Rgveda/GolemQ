@@ -42,6 +42,7 @@ from GolemQ.analysis.stages import (garident_bands_from_ratio,
                                     garident_bottom_roof)
 from GolemQ.analysis.timeseries import weekly_ohlc
 from GolemQ.core.constants import AKA, FIELD as FLD
+from GolemQ.models.alias import ZEN
 from GolemQ.markets.StockCN.reality_save import (PRICE_RATIO_COLUMNS,
                                                  fetch_reality_feat)
 from GolemQ.pipeline.review.contract import (COLDSTART_COLUMNS, DAY_COLUMNS,
@@ -49,6 +50,7 @@ from GolemQ.pipeline.review.contract import (COLDSTART_COLUMNS, DAY_COLUMNS,
                                              HOUR_CHIP_COLUMNS,
                                              HOUR_EXTRA_COLUMNS,
                                              HOUR_NATIVE_COLUMNS,
+                                             HOUR_WEEKLY_COLUMNS,
                                              HOUR_ZEN_COLUMNS,
                                              RENKO_DAY_COLUMNS)
 
@@ -62,7 +64,8 @@ _RENAME_60 = {'Class': 'Cls60', 'Confidence': 'Conf60',
               'Coordinates': 'Coord60', 'ChartScaned': 'ChartScaned60'}
 _RENAME_DAY = {'ClsMaj': 'ClsDay', 'ConfidenceMaj': 'ConfDay',
                'CoordinatesMaj': 'CoordDay', 'ChartScaned': 'ChartScanedDay'}
-_KEEP_15 = ('ClsMin', 'ConfidenceMin', 'CoordinatesMin', 'ChartScaned')
+_KEEP_15 = ('ClsMin', 'ConfidenceMin', 'CoordinatesMin', 'ChartScaned',
+            ZEN.PIVOT_TIMING_LAG_MINOR)
 _RENAME_15 = {'ClsMin': 'Cls15', 'ConfidenceMin': 'Conf15',
               'CoordinatesMin': 'Coord15', 'ChartScaned': 'ChartScaned15'}
 
@@ -161,6 +164,12 @@ def _attach_60min(features: pd.DataFrame, r60: Optional[pd.DataFrame],
     if renko:
         features = _join_60min(features, r60, renko)
         loaded['60min_renko'] = renko
+    # 周线派生 `4QPwrlnWek`（60min 表原生存、周线映射）
+    week = [c for c in HOUR_WEEKLY_COLUMNS
+            if c in r60.columns and c not in features.columns]
+    if week:
+        features = _join_60min(features, r60, week)
+        loaded['60min_week'] = week
     # ChartScan 是稀疏事件：精确时间戳 join
     chart = [c for c in _CHART_COLS_60
              if c in r60.columns and c not in features.columns]
@@ -212,7 +221,10 @@ def _attach_15min(features: pd.DataFrame, r15: Optional[pd.DataFrame],
     merged = merged.rename(columns=_RENAME_15)
     merged = merged.set_index('ts').reindex(ts_all)
     merged.index = features.index
-    keep = [c for c in _RENAME_15.values() if c in merged.columns]
+    # ⚠️ 不能只看 `_RENAME_15.values()` —— 不在 rename 表里的列（如
+    # `ZenPivotLagMin`）会被静默丢掉。原名列与改名后的列都要保留。
+    keep = [c for c in (*_KEEP_15, *_RENAME_15.values())
+            if c in merged.columns]
     features = features.join(merged[keep])
     loaded['15min'] = keep
     return features
@@ -460,6 +472,15 @@ def attach_reality_feats(features: pd.DataFrame,
     features = _restore_garident_bands(features, day_ohlc)
     # 补 `bstStgBf` / `epStgBf`（缺才填；garPD → garP → stage → before）
     features = _stage_before_fill(features, day_ohlc, loaded)
+    # D85：化简版 COST5_UPRISING_BEFORE —— 只用落库的 cost5PrzD/stage + close
+    # 现算（不重跑 ChipDist）。
+    if (AKA.COST5_PRICE in features.columns
+            and AKA.STAGE in features.columns):
+        from GolemQ.analysis.cost5_uprising import (
+            calc_cost5_uprising_from_stored)
+        features['cost5UprBf'] = calc_cost5_uprising_from_stored(
+            features, day_ohlc)
+        loaded['cost5_upr'] = ['cost5UprBf']
     if FLD.BOTTOM_PRICE in features.columns:
         loaded['garident'] = [FLD.GARIDENT_PRICE, FLD.BOTTOM_PRICE,
                               FLD.ROOF_PRICE]

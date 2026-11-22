@@ -40,7 +40,7 @@ import pandas as pd
 
 sys.path.insert(0, '.')
 
-#: 4.4 源（`core.migrate44.db44` 是唯一入口；本工具只读 4.4）。
+#: 4.4 源（`tools.migrate44.db44` 是唯一入口；本工具只读 4.4，D83）。
 SRC_DB = 'golemq'
 SRC_COLL = 'stock_ta_reviews'
 
@@ -58,7 +58,7 @@ def _db():
 
 
 def _src():
-    from GolemQ.core.migrate44 import db44
+    from tools.migrate44 import db44
     return db44(SRC_DB)[SRC_COLL]
 
 

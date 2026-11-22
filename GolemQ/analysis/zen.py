@@ -66,17 +66,66 @@ def _freq_of(ohlc: pd.DataFrame):
         return Freq.F60
 
 
+def raw_bars(ohlc: pd.DataFrame, code: str, freq, *,
+             strict: bool = True,
+             vol_keys: tuple = (AKA.VOLUME,)) -> List[RawBar]:
+    """`DataFrame` → `czsc.RawBar` 列表（**向量化取值**，别再 `iterrows`）。
+
+    这是全树**唯一**的 RawBar 构造口（`_bars_of` 与 review 的两个 CZSC 调用点
+    都走这里）。`iterrows` 每行要新建一个 Series，实测占 `minor_features` 总耗时
+    的 **一半**（2,160 根窗口 ≈0.15s/次，而一次回填要调 2,000+ 次）。
+
+    :param strict: 缺 OHLC 列时 `KeyError`（`_bars_of` 的老行为）；
+        传 ``False`` 则按 NaN 处理（review 的 pivot 路径，缺列不是错误）。
+    :param vol_keys: 成交量列名候选，按顺序取第一个存在的（`volume` / `vol`）。
+
+    >>> import pandas as pd
+    >>> idx = pd.MultiIndex.from_arrays(
+    ...     [pd.to_datetime(['2026-01-05']), ['600519']], names=['ts', 'code'])
+    >>> f = pd.DataFrame({'open': [1.0], 'high': [2.0], 'low': [0.5],
+    ...                   'close': [1.5], 'volume': [100]}, index=idx)
+    >>> b = raw_bars(f, '600519', None)
+    >>> (b[0].open, b[0].close, b[0].vol, len(b))
+    (1.0, 1.5, 100.0, 1)
+    """
+    if ohlc is None or len(ohlc) == 0:
+        return []
+    idx = ohlc.index
+    if isinstance(idx, pd.MultiIndex):
+        ts = pd.DatetimeIndex(pd.to_datetime(idx.get_level_values(0)))
+    else:
+        ts = pd.DatetimeIndex(pd.to_datetime(idx))
+
+    def _num(name, default=np.nan, need=False):
+        if name in ohlc.columns:
+            return pd.to_numeric(ohlc[name], errors='coerce').to_numpy(dtype=float)
+        if need:
+            raise KeyError(name)
+        return np.full(len(ohlc), default, dtype=float)
+
+    op = _num(AKA.OPEN, need=strict)
+    cl = _num(AKA.CLOSE, need=strict)
+    hi = _num(AKA.HIGH, need=strict)
+    lo = _num(AKA.LOW, need=strict)
+    vol = _num('__none__', 0.0)
+    for k in vol_keys:
+        if k in ohlc.columns:
+            vol = _num(k, 0.0)
+            break
+    amt = _num('amount', 0.0)
+    # czsc 只用价格字段定笔；vol/amount 是元数据，NaN 归零即可
+    vol = np.nan_to_num(vol, nan=0.0)
+    amt = np.nan_to_num(amt, nan=0.0)
+
+    return [RawBar(symbol=code, dt=t, id=i, freq=freq,
+                   open=op[i], close=cl[i], high=hi[i], low=lo[i],
+                   vol=float(vol[i]), amount=float(amt[i]))
+            for i, t in enumerate(ts)]
+
+
 def _bars_of(ohlc: pd.DataFrame, code: str, freq) -> List[RawBar]:
-    bars = []
-    for i, (idx, row) in enumerate(ohlc.iterrows()):
-        dt = idx[0] if isinstance(idx, tuple) else idx
-        bars.append(RawBar(
-            symbol=code, dt=dt, id=i, freq=freq,
-            open=float(row[AKA.OPEN]), close=float(row[AKA.CLOSE]),
-            high=float(row[AKA.HIGH]), low=float(row[AKA.LOW]),
-            vol=float(row.get(AKA.VOLUME, 0) or 0),
-            amount=float(row.get('amount', 0) or 0)))
-    return bars
+    """`raw_bars` 的薄包装（保留老名字，`strict=True` 与旧实现一致）。"""
+    return raw_bars(ohlc, code, freq, strict=True)
 
 
 def czsc_bi_points(ohlc: pd.DataFrame, market_type=None) -> List[dict]:

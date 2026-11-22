@@ -324,6 +324,46 @@ def status_line(ok, text, color=False):
     return '{} {}'.format(mark, text)
 
 
+_LEGACY_WARNED = set()
+
+
+def legacy_python_warning(name: str, faster: str = '', extra: str = '') -> None:
+    """**老纯 Python 实现被调用**时的强制提醒（写 stderr，不走 `warnings`）。
+
+    为什么要专门造一个：`warnings.warn` 会被调用方（或测试、或 `-W ignore`）
+    用 `simplefilter('ignore')` **静默掉** —— 那这条提醒就失去意义了。
+    这里直接写 `sys.stderr`，**过滤不掉**；同一进程内每个 `name` 只报一次，
+    所以不会刷屏。
+
+    用途：`regtree_jit.py` / `ChipDistribution_jit.py` 里还留着逐行照抄老树的
+    纯 Python 递归实现（`predict_regression_tree_branch`、`_calcu_cost` …），
+    它们**比 jit 版慢两个数量级**（实测建树 0.81s vs 0.007s）。留着的唯一理由是
+    「留作对拍 / 兜底」，绝不该被生产路径误用 —— 这条提醒就是防误用。
+
+    :param name: 被调用的旧实现名
+    :param faster: 有对应 jit 版时写它的名字（提醒怎么改）
+    :param extra: 额外上下文（如 ``code=600519``）—— 排查时最需要的就是这个
+
+    >>> import io, sys
+    >>> buf = io.StringIO(); old = sys.stderr
+    >>> sys.stderr = buf; legacy_python_warning('demo_fn', 'demo_fn_jit'); sys.stderr = old
+    >>> 'demo_fn' in buf.getvalue(), 'demo_fn_jit' in buf.getvalue()
+    (True, True)
+    """
+    if name in _LEGACY_WARNED:
+        return
+    _LEGACY_WARNED.add(name)
+    tail = f'，请改用 {faster}' if faster else ''
+    if extra:
+        tail += f'（{extra}）'
+    try:
+        print('[GolemQ][legacy] {} 是**旧实现**（比 jit 快路径慢约两个数量级）'
+              '{}；它只该用于对拍/兜底。'.format(name, tail),
+              file=sys.stderr, flush=True)
+    except Exception:               # noqa: BLE001 stderr 不可写时不能影响主流程
+        pass
+
+
 def dim(text, color=False):
     """**压暗**一行（`color=True` 时）。用 :data:`_ANSI_GRAY`，非 TTY 原样返回。
 

@@ -44,6 +44,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -117,6 +118,9 @@ class CodeResult:
     error: Optional[str] = None
     duration: float = 0.0
     market_type: Any = None
+    #: 分阶段耗时（秒），键由各 pipeline 自己定（review 用 fetch/steps/write）。
+    #: 只在 `Statistics` 打印最慢的码时用来定位「慢在哪儿」，不参与任何计算。
+    meta: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -258,30 +262,63 @@ class BasePipeline(ABC):
             _pct = pool_size / max(int(_mp.cpu_count()), 1)
             print('即将使用 {:.0%} —> {} 个CPU核心进行 {} 的并行处理。'.format(
                 _pct, pool_size, self.name), flush=True)
-            try:
-                # ⚠️ **必须把 codelist 作为 tqdm 的 iterable**（老树同款）：
-                # `tqdm_joblib` 的完成回调会读 `len(tqdm_object.iterable)`；
-                # 只传 `desc/total` 时 iterable 是 None ⇒ 回调 TypeError ⇒
-                # joblib 的完成记账被打断，并发任务会挂住。
-                with tqdm_joblib(tqdm(codelist, unit='stock',
-                                      desc=f'{self.name} Processing'), '{}'):
-                    # ⚠️ **必须用 `with`**：`Parallel.__exit__` 会终止 worker。
-                    # 不用上下文管理器时，Windows 上 Ctrl+C 后父进程可能在等
-                    # 永远不结束的 loky worker —— 表现为「按键了但停不下来」。
-                    with Parallel(n_jobs=pool_size) as parallel:
-                        results = parallel(
-                            delayed(self._process_single_code)(code, **kwargs)
-                            for code in codelist)
-            except KeyboardInterrupt:
-                # `KeyboardInterrupt` 不是 `Exception`，上面的回退分支**不会**
-                # 吞它；这里只补一句提示，然后继续向上抛给 CLI。
-                print(f'\n{self.name}: 收到 Ctrl+C，已终止并行 worker',
-                      file=sys.stderr)
-                raise
-            except Exception as exc:    # noqa: BLE001 并行失败回退串行
-                print(f'Parallel processing error: {exc}')
-                results = [self._process_single_code(code, **kwargs)
-                           for code in tqdm(codelist, desc=f'{self.name} Processing')]
+            # ⚠️ **不分批、进度条逐码**（用户 2026-11-22 再次明确，没得商量）：
+            # `codelist` 整体交给一个 `Parallel`，`tqdm` 的 iterable 就是它 ——
+            # 分片会让进度按片跳、也会让一个慢码拖住整片（`test_mainstream_per_code`
+            # 里 `test_tqdm_iterable_is_the_code_list` / `test_no_chunking_left_in_mainstream`
+            # 就是钉这个的）。
+            #
+            # 抗崩溃靠**并行重试**而不是切批：2026-11-22 实测一个 loky worker
+            # 因内存压力被杀（`A worker stopped while some jobs were given to the
+            # executor`），旧代码 `except Exception` 直接把这 2,001 个码**降级成
+            # 串行重跑**；而串行跑在父进程里，numba 编译又失败 ⇒ RegTree 回落纯
+            # Python。这里改成：先**原样并行重试一次**（已完成的码行已落库，
+            # `_targets` 只返回缺口 ⇒ 重试很便宜），仍失败才退到串行兜底。
+            _max_try = 2
+            results = None
+            for _try in range(_max_try):
+                try:
+                    # ⚠️ **必须把 codelist 作为 tqdm 的 iterable**（老树同款）：
+                    # `tqdm_joblib` 的完成回调会读 `len(tqdm_object.iterable)`；
+                    # 只传 `desc/total` 时 iterable 是 None ⇒ 回调 TypeError ⇒
+                    # joblib 的完成记账被打断，并发任务会挂住。
+                    with tqdm_joblib(tqdm(codelist, unit='stock',
+                                          desc=f'{self.name} Processing'), '{}'):
+                        # ⚠️ **必须用 `with`**：`Parallel.__exit__` 会终止 worker。
+                        # 不用上下文管理器时，Windows 上 Ctrl+C 后父进程可能在等
+                        # 永远不结束的 loky worker —— 表现为「按键了但停不下来」。
+                        # ⚠️ `batch_size=1`：**进度条必须逐码**（用户硬要求）。
+                        # joblib 默认 `batch_size='auto'` 会把多个码并成一批，
+                        # 而 `tqdm_joblib` 的完成回调是**按批**触发的 ⇒ 进度按批跳、
+                        # `set_description` 显示的码也不是刚完成那个。
+                        with Parallel(n_jobs=pool_size, batch_size=1) as parallel:
+                            results = parallel(
+                                delayed(self._process_single_code)(code, **kwargs)
+                                for code in codelist)
+                    break
+                except KeyboardInterrupt:
+                    # `KeyboardInterrupt` 不是 `Exception`，上面的回退分支**不会**
+                    # 吞它；这里只补一句提示，然后继续向上抛给 CLI。
+                    print(f'\n{self.name}: 收到 Ctrl+C，已终止并行 worker',
+                          file=sys.stderr)
+                    raise
+                except Exception as exc:    # noqa: BLE001
+                    last_exc = exc
+                    if _try + 1 < _max_try:
+                        print('\n[WARN] {} 并行执行中断：{}: {}\n'
+                              '       原因多为 worker 被系统杀掉（内存压力）。'
+                              '已完成的码行已落库，重试时 `_targets` 只返回缺口，'
+                              '不会重算；本次**原样并行重试一次**。'.format(
+                                  self.name, type(exc).__name__, exc),
+                              file=sys.stderr)
+                        continue
+                    print('\n[WARN] {} 并行重试仍失败：{}: {}\n'
+                          '       退回**串行**兜底（会明显变慢）。'.format(
+                              self.name, type(exc).__name__, exc),
+                          file=sys.stderr)
+                    results = [self._process_single_code(code, **kwargs)
+                               for code in tqdm(codelist,
+                                                desc=f'{self.name} Processing')]
         else:
             results = [self._process_single_code(code, **kwargs)
                        for code in tqdm(codelist, desc=f'{self.name} Processing')]
@@ -302,6 +339,47 @@ class BasePipeline(ABC):
             if self.total_count:
                 print(f'  Success rate: {self.success_count / self.total_count * 100:.2f}%')
             print(f'  Duration: {self.end_time - self.start_time}')
+            self._print_slowest()
+
+    #: 统计「最慢的那些码」时默认看的比例（1%）。
+    SLOWEST_PCT = 1.0
+    #: 逐个列出慢码的上限 —— 1% 有几十个时只列最慢的这些，其余只报总数。
+    SLOWEST_PRINT_MAX = 15
+
+    def _print_slowest(self, pct: float = None, top: int = None):
+        """打印**耗时最高 pct%** 的码（用户 2026-11-21 要求）。
+
+        目的：并行 review 里「极少数 code 吃掉大部分墙钟」，不列出来就只看到
+        总时长。列出「码 / 秒 / 状态」，才能判断该短路（可跳过的重活）还是
+        逐个查（真有病）。比例按 **sum(各码耗时)** 算 —— 并行下它大于墙钟，
+        但用它算占比才对得上「谁吃掉了计算量」。
+        """
+        pct = self.SLOWEST_PCT if pct is None else pct
+        top = self.SLOWEST_PRINT_MAX if top is None else top
+        rows = [(float(r.duration or 0.0), r) for r in (self.results or [])]
+        if not rows:
+            return
+        n = max(1, int(math.ceil(len(rows) * pct / 100.0)))
+        rows.sort(key=lambda x: x[0], reverse=True)
+        slow = rows[:n]
+        total = sum(d for d, _ in rows)
+        slow_sum = sum(d for d, _ in slow)
+        share = (slow_sum / total * 100.0) if total > 0 else 0.0
+        print(f'  Slowest {pct:g}%: {n}/{len(rows)} codes = {slow_sum:.1f}s '
+              f'({share:.1f}% of code time)')
+        for d, r in slow[:top]:
+            flag = '' if r.ok else f'  [{r.status}]'
+            phases = ' / '.join(f'{k} {float(v):.1f}s'
+                                for k, v in (r.meta or {}).items()
+                                if isinstance(v, (int, float)))
+            suffix = f'  ({phases})' if phases else ''
+            print(f'    {r.code}  {d:.1f}s{flag}{suffix}')
+        if n > top:
+            rest = slow[top:]
+            print(f'    ... 其余 {len(rest)} 个合计 {sum(d for d, _ in rest):.1f}s')
+        if total > 0:
+            p50 = rows[len(rows) // 2][0]
+            print(f'  Median {p50:.1f}s/code, Mean {total / len(rows):.1f}s/code')
 
     def _get_statistics_dict(self) -> Dict[str, Any]:
         counts: Dict[str, int] = {}

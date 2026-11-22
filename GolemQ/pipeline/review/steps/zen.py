@@ -20,9 +20,12 @@ import numpy as np
 import pandas as pd
 
 from GolemQ.analysis.zen import calc_zen_timing_lag
-from GolemQ.core.constants import FIELD as FLD
-from GolemQ.pipeline.review.contract import (HOUR_EXTRA_COLUMNS,
+from GolemQ.core.constants import AKA, FIELD as FLD
+from GolemQ.models.alias import ZEN
+from GolemQ.pipeline.review.contract import (HOUR_COST5_UPRISING_COLUMNS,
+                                             HOUR_EXTRA_COLUMNS,
                                              HOUR_NATIVE_COLUMNS,
+                                             HOUR_STAGE_COLUMNS,
                                              HOUR_ZEN_COLUMNS,
                                              MINOR_15MIN_COLUMNS,
                                              MINOR_COLUMNS,
@@ -39,6 +42,7 @@ WINDOW15 = 2160
 #: 本 step 的 60min 输出：zen 4 + minor 17 + se/ZenPivotCnt 2
 #: + **Renko 14（60min 原生）** + **M9T 2（60min 原生）**（D78 一体化）。
 ZEN_COLUMNS = (HOUR_ZEN_COLUMNS + MINOR_COLUMNS + HOUR_EXTRA_COLUMNS +
+               HOUR_STAGE_COLUMNS + HOUR_COST5_UPRISING_COLUMNS +
                RENKO_DAY_COLUMNS + HOUR_NATIVE_COLUMNS)
 _NAN_MINOR = np.full(len(MINOR_COLUMNS), np.nan)
 
@@ -95,7 +99,8 @@ def zen_snapshots_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.Data
     ohlc60 = slice_asof(src60, ctx.as_of)
     extra_by_ts = {}
     if len(own):
-        _extra = build_hour_extra_frame(ohlc60, own, ctx.code)
+        _extra = build_hour_extra_frame(ohlc60, own, ctx.code,
+                                        day=ctx.frame('day'))
         extra_by_ts = {T: _extra.iloc[i] for i, T in enumerate(own)}
     for T in targets:
         T = pd.Timestamp(T)
@@ -125,15 +130,21 @@ def zen_snapshots_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.Data
             se = ex['se']
             piv_cnt = ex['ZenPivotCnt']
             piv_lag = ex['ZenPivotLag']
+            ols_lag = ex[ZEN.OLS_TIMING_LAG]
             rk_vals = ex[list(RENKO_DAY_COLUMNS)].to_numpy(dtype=float)
             # ⚠️ 逐列取（历史上有过 obj/list 列）；数值列在 DataFrame 构造时自然成为 float。
             nat_vals = [ex[c] for c in HOUR_NATIVE_COLUMNS]
+            stage_val = ex[AKA.STAGE]
+            ret5_val = ex[AKA.RETURN_COST5]
+            upr_val = ex[AKA.COST5_UPRISING_BEFORE]
         else:
             # 依赖补出来的 bar：只填 15min 需要的两列，其余留 NaN。
-            se = piv_cnt = piv_lag = np.nan
+            se = piv_cnt = piv_lag = ols_lag = stage_val = np.nan
+            ret5_val = upr_val = np.nan
             rk_vals = np.full(len(RENKO_DAY_COLUMNS), np.nan)
             nat_vals = [np.nan] * len(HOUR_NATIVE_COLUMNS)
-        rows.append([d60, p60, d15, p15, piv_lag, *minor_vals, se, piv_cnt,
+        rows.append([d60, p60, d15, p15, piv_lag, ols_lag, *minor_vals,
+                     se, piv_cnt, stage_val, ret5_val, upr_val,
                      *rk_vals, *nat_vals])
         idx.append((T, ctx.code))
 

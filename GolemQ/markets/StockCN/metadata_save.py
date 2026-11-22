@@ -367,87 +367,12 @@ def turnover_rows(rows, src_field, dst_field, created_at=None) -> tuple:
     return docs, skipped
 
 
-def _flush_batch(out, db, buf, src_field, dst_field, created_at) -> None:
-    """把一批源行转文档，经**统一写口** `save_reality_feat` 落库。"""
-    import pandas as pd
-
-    from .reality_save import save_reality_feat
-
-    docs, skipped = turnover_rows(buf, src_field, dst_field, created_at=created_at)
-    out['skipped'] += skipped
-    if not docs:
-        return
-    frame = pd.DataFrame(docs).set_index(['date', 'code'])
-    stats = save_reality_feat(frame, 'day', MARKET_TYPE.STOCK_CN,
-                              verbose=False, created_at=created_at, db=db)
-    out['upserted'] += stats['upserted']
-    out['modified'] += stats['modified']
-    out['written'] += len(docs)
-
-
-def save_turnover(since=None, until=None, batch: int = 5000, verbose: bool = True,
-                  echo=None, created_at=None, dry_run: bool = False) -> dict:
-    """把 4.4 两源的换手率搬进 8.3 `stock_reality_feat_day`（**两列，各写各的**）。
-
-    **一次性搬运**（走 :mod:`GolemQ.core.migrate44` 那条只读通道）。
-    ⚠️ 运行时路径**不许**调它 —— 它连 4.4。
-
-    为什么从 4.4 搬而不是爬 akshare：同源、一次搬完、且两个源**都已经是小数**，
-    不需要任何换算。爬 akshare 要 5,573 次请求。
-
-    :param since: 只搬 ``date >= since``（``'YYYY-MM-DD'``）。增量用。
-    :param until: 只搬 ``date <= until``。
-    :param batch: 每次从 4.4 读多少行。
-    :param created_at: 统一写入的 `created_at`；``None`` = 当前时刻。
-    :param dry_run: 只读源、只统计，**不写 8.3**（先量规模与丢弃量的用）。
-    :returns: ``{源名: {'read','written','skipped','upserted','modified'}}``
-    """
-    from GolemQ.core.migrate44 import db44
-
-    say = echo or print
-    g44 = db44('golemq')
-    dst = None if dry_run else _db()
-
-    out = {}
-    for coll_name, src_field, dst_field, date_fmt in SOURCES:
-        src = g44[coll_name]
-        # 每个源**按自己的 date 格式**造范围条件（见 `_date_range` 的说明）
-        rng = _date_range(date_fmt, since, until)
-        query = {'date': rng} if rng else {}
-        stats = {'read': 0, 'written': 0, 'skipped': 0, 'upserted': 0, 'modified': 0}
-        # ⚠️ 不取源端 `date_stamp` —— 本表的 stamp 由 `date` 按 8.3 口径重算
-        proj = {'_id': 0, 'code': 1, 'date': 1, src_field: 1}
-        cursor = src.find(query, proj).batch_size(batch)
-        buf = []
-        try:
-            for r in cursor:
-                stats['read'] += 1
-                buf.append(r)
-                if len(buf) >= batch:
-                    if dst is not None:
-                        _flush_batch(stats, dst, buf, src_field, dst_field,
-                                     created_at)
-                    buf = []
-            if buf and dst is not None:
-                _flush_batch(stats, dst, buf, src_field, dst_field,
-                             created_at)
-        finally:
-            cursor.close()
-        out[coll_name] = stats
-        if verbose:
-            say('[reality_feat_day] {}{} → {}: 读 {} / 写 {} / 丢 {} / upserted {} / modified {}'.format(
-                coll_name, '.{}'.format(src_field), dst_field,
-                stats['read'], stats['written'], stats['skipped'],
-                stats['upserted'], stats['modified']))
-    return out
-
-
 def refresh_turnover(days: int = 7, verbose: bool = True, echo=None, **kwargs) -> dict:
     """**增量刷新**最近 `days` 个自然日的换手率（供 `--save` 调用）。
 
     ⚠️ **不再连 4.4**（2026-10-18 起，用户：「stock_cn 中使用 4.4 旧树的方法都切换成 8.3」）。
     ==========================================================================
-    过去这里走 :data:`SOURCES` → `save_turnover` → :mod:`GolemQ.core.migrate44`
+    过去这里走 :data:`SOURCES` → `save_turnover` → `tools.migrate44`
     **从 4.4 读**换手率。现在改成 **8.3 现算**：直接调 :func:`fill_turnover`
     （`成交量 ÷ 流通股本`，纯 8.3 数据：`stock_day.volume` + `stock_info.liutongguben`）。
 
@@ -700,7 +625,7 @@ def merge_metadata_into_feat(batch: int = 5000, limit=None, dry_run: bool = Fals
     """把 :data:`LEGACY_METADATA_DAY_COLL` 的行**原样**搬进 :data:`REALITY_FEAT_DAY_COLL`。
 
     **一次性**（`DECISIONS.md` D50）。⚠️ 这是 **8.3 内部**的合并，**不连 4.4** ——
-    与同目录的 :func:`save_turnover`（4.4 → 8.3）不是一回事。
+    与已移出运行时的 4.4 换手率搬运（D83，`tools/`）不是一回事。
 
     幂等
     ====

@@ -64,11 +64,11 @@
 
 ### 2.2 日频采样（日表原生 + 60min 采样，两表同值）
 
-`DAY_COLUMNS` = 14 列：
+`DAY_COLUMNS` = 19 列：
 
 | 组 | 列 |
 |:--|:--|
-| zen-daily | `zDLagMajR` `zPLagMajR` |
+| zen-daily | `zDLagMajR` `zPLagMajR` **`ZenPivotLagMaj`**（CZSC 中枢 lag，2026-11-20） |
 | zen-weekly | `zDLagWekR` |
 | M9T | `m9tMajR` `m9tLagMajR`（日）、`m9tWekR` `m9tLagWekR`（周） |
 | Poly9 | `poly9MajD` `poly9NorMajR`（日）、`poly9WekD` `poly9NorWekR`（周） |
@@ -82,7 +82,11 @@
 （`stage` 已改为 60min 原生，不在 coldstart。）
 
 **合计**：zen 5 + minor 17 + se/中枢 2 + Renko 14 + 原生 11
-+ 日采样 18（含 ChipDist 4）+ coldstart 12 = **79**。
++ 日采样 **19**（含 ChipDist 4 + `ZenPivotLagMaj`）+ coldstart 12 = **80**。
+
+> **15min `ZenPivotLagMin`**（2026-11-20）：只落 `*_reality_feat_15min`，**不进
+> 60min 表**；`attach_reality_feats` 的 `_attach_15min` 会把它与 60min
+> `ZenPivotLag`、日表 `ZenPivotLagMaj` 一起映射到 60min features（三条都在）。
 
 ---
 
@@ -143,7 +147,7 @@
 | 组 | 每交易日 15:00 一次 |
 |:--|--:|
 | `_frame_features`（Poly9+RegTree+zen+M9T） | 1.2s |
-| `_core_daily`（STAGE+garP） | 1.6s |
+| STAGE（`calc_stage_frame`：compact + `CLT_GRP_CHK` + Garident） | 待实测（2026-11-18 改回算法） |
 | Prophet（60min 拟合） | 1.0s |
 | ChipDist（960 根日线窗口，逐日，adj 缩放） | ≈0.9s / 天 / 码 |
 | **合计** | **≈3.8s / 天 / 码** + 2s/码 |
@@ -213,17 +217,19 @@ ChartScan 单独写（attach 时改名 `Cls60/Conf60/Coord60/ChartScaned60`）�
 |:--|:--|:--|
 | **CZSC（60/15min zen）** | `zDLagR` `zPLagR` `zDLagMinR` `zPLagMinR` | ✅ 契约 |
 | **CZSC 中枢计数** | `ZenPivotCnt` | ✅ 契约 |
-| **CZSC 中枢 lag**（`calc_pivot_timing_lag`） | `ZenPivotLag` | ✅ 契约 |
+| **CZSC 中枢 lag**（60min） | `ZenPivotLag` | ✅ 契约 |
+| **CZSC 中枢 lag（日）** | `ZenPivotLagMaj` | ✅ 日表；attach 映射到 60min features |
+| **CZSC 中枢 lag（15min）** | `ZenPivotLagMin` | ✅ 15min 表；attach 映射到 60min features |
 | CZSC 日/周 | `zDLagMajR` `zPLagMajR` `zDLagWekR` | ✅ 日表 |
 | **Renko** | `renkoSpriceD` `renkoLpriceD` `renkosBarLbD` `renkosBarUbD` `renkolBarLbD` `renkolBarUbD` `renkoSbar` `renkoLbar` `renkoBar` `renkoOpt` `renkosBarLag` `renkoLbarLag` `renkosBstLag` `renkoLboostLag` | ✅ 契约 |
 | **Poly9** | 原生 `poly9D` `poly9NorR`；日/周 `poly9MajD` `poly9NorMajR` `poly9WekD` `poly9NorWekR`；`poly9pwr3Maj`（日 norm） | ✅ 契约 |
 | **RegTree** | 原生 `rTrePrcD` `rTreLagR` `rTreSlopD`；日 `rTrePrcMajD` `rTreLagMajR` `rTreSlopMajD` | ✅ 契约 |
 | **Prophet** | 原生 `prophetLbD` `prophetUbD` `prophetClrNorm`；日 `prophetLbMajD` `prophetUbMajD` `prophetClrNormMaj` | ✅ 契约 |
-| **STAGE** | `stage`；伴随 `bstStgBf` `epStgBf` `garPD` `garPCount` `garPClr` `garPAnchor` `garSLag` | ✅ 契约 |
+| **STAGE** | `stage`（4.4 **算法移植**：`CLT_GRP_CHK` checkpoint，D81 更正）；伴随 `bstStgBf` `epStgBf` `garPD` `garPCount` `garPClr` `garPAnchor` `garSLag` —— **garPD 等仍以历史搬运值为准**（同一份 Garident 带可后续换算） | ✅ 契约 |
 | **M9T** | 原生 `m9t` `m9tLag`；日 `m9tMaj` `m9tMajR` `m9tLagMajR`；周 `m9tWekR` `m9tLagWekR` | ✅ 契约 |
 | **se** | `se` | ✅ 契约 |
 | **minor（15min）** | `AroUprsgLagMin` `1QUprLagMin`…`4QUprLagMin` `4QPwrlnMin` `4QPwrlnLedInBfMin` `4QPwrlnLedOutBfMin` `BSBuBfMin` `BSSelBfMin` `BSStarUpBfMin` `BSStarDwnBfMin` `MsLeadinVarMin` `MsLeadinEntryMin` `MsLeadinBfMin` `MsLeadinx3BfMin` `MsLeadinx5BfMin` | ✅ 契约 |
-| **ChipDist（日频）** | `cost5PrzD` `cost15PrzD` `cost85PrzD` `cost95PrzD`（960 根日线窗口，adj 缩放） | ✅ 契约（**日线循环内**计算；日表 ÷当日 close，60min ÷本 bar close） |
+| **ChipDist（日频）** | `cost5PrzD` `cost15PrzD` `cost85PrzD` `cost95PrzD`（960 根日线窗口，adj 缩放） | ✅ 契约（**日线循环内**计算；日表 ÷当日 close，60min ÷**as-of 收盘** —— 盘中 = 上一交易日，D82） |
 
 ### 已知缺口（待补）
 

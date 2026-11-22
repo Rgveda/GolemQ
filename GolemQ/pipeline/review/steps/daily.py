@@ -16,9 +16,11 @@ from GolemQ.analysis.timing import calc_event_timing_lag
 from GolemQ.analysis.timeseries import weekly_ohlc
 from GolemQ.analysis.zen import calc_zen_timing_lag
 from GolemQ.core.constants import AKA, FEATURES as FTR, FIELD as FLD
+from GolemQ.models.alias import LTT, ZEN
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, TIER_DAILY,
                                    slice_asof)
-from GolemQ.pipeline.review.contract import DAY_COLUMNS, DAY_SAMPLE_COLUMNS
+from GolemQ.pipeline.review.contract import (DAY_COLUMNS, DAY_SAMPLE_COLUMNS,
+                                             HOUR_WEEKLY_COLUMNS)
 
 
 def _last(series, default=np.nan):
@@ -206,6 +208,10 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
 
     day_rows, cold_rows, sample_rows = {}, {}, {}
     wk_cache = {}
+    # 日线版中枢 lag（`ZenPivotLagMaj`）：**逐目标滚动**，与 60min 同一因果口径。
+    from GolemQ.pipeline.review.steps.hour_extra import pivot_lag_by_day
+    day_piv_lag = (pivot_lag_by_day(day_all, sorted(need_dates), ctx.code)
+                   if day_all is not None else pd.Series(dtype=float))
     # ChipDist：日频 960 根窗口（D78），对每个 need_date 算当天 15:00 的值
     chip_abs = {}
     try:
@@ -241,27 +247,45 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
             wk_end = wkey - pd.Timedelta(days=1)
             wk_raw = slice_asof(day_all, wk_end, 2160)
             wk_feats = pd.DataFrame()
+            wk_pwrln = np.nan
             if len(wk_raw) > 0:
                 try:
                     wk = weekly_ohlc(wk_raw)
                     if len(wk) > 0:
                         wk_feats = _frame_features(wk, annual=52,
                                                    with_regtree=False)
+                        # 周线 4QPwrln：与其他周线指标同一趟、同一已完成周缓存
+                        from GolemQ.analysis.quadrant_jit import (
+                            calc_four_quadrant_boost)
+                        _wf = calc_four_quadrant_boost(
+                            ctx.code,
+                            features=(wk_feats.copy() if len(wk_feats)
+                                      else pd.DataFrame(index=wk.index)),
+                            ohlc_data=wk, annual=52)
+                        if (LTT.QUADRANT_POWERLINE in _wf.columns
+                                and len(_wf)):
+                            wk_pwrln = float(
+                                _wf[LTT.QUADRANT_POWERLINE].iloc[-1])
                 except Exception:    # noqa: BLE001
                     wk_feats = pd.DataFrame()
-            wk_cache[wkey] = (wk_raw, wk_feats)
-        wk_raw, wk_feats = wk_cache[wkey]
+            wk_cache[wkey] = (wk_raw, wk_feats, wk_pwrln)
+        wk_raw, wk_feats, wk_pwrln = wk_cache[wkey]
 
         # 日族 14 列：60min 行按日采样复用（用户 2026-10-30：算过就免算）
         # ⚠️ 同一 T 以前调两次 `_day_row`（F6）；两个字典共用同一份值即可。
         _chip = chip_abs.get(pd.Timestamp(T).normalize())
         _row = _day_row(day, feats, wk_raw, wk_feats, chip=_chip)
+        _row[ZEN.PIVOT_TIMING_LAG_MAJOR] = (
+            day_piv_lag.get(pd.Timestamp(T), np.nan)
+            if len(day_piv_lag) else np.nan)
         sample_rows[T] = _row
         if T in day_target_set:
             day_rows[T] = _row
         if T in cold_dates or T in prev_dates:
             cold_rows[T] = _coldstart_row(day, feats=feats)
 
+    if wk_cache:
+        ctx.outputs['_week_pwrln'] = {k: v[2] for k, v in wk_cache.items()}
     if day_rows:
         idx = pd.MultiIndex.from_tuples(
             [(t, ctx.code) for t in day_rows], names=['ts', 'code'])
@@ -306,6 +330,10 @@ def day_sample_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFra
         out.index = pd.MultiIndex.from_arrays(
             [pd.DatetimeIndex(pd.to_datetime(out.index.get_level_values(0))),
              [ctx.code] * len(out)], names=['ts', 'code'])
+        # 周线 4QPwrln：按「已完成周」取 `day_core` 的缓存值
+        _wp = ctx.outputs.get('_week_pwrln') or {}
+        out[LTT.QUADRANT_POWERLINE_WEEKLY] = [
+            _wp.get(_week_start(pd.Timestamp(T)), np.nan) for T in targets]
     return out
 
 
@@ -320,7 +348,8 @@ def build_daily_steps() -> List[FeatureStep]:
                     history='bars', warmup=832),
         # 60min 一体化行：Poly9/RegTree 复用日行计算结果（不重算）
         FeatureStep(name='day_sample', tier=TIER_DAILY, input_freq='day',
-                    output_family='60min', columns=DAY_SAMPLE_COLUMNS,
+                    output_family='60min',
+                    columns=DAY_SAMPLE_COLUMNS + HOUR_WEEKLY_COLUMNS,
                     func=day_sample_step, deps=('day_core',),
                     history='bars', warmup=832),
     ]

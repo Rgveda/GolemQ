@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from GolemQ.analysis.peak import (
-    calc_peak_point_v8, calc_peak_points, peak_status, thresholding_algo,
+    calc_peak_points, peak_status, thresholding_algo,
     thresholding_algo_py,
 )
 from GolemQ.core.constants import AKA, TREND_STATUS as ST
@@ -79,35 +79,6 @@ class TestJitMatchesPython(unittest.TestCase):
         y = np.array([1.0, 2.0])
         with self.assertRaises(IndexError):
             thresholding_algo_py(y, _LAG, _TH, _INF)
-
-
-class TestCalcPeakPointV8(unittest.TestCase):
-    def test_writes_the_peak_point_column(self):
-        y, _ = _series(2, n=80)
-        px = pd.DataFrame({'close': y})
-        out = calc_peak_point_v8(px)
-        self.assertIn(ST.PEAK_POINT, out.columns)
-        self.assertEqual(len(out), len(px))
-
-    def test_accepts_an_existing_features_frame(self):
-        """传 `features` 时**就地写列**（旧树就这么用的）。"""
-        y, _ = _series(3, n=80)
-        px = pd.DataFrame({'close': y})
-        feats = pd.DataFrame(index=px.index)
-        out = calc_peak_point_v8(px, feats)
-        self.assertIs(out, feats)
-        self.assertIn(ST.PEAK_POINT, feats.columns)
-
-    def test_values_are_in_plus_minus_one_and_zero(self):
-        y, _ = _series(4, n=200)
-        v = calc_peak_point_v8(pd.DataFrame({'close': y}))[ST.PEAK_POINT].values
-        self.assertTrue(set(np.unique(v)).issubset({-1.0, 0.0, 1.0}), np.unique(v))
-
-    def test_first_lag_points_are_zero(self):
-        """照抄旧实现：前 `lag` 个点恒为 0。"""
-        y, _ = _series(5, n=60)
-        v = calc_peak_point_v8(pd.DataFrame({'close': y}))[ST.PEAK_POINT].values
-        self.assertTrue(np.all(v[:_LAG] == 0))
 
 
 class TestCalcPeakPoints(unittest.TestCase):

@@ -1,8 +1,11 @@
 # coding:utf-8
 """**一次性**搬运用的 4.4 只读通道。
 
-⚠️⚠️ **本模块只允许被一次性搬运命令引用。运行时代码禁止 import 它。**
+⚠️⚠️ **本模块在 `tools/` 下 —— 运行时代码禁止 import 它。**
 （判据：`test_cases/test_no_quantaxis.py` 那类守卫的同一精神 —— 运行时只连 8.3。）
+
+2026-11-18 用户定：**除 `tools/` 类脚本外，`GolemQ/` 与 `examples/` 必须与 4.4 完全解耦**。
+因此本模块从 `GolemQ/core/migrate44.py` 移到 `tools/`，`DECISIONS.md` **D83**。
 
 为什么它又回来了（D33 的修正）
 ==============================
@@ -25,6 +28,13 @@ uri = mongodb://<host>:<port>
 ```
 """
 from __future__ import annotations
+
+import os
+import sys
+
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO not in sys.path:
+    sys.path.insert(0, _REPO)
 
 __all__ = ['mongo44_uri', 'client44', 'db44']
 

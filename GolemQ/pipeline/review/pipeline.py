@@ -14,8 +14,9 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import pandas as pd
 
@@ -24,7 +25,8 @@ from GolemQ.markets.StockCN.date_utils import GQ_util_last_trade_as_of
 from GolemQ.pipeline.base import BasePipeline, CodeResult
 from GolemQ.pipeline.steps import (FeatureStep, ReviewContext, StepRunner,
                                    TIER_DAILY, TIER_RUNTIME, target_times)
-from GolemQ.pipeline.review.contract import FAMILY_COLUMNS, LEGACY_RENAME
+from GolemQ.pipeline.review.contract import (FAMILY_COLUMNS, LEGACY_RENAME,
+                                             persist_check_columns)
 
 #: 三族；coldstart 列已合并进 60min，不再有独立族。
 DEFAULT_FAMILIES = ('day', '60min', '15min')
@@ -41,6 +43,47 @@ REVIEW_ANCHOR_15MIN = '2017-01-01'
 #: 与老树一致（日线 `last_day-2560d`；60/15min 默认 800 天）。
 #: 早于这个下界的数据只用来做暖机，不产生新行。
 TARGET_LOOKBACK_DAYS = {'day': 2560, '60min': 800, '15min': 800}
+
+
+def chunk_targets(targets_by_family: Dict[str, pd.DatetimeIndex],
+                  max_years: float = 1.0) -> Iterator[Dict[str, pd.DatetimeIndex]]:
+    """把三族目标按**日历年**切块（生成器），每块算完**立刻落库**。
+
+    起因（D88）：一个 review 从没跑过的码要一次性回填 800 天 × 三族
+    （day 1,700 / 60min 2,037 / 15min 8,145），实测约 **2.5 小时**，
+    撞单码护栏就**全丢**。按年切块后每块 ~30~40 分钟，块末即写；
+    中断最多丢一块，下次运行 `_targets` 只返回缺口，天然续跑。
+
+    :param targets_by_family: ``{family: DatetimeIndex}``
+    :param max_years: 每块最多跨几个日历年（``<=0`` 或 ``<=1`` 都按 1 年；
+        目标本来就不跨年时只产出**一块**，行为与切块前完全一致）
+
+    >>> import pandas as pd
+    >>> t = pd.DatetimeIndex(pd.to_datetime(['2024-06-03', '2025-02-10']))
+    >>> [list(c['day'].year) for c in chunk_targets({'day': t})]
+    [[2024], [2025]]
+    >>> [len(c['day']) for c in chunk_targets({'day': t}, max_years=0)]
+    [2]
+    """
+    fams = list(targets_by_family)
+    years = sorted({int(pd.Timestamp(t).year)
+                    for v in targets_by_family.values() if v is not None
+                    for t in v})
+    if not years or max_years is None or max_years <= 0 or len(years) <= 1:
+        yield targets_by_family
+        return
+    step = max(1, int(round(max_years)))
+    for k in range(0, len(years), step):
+        bucket = set(years[k: k + step])
+        out = {}
+        for fam in fams:
+            v = targets_by_family.get(fam)
+            if v is None or len(v) == 0:
+                out[fam] = v
+                continue
+            keep = [t for t in v if int(pd.Timestamp(t).year) in bucket]
+            out[fam] = pd.DatetimeIndex(keep)
+        yield out
 
 
 def as_of_bound(value) -> Optional[pd.Timestamp]:
@@ -75,11 +118,24 @@ class ReviewOptions:
     from_date: str = ''
     offset: str = ''
     verbose: bool = False
+    #: 单次算完并落库的**最大跨年数**（D88）。超过就按日历年切块：
+    #: 每块算完立刻写库，撞护栏最多丢一块，下次运行从缺口续跑。
+    #: ``0`` = 不切块（老行为）。
+    max_years: float = 1.0
 
 
-#: 单码超时。实测 60min 全量回填（800 天目标下界 + 逐日 Prophet）约 **36–40 分钟**；
-#: `BasePipeline` 默认 1800s 会在完成前把它判成 `timeout`。这里留 2 小时护栏。
-REVIEW_CODE_TIMEOUT = 2 * 60 * 60
+#: 单码超时 = **1.5 小时**（用户 2026-11-22 定）。
+#:
+#: 成本重估（同一轮优化之后）：一个 review 从没跑过的码要全量回填
+#: day 1,700 + 60min 2,037 + 15min 8,145 个目标，实测约：
+#:
+#: * `day_core`       1,700 天 × 0.79s ≈ 22 分钟（ChipDist 定容+数组直算 0.27s/天、
+#:   RegTree 接回 jit 0.04s/天、Prophet 0.66s/天）
+#: * `zen_snapshots`  2,037 目标 × 0.69s ≈ 23 分钟（含 `ZenOLSLag` 逐窗口 0.075s）
+#:
+#: 合计 ≈ **45~48 分钟**。护栏留 ~2 倍余量 ⇒ 90 分钟。超过它基本可以判定卡住了，
+#: 而不是"慢"；且 D88 ④ 的按年切块会保证最多丢一块（下次从缺口续跑）。
+REVIEW_CODE_TIMEOUT = 90 * 60
 
 
 class ReviewPipeline(BasePipeline):
@@ -183,7 +239,10 @@ class ReviewPipeline(BasePipeline):
         return missing_targets(
             source_index, ctx.code, family, ctx.market_type, db,
             force=self.options.force, from_date=self.options.from_date,
-            recheck_days=self.options.recheck_days)
+            recheck_days=self.options.recheck_days,
+            # ⚠️ 判完成时**排除外部工具写的列**（`4QPwrlnWek`，见 contract
+            # 的 `PERSIST_EXCLUDE`）—— 否则「只有周线列的行」会被当成已算完。
+            columns=persist_check_columns(family))
 
     @staticmethod
     def _restrict_to_targets(frame: pd.DataFrame, targets) -> pd.DataFrame:
@@ -237,31 +296,57 @@ class ReviewPipeline(BasePipeline):
         # 再作为参数传给写口/水位函数。
         from GolemQ import get_active_market
         db = get_active_market().get_database()
+        # 分阶段耗时只进 `CodeResult.meta`，由 `Statistics` 的「Slowest」打印
+        t_fetch = time.monotonic()
         frames = self._fetch_frames(code, as_of,
                                     freqs=self._required_freqs(families))
+        fetch_s = time.monotonic() - t_fetch
         if not frames:
-            return CodeResult(code=code, status='no_data', market_type=market_type)
+            return CodeResult(code=code, status='no_data',
+                              market_type=market_type,
+                              meta={'fetch': fetch_s})
 
         ctx = ReviewContext(code=str(code), market_type=market_type,
                             frames=frames, as_of=as_of,
                             verbose=self.options.verbose)
         # ⚠️ 目标要为**所有族**准备：依赖闭包里的 15min step 即使不落库也要有 targets。
+        full = {}
         for fam in DEFAULT_FAMILIES:
             ctx.targets[fam] = self._targets(ctx, fam, db=db)
+            full[fam] = ctx.targets[fam]
 
         requested_tiers = {TIER_RUNTIME, TIER_DAILY}
-        outs = self._runner.run(ctx, self.steps, families=families,
-                                tiers=requested_tiers)
-        stats = {}
-        for fam, frame in outs.items():
-            if fam not in FAMILY_COLUMNS or fam not in families:
-                continue
-            frame = self._restrict_to_targets(frame, ctx.targets.get(fam))
-            got = self._write_family(ctx, fam, frame, db=db)
-            if got is not None:
-                stats[fam] = got
+        stats: Dict[str, Any] = {}
+        steps_s = write_s = 0.0
+        chunks = 0
+        for chunk in chunk_targets(full, self.options.max_years):
+            chunks += 1
+            ctx.targets = chunk
+            ctx.outputs = {}
+            t_steps = time.monotonic()
+            outs = self._runner.run(ctx, self.steps, families=families,
+                                    tiers=requested_tiers)
+            steps_s += time.monotonic() - t_steps
+            t_write = time.monotonic()
+            for fam, frame in outs.items():
+                if fam not in FAMILY_COLUMNS or fam not in families:
+                    continue
+                frame = self._restrict_to_targets(frame, ctx.targets.get(fam))
+                got = self._write_family(ctx, fam, frame, db=db)
+                if got is None:
+                    continue
+                # 分块写库要**累加**行数，不能后来块覆盖前面块的统计
+                if fam in stats:
+                    for k, v in got.items():
+                        if isinstance(v, int):
+                            stats[fam][k] = stats[fam].get(k, 0) + v
+                else:
+                    stats[fam] = dict(got)
+            write_s += time.monotonic() - t_write
         return CodeResult(code=code, status='ok', result=stats,
-                          market_type=market_type)
+                          market_type=market_type,
+                          meta={'fetch': fetch_s, 'steps': steps_s,
+                                'write': write_s, 'chunks': chunks})
 
 
 # --------------------------------------------------------------------------- #

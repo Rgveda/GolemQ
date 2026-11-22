@@ -27,7 +27,7 @@ from __future__ import annotations
 from typing import Dict, Tuple
 
 from GolemQ.core.constants import AKA, FIELD as FLD
-from GolemQ.models.alias import ZEN
+from GolemQ.models.alias import LTT, ZEN
 
 
 #: Renko 价格量纲列 → 落库比值列（`÷close`，D70）。生产端与回填工具共用这一份，
@@ -57,6 +57,8 @@ RENKO_DAY_COLUMNS: Tuple[str, ...] = (
 #: 见 `HOUR_EXTRA_COLUMNS`。
 DAY_COLUMNS: Tuple[str, ...] = (
     'zDLagMajR', 'zPLagMajR',
+    # 日线版中枢 lag（用户 2026-11-20）；60min 的 `ZenPivotLag` 在 HOUR_ZEN_COLUMNS
+    ZEN.PIVOT_TIMING_LAG_MAJOR,
     'zDLagWekR',
     'poly9MajD', 'poly9NorMajR',
     'poly9WekD', 'poly9NorWekR',
@@ -90,16 +92,19 @@ MINOR_COLUMNS: Tuple[str, ...] = (
 HOUR_ZEN_COLUMNS: Tuple[str, ...] = (
     'zDLagR', 'zPLagR', 'zDLagMinR', 'zPLagMinR',
     ZEN.PIVOT_TIMING_LAG,          # ZenPivotLag：距离开中枢的 lag（CZSC）
+    # ZenOLSLag：段内 LIS/LDS 的「波浪趋势」时序（2026-11-22 重新实现，D89）
+    ZEN.OLS_TIMING_LAG,
 )
 #: coldstart 子集（模型层实际读取、纯 K 线可算；不含东财/同花顺/massive）。
 #: 合并了旧 `reality_features` 的日尺度列（`STAGE/BST/m9t`）。
 #: ⚠️ 旧 `M9T_LAG` / `m9tLag` **已删除**：库里全为 None、review 无生产者；
 #: 老树 REAL 常量 `m9tLagR` 仅保留定义，不落库（D67）。
-#: **stage 族**（用户 2026-11-16 定：**从 4.4 旧库搬运**，新树不再重算）。
-#: ⚠️ 两条重算链（日线 coldstart / 60min `calc_stage_frame`）都已废弃（用户
-#: 2026-11-16：「算法有重大隐患」）。本表是 **read-only 契约**：`tools/migrate_stage_from44.py`
-#: 从 4.4 的 `stock_ta_reviews` 搬 `stage`，并把 `GAR_P` 绝对价带转成 `garPD` 比值；
-#: `bstStgBf/epStgBf` 由 `reality_attach` 用 `garPD → garP` 现算，**不落库**。
+#: **stage 族**（用户 2026-11-18 更正 D81）：**搬 4.4 的算法**，不是搬它的行。
+#: `stage` 由 review 的 `analysis/stages.py::calc_stage_frame`（4.4
+#: `calc_blh_ground_zero_anchor` + `calc_cluster_garident_stages`）重算；
+#: 历史存量仍是 2026-11-16 一次性对拍时落的值（同源算法，可用于校验）。
+#: `garPD/garPAnchor/garPCount/garPClr` 目前仍以历史搬运值为准，后续再从同一份
+#: Garident 带换算；`bstStgBf/epStgBf` 由 `reality_attach` 用 `garPD → garP` 现算、**不落库**。
 STAGE_COLUMNS: Tuple[str, ...] = (
     'stage',
     'bstStgBf', 'epStgBf',
@@ -116,6 +121,46 @@ COLDSTART_COLUMNS: Tuple[str, ...] = (
 #: `se` = 60min 收盘价的样本熵（15:00 日频、最后 ≤2160 根、round 3，盘内因果 ffill）；
 #: `ZenPivotCnt` = 截至当前 bar 已确认的缠论中枢个数（`causal_pivot_count`）。
 HOUR_EXTRA_COLUMNS: Tuple[str, ...] = (AKA.SAMPLE_ENTROPY, ZEN.PIVOT_COUNT)
+
+#: `stage`：**4.4 算法移植**后由 review 重算（2026-11-18 修正 D81 ——
+#: 用户要的是搬 4.4 旧树的算法，不是搬它落库的 STAGE 行）。
+#: 算法入口 `analysis/stages.py::calc_stage_frame`（`CLT_GRP_CHK` + Garident 带）。
+HOUR_STAGE_COLUMNS: Tuple[str, ...] = ('stage',)
+
+#: ChipDist 的 `RETURN_COST5` + 化简版 `COST5_UPRISING_BEFORE`（D85）。
+#: `RetCost5` 来自 **60min 全帧一次** ChipDist；`cost5UprBf` 是 `Timeline_duration`。
+HOUR_COST5_UPRISING_COLUMNS: Tuple[str, ...] = (
+    AKA.RETURN_COST5, AKA.COST5_UPRISING_BEFORE)
+
+#: 周线派生列（用户 2026-11-21）：`4QPwrlnWek` 由周线 OHLC 算、映射到 60min。
+HOUR_WEEKLY_COLUMNS: Tuple[str, ...] = (LTT.QUADRANT_POWERLINE_WEEKLY,)
+
+#: **判「这一行算不算已持久化」时要排除的列**：它们由别的工具单独写，
+#: 不代表 review 真跑过。
+#:
+#: ⚠️ 2026-11-22 实测：`tools/backfill_quad_pwrln_wek.py` 给 2018-01~2024-07
+#: 补了 3,752,516 行**只有 `4QPwrlnWek`** 的 15:00 行；而
+#: `persistence.persisted_keys` 的判据是「契约里**任意一列**非空」⇒ 这些行
+#: 被当成"已算完"，**回填到 2024 年以前时那些 bar 会被静默跳过**。
+#: 当前 800 天窗口（2024-09 起）还没踩到，属于等着爆炸的地雷。
+PERSIST_EXCLUDE: Dict[str, Tuple[str, ...]] = {
+    'day': (),
+    '60min': HOUR_WEEKLY_COLUMNS,
+    '15min': (),
+}
+
+
+def persist_check_columns(family: str) -> Tuple[str, ...]:
+    """该族参与「是否已持久化」判定的列（已剔除 `PERSIST_EXCLUDE`）。
+
+    >>> '4QPwrlnWek' in persist_check_columns('60min')
+    False
+    >>> persist_check_columns('60min') == tuple(
+    ...     c for c in FAMILY_COLUMNS['60min'] if c != '4QPwrlnWek')
+    True
+    """
+    drop = set(PERSIST_EXCLUDE.get(family, ()))
+    return tuple(c for c in FAMILY_COLUMNS.get(family, ()) if c not in drop)
 
 #: ChipDist 的筹码成本列（D78 补全）：只落 **÷close 的比值**（D49）；
 #: 绝对值由 attach 的 `restore_price_columns` 乘回。ChipDist **前缀稳定**，
@@ -144,6 +189,9 @@ HOUR_NATIVE_COLUMNS: Tuple[str, ...] = (
 #: + Poly9/RegTree（复用日行，按日采样）。
 HOUR_COLUMNS: Tuple[str, ...] = (HOUR_ZEN_COLUMNS + MINOR_COLUMNS +
                                  COLDSTART_COLUMNS + HOUR_EXTRA_COLUMNS +
+                                 HOUR_STAGE_COLUMNS +
+                                 HOUR_COST5_UPRISING_COLUMNS +
+                                 HOUR_WEEKLY_COLUMNS +
                                  RENKO_DAY_COLUMNS + DAY_SAMPLE_COLUMNS +
                                  HOUR_NATIVE_COLUMNS)
 
@@ -151,7 +199,8 @@ HOUR_COLUMNS: Tuple[str, ...] = (HOUR_ZEN_COLUMNS + MINOR_COLUMNS +
 #: 2 个 zen + 17 个 minor。
 #: ⚠️ 60min 的 `zDLagMinR/zPLagMinR` 由 `zen_snapshots` 产出；15min 表由
 #: `minute15_aligned` 从同一份 60min 对齐结果取样，**不再单独重算**。
-MINOR_15MIN_COLUMNS: Tuple[str, ...] = ('zDLagMinR', 'zPLagMinR') + MINOR_COLUMNS
+MINOR_15MIN_COLUMNS: Tuple[str, ...] = (
+    'zDLagMinR', 'zPLagMinR', ZEN.PIVOT_TIMING_LAG_MINOR) + MINOR_COLUMNS
 
 #: 15min 族：minor 信号的原生频率版本（CV 列归 ChartScan，不在契约内）。
 MIN15_COLUMNS: Tuple[str, ...] = MINOR_15MIN_COLUMNS

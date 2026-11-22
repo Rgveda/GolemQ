@@ -16,10 +16,11 @@
 | `golemq_stock_cn` | `GOLEMQ_STOCK_CN`（`markets/StockCN/__init__.py`） | **行情主库**：day / 1/5/15/30/60min + reality_feat + 参考数据 |
 | `golemq_stock_cn_realtime` | `GOLEMQ_STOCK_CN_REALTIME` | **滚动实时库**：`realtime_YYYY-MM-DD`，只保留最近若干天（实测 2026-10-27 时剩 10-16 ~ 10-27） |
 | `golemq` | `core.settings.GOLEMQ` | 框架运维：心跳 / 签到 / 关注列表 / 订单 |
-| `quantaxis`（4.4，`:27017`） | `core.migrate44.db44('quantaxis')` | **4.4 原始行情源**：`stock_min`（单集合按 `type` 存所有频率）、`stock_day`、`stock_adj`、`stock_xdxr` |
-| `golemq`（4.4） | `core.migrate44.db44('golemq')` | **4.4 旧 review 特征**：`stock_reality_feat_{day,60min,15min}` 等（**未整体迁到 8.3**） |
+| `quantaxis`（4.4，`:27017`） | `tools.migrate44.db44('quantaxis')` | **4.4 原始行情源**：`stock_min`（单集合按 `type` 存所有频率）、`stock_day`、`stock_adj`、`stock_xdxr` |
+| `golemq`（4.4） | `tools.migrate44.db44('golemq')` | **4.4 旧 review 特征**：`stock_reality_feat_{day,60min,15min}` 等（**未整体迁到 8.3**） |
 
-⚠️ 4.4 通道**只读、只服务一次性搬运**（D33 修正 / D34），运行时代码禁止 import。
+⚠️ 4.4 通道**只读、只服务 `tools/` 脚本**（D33 修正 / D34 / **D83**）；
+`GolemQ/` 与 `examples/` **禁止 import 或自连 4.4**（守卫 `test_no_44_runtime.py`）。
 
 ---
 
@@ -97,6 +98,12 @@
    这是口径修正，不是回归。
 6. **复权是读时动作**：DB 里的 OHLC 是 bfq；同一根 bar 用 `if_fq='qfq'`
    读出来数值不同。比较「库 vs 接口」前先对齐复权口径。
+7. **`*_reality_feat_*` 是特征表，行可以稀疏**（**D87**）：库里
+   `2021-11-23 15:00` 的 60min 特征行只有 16 个字段、**没有 close/open**。
+   所以「给某天补一根只有 `4QPwrlnWek` 的 15:00 行」是合法形态，不是污染
+   行情 —— 2026-11-21 按此补了 3,752,516 行（2018-01~2024-07）。
+   覆盖爬坡：2021-11-23 仅 1 码 → 2022-01-07 322 码 → 2022-06-16 4,279 码。
+   别把 `min(datetime)` 当成「全市场从这天起有数据」。
 
 ---
 
@@ -139,7 +146,7 @@ db['stock_60min'].find({'code': '000001'}).sort('ts', -1).limit(1)  # 最新
 4.4（只在一次性搬运脚本里用）：
 
 ```python
-from GolemQ.core.migrate44 import db44
+from tools.migrate44 import db44
 q = db44('quantaxis', serverSelectionTimeoutMS=3000)
 q['stock_min'].find({'code': '000001', 'type': '60min'}).sort('time_stamp', 1).limit(1)
 ```

@@ -48,6 +48,7 @@ from GolemQ.core.constants import (
 )
 # 老：GolemQ.fetch.kline.get_kline_price_v3
 #     → 新：**门面层已删**（2026-10-10），改经市场实例取。调用点见 `_read_ohlc`。
+from GolemQ.core.presentation import legacy_python_warning
 from GolemQ.core.market_registry import get_active_market
 # 老：GolemQ.fetch.StockCN.GQ_fetch_stock_ranking（读 4.4 的 stock_valuation/stock_ranking）
 #     → 新：**改读本树的 `stock_reality_feat_day`**（换手率两列就落在那儿）。
@@ -121,46 +122,6 @@ def _calcu_sin_jit(highT, lowT, avgT, volT, TurnoverRateT, minD, A):
         tmpChip[i] = s * (TurnoverRateT * A)  # 直接应用换手率系数
 
     return np.vstack((x, tmpChip))
-
-
-def _calcu_sin(dateT, highT, lowT, avgT, volT, TurnoverRateT, minD, A,
-               ChipList=None, Chip=None):
-    """
-    Original function with JIT optimized core calculation
-    """
-    if ChipList is None:
-        ChipList = {}
-    if Chip is None:
-        Chip = {}
-
-    # 使用JIT优化的核心计算
-    result = _calcu_sin_jit(highT, lowT, avgT, volT, TurnoverRateT, minD, A)
-
-    if result.shape[1] > 0:
-        prices = result[0]
-        tmpChip_values = result[1]
-
-        # 创建临时筹码字典
-        tmpChip = {}
-        for i in range(len(prices)):
-            tmpChip[prices[i]] = tmpChip_values[i]
-
-        # 衰减现有筹码
-        for price in list(Chip.keys()):
-            Chip[price] = Chip[price] * (1 - TurnoverRateT * A)
-
-        # 添加新筹码
-        for price in tmpChip:
-            if price in Chip:
-                Chip[price] += tmpChip[price]
-            else:
-                Chip[price] = tmpChip[price]
-
-    ChipList[dateT] = copy.deepcopy(Chip)
-
-    return ChipList, Chip
-
-
 @jit(float64[:, :](float64, float64, float64, float64, float64, float64),
      nopython=True, cache=True)
 def _calcu_jun_jit(highT, lowT, volT, TurnoverRateT, minD, A):
@@ -181,44 +142,6 @@ def _calcu_jun_jit(highT, lowT, volT, TurnoverRateT, minD, A):
     tmpChip = np.full(length, eachV * (TurnoverRateT * A))
 
     return np.vstack((x, tmpChip))
-
-
-def _calcu_jun(dateT, highT, lowT, volT, TurnoverRateT, A, minD,
-               ChipList=None, Chip=None):
-    """
-    Original function with JIT optimized core calculation
-    """
-    if ChipList is None:
-        ChipList = {}
-    if Chip is None:
-        Chip = {}
-
-    # 使用JIT优化的核心计算
-    result = _calcu_jun_jit(highT, lowT, volT, TurnoverRateT, minD, A)
-
-    if result.shape[1] > 0:
-        prices = result[0]
-        tmpChip_values = result[1]
-
-        # 衰减现有筹码
-        for price in list(Chip.keys()):
-            Chip[price] = Chip[price] * (1 - TurnoverRateT * A)
-
-        # 添加新筹码
-        for i in range(len(prices)):
-            price = prices[i]
-            chip_value = tmpChip_values[i]
-
-            if price in Chip:
-                Chip[price] += chip_value
-            else:
-                Chip[price] = chip_value
-
-    ChipList[dateT] = copy.deepcopy(Chip)
-
-    return ChipList, Chip
-
-
 @jit(nopython=True, cache=True)
 def _calculate_chip_distribution_jit(
     low_array, high_array, vol_array,
@@ -237,19 +160,36 @@ def _calculate_chip_distribution_jit(
     # 动态设置 max_chips 基于价格波动范围
     price_range = high_array.max() - low_array.min()
 
-    # Reasonable maximum for chip distribution
-    if price_range > 832:
-        max_chips = 500000
-    elif price_range > 262:
-        max_chips = 100000
-    elif price_range > 168:
-        max_chips = 50000
-    elif price_range > 83.2:
-        max_chips = 20000
-    elif price_range > 51.2:
-        max_chips = 10000
-    else:
-        max_chips = 50000  # 默认值
+    # 每个交易日的筹码分布按 `minD` 分箱，累计后最多 `price_range/minD` 档。
+    # ⚠️ 2026-11-22 之前这里是一张**严重过供**的阈值表：`price_range<=51.2`
+    # （绝大多数股票）一律给 50,000 档 —— 实测 601595 真实只需 3,690 档，
+    # 于是每天多分配 13.6 倍：953×(953×50,000×8B) ≈ 762MB/次，
+    # 光内存分配就把单日耗时推到 2s。改为按需 + 余量。
+    #
+    # ⚠️⚠️ 但「按需」在长尾上会**炸内存**：实测 688502（价格区间 622.9，
+    # minD=0.01）需要 78,364 档 × 898 天 × 8B × 2 个数组 ≈ **1.1GB/次**；
+    # review 开 36 个 worker 时，一个这样的码就能把机器内存打满 ⇒ loky worker
+    # 被杀 ⇒ `A worker stopped while some jobs were given to the executor`。
+    # 这就是 2026-11-22 那次「整轮降级」的根因（不是逻辑错误，是内存）。
+    # 现在加**内存预算**：两数组合计不超过 CHIP_ARRAY_BUDGET_MB；
+    # 若按需档数超预算，就**放大 minD**（分箱变粗）—— 保证整段价格轴仍被覆盖，
+    # 宁可个别价位的精度粗一点，也不能把 worker 干掉。
+    # ⚠️ 合并后的档数会略超 `price_range/minD`：每天的网格起点是当天的 low，
+    # 逐日并集的并集最多再多出 ~n_dates 个错位档（实测 688502 超了 9 档，
+    # 直接把 numba 的切片赋值撞成 `cannot assign slice of shape …`）。
+    # 留 10% + 128 档余量。
+    _budget = 256 * 1024 * 1024                  # 两个 float64 数组合计 256MB
+    max_by_mem = max(1000, int(_budget // max(1, n_dates * 8 * 2)))
+    # ⚠️ 余量要 **2 倍**：每天的网格起点是**当天自己的 low**（`x[i]=round(lowT+i*minD,2)`），
+    # 不同日期的网格相位不同，并集远不止 `span/minD` —— 实测 688502 就是
+    # 17,001 档的轴上并出 19,109 档（+12%），1.1 倍余量当场把 numba 的切片赋值撞爆。
+    need_chips = int(price_range / minD * 2.0) + 128
+    if need_chips > max_by_mem:
+        # 放大箱宽（分箱变粗），让「整段价格轴 ×2 余量」落进预算内 ——
+        # 宁可个别价位精度粗一点，也不能让 worker 因 OOM 被杀。
+        minD = price_range * 2.0 / max(1.0, float(max_by_mem - 128))
+        need_chips = int(price_range / minD * 2.0) + 128
+    max_chips = int(min(max(need_chips, 1000), max_by_mem))
     chip_prices = np.zeros((n_dates, max_chips))
     chip_values = np.zeros((n_dates, max_chips))
     chip_counts = np.zeros(n_dates, dtype=np.int64)
@@ -340,62 +280,21 @@ def _calculate_chip_distribution_jit(
                 summed_values.append(current_sum)
 
                 n_unique = len(unique_prices)
+                if n_unique > max_chips:      # 硬保护：宁可截尾也不炸 worker
+                    n_unique = max_chips
                 chip_counts[i] = n_unique
-                chip_prices[i, :n_unique] = np.array(unique_prices)
-                chip_values[i, :n_unique] = np.array(summed_values)
+                chip_prices[i, :n_unique] = np.array(unique_prices[:n_unique])
+                chip_values[i, :n_unique] = np.array(summed_values[:n_unique])
         else:
             # No new chips, just carry forward previous chips with decay
             if prev_count > 0:
+                if prev_count > max_chips:    # 同上
+                    prev_count = max_chips
                 chip_counts[i] = prev_count
-                chip_prices[i, :prev_count] = prev_prices
-                chip_values[i, :prev_count] = prev_values
+                chip_prices[i, :prev_count] = prev_prices[:prev_count]
+                chip_values[i, :prev_count] = prev_values[:prev_count]
 
     return chip_prices, chip_values, chip_counts
-
-
-def _calculate_chip_distribution(date, low, high, vol, TurnoverRate, avg,
-                                 minD=0.01, flag=1, AC=1):
-    """
-    Original function interface with JIT optimized backend
-    Maintains dictionary interface for compatibility
-    """
-    # Convert to numpy arrays for JIT processing
-    low_array = np.array(low)
-    high_array = np.array(high)
-    vol_array = np.array(vol)
-    TurnoverRate_array = np.array(TurnoverRate)
-    avg_array = np.array(avg)
-
-    # Use JIT optimized version
-    chip_prices, chip_values, chip_counts = _calculate_chip_distribution_jit(
-        low_array, high_array, vol_array,
-        TurnoverRate_array, avg_array, minD, flag, AC
-    )
-
-    # Convert back to dictionary format for compatibility
-    ChipList = {}
-    Chip = {}
-
-    n_dates = len(date)
-    for i in range(n_dates):
-        date_key = date[i]
-        n_chips = chip_counts[i]
-
-        chip_dict = {}
-        for j in range(n_chips):
-            price = chip_prices[i, j]
-            value = chip_values[i, j]
-            chip_dict[price] = value
-
-        ChipList[date_key] = chip_dict
-
-        # Last day's chips become the current Chip
-        if i == n_dates - 1:
-            Chip = chip_dict
-
-    return ChipList, Chip
-
-
 @jit(float64[:](float64[:], int64[:], float64), nopython=True, cache=True)
 def _calcu_winner1_jit(p_array, chip_counts_array, target_percent):
     """
@@ -535,156 +434,57 @@ def _cost_calculation_jit(prices_array, values_array, target_percent):
     return result
 
 
-def _calcu_winner1(p, ChipList):
-    """
-    Original function with JIT optimized core calculation
-    """
-    # 准备数据用于JIT计算
-    n_dates = len(ChipList)
-
-    # 动态计算最大筹码数量
-    max_chips = 0
-    for chip_dict in ChipList.values():
-        if chip_dict:
-            max_chips = max(max_chips, len(chip_dict))
-
-    # 如果筹码数量太多，使用合理的上限
-    max_chips = min(max_chips, 10000)  # 最大10000个筹码点
-
-    # 创建数组存储筹码数据
-    prices_array = np.full((n_dates, max_chips), np.nan)
-    values_array = np.full((n_dates, max_chips), np.nan)
-    chip_counts = np.zeros(n_dates, dtype=np.int64)
-
-    # 按日期顺序提取筹码数据
-    sorted_dates = sorted(ChipList.keys())
-    for i, date_key in enumerate(sorted_dates):
-        chip_dict = ChipList[date_key]
-        if chip_dict:
-            # 将筹码数据转换为列表并排序，确保数据完整性
-            prices = list(chip_dict.keys())
-            values = list(chip_dict.values())
-
-            n_chips = min(len(prices), max_chips)
-            chip_counts[i] = n_chips
-
-            # 填充数组
-            for j in range(n_chips):
-                prices_array[i, j] = prices[j]
-                values_array[i, j] = values[j]
-
-    # 准备价格数组
-    if isinstance(p, pd.Series):
-        p_array = p.values
-    else:
-        p_array = np.full(n_dates, p)
-
-    # 使用JIT优化版本计算
-    Profit = _winner_calculation_jit(prices_array, values_array, p_array)
-
-    return Profit
-
-
-def _calcu_winner2(p, ChipList):
-    """
-    Original function with JIT optimized core calculation
-    """
-    # 准备数据用于JIT计算
-    n_dates = len(ChipList)
-
-    # 动态计算最大筹码数量
-    max_chips = 0
-    for chip_dict in ChipList.values():
-        if chip_dict:
-            max_chips = max(max_chips, len(chip_dict))
-
-    # 如果筹码数量太多，使用合理的上限
-    max_chips = min(max_chips, 10000)  # 最大10000个筹码点
-
-    # 创建数组存储筹码数据
-    prices_array = np.full((n_dates, max_chips), np.nan)
-    values_array = np.full((n_dates, max_chips), np.nan)
-    chip_counts = np.zeros(n_dates, dtype=np.int64)
-
-    # 按日期顺序提取筹码数据
-    sorted_dates = sorted(ChipList.keys())
-    for i, date_key in enumerate(sorted_dates):
-        chip_dict = ChipList[date_key]
-        if chip_dict:
-            # 将筹码数据转换为列表并排序，确保数据完整性
-            prices = list(chip_dict.keys())
-            values = list(chip_dict.values())
-
-            n_chips = min(len(prices), max_chips)
-            chip_counts[i] = n_chips
-
-            # 填充数组
-            for j in range(n_chips):
-                prices_array[i, j] = prices[j]
-                values_array[i, j] = values[j]
-
-    # 准备价格数组
-    p_array = np.full(n_dates, p)
-
-    # 使用JIT优化版本计算
-    Profit = _winner_calculation_jit(prices_array, values_array, p_array)
-
-    return Profit
-
-
-def _calcu_cost(date, N, ChipList):
-    """
-    Original function with JIT optimized core calculation
-    """
-    target_percent = N / 100.0
-
-    # 准备数据用于JIT计算
-    n_dates = len(ChipList)
-
-    # 动态计算最大筹码数量
-    max_chips = 0
-    for chip_dict in ChipList.values():
-        if chip_dict:
-            max_chips = max(max_chips, len(chip_dict))
-
-    # 如果筹码数量太多，使用合理的上限
-    max_chips = min(max_chips, 10000)  # 最大10000个筹码点
-
-    # 创建数组存储筹码数据
-    prices_array = np.full((n_dates, max_chips), np.nan)
-    values_array = np.full((n_dates, max_chips), np.nan)
-
-    # 按日期顺序提取筹码数据
-    sorted_dates = sorted(ChipList.keys())
-    for i, date_key in enumerate(sorted_dates):
-        chip_dict = ChipList[date_key]
-        if chip_dict:
-            # 将筹码数据转换为列表并排序，确保数据完整性
-            prices = list(chip_dict.keys())
-            values = list(chip_dict.values())
-
-            n_chips = min(len(prices), max_chips)
-
-            # 填充数组
-            for j in range(n_chips):
-                prices_array[i, j] = prices[j]
-                values_array[i, j] = values[j]
-
-    # 使用JIT优化版本计算
-    result = _cost_calculation_jit(prices_array, values_array, target_percent)
-
-    return result
-
-
 class ChipDistribution():
-    """
-    ChipDistribution class with Numba JIT optimized core functions
-    """
+    '''
+    ChipDistribution class with Numba JIT optimized core functions.
+    '''
 
     def __init__(self):
-        self.Chip = {}  # 当前获利盘
-        self.ChipList = {}  # 所有的获利盘
+        self._chip = None       # 当前获利盘（惰性：首次访问才建 dict）
+        self._chip_list = None  # 所有交易日的获利盘（惰性）
+        self._arr = None        # (prices, values) NaN 尾部填充的 2-D 数组
         self.adj = 1
+
+    # ---- 数组优先：dict 只是在**外部读到属性时**才建（2026-11-22 优化）----
+    # 一次 960 根窗口有 953 天 × 3,683 档 ≈ 3.5M 个元素；建成 dict 要 3.5M 次
+    # Python 插入（≈0.5s），`cost()`/`winner()` 再翻译回数组又要 3.5M 次
+    # （成本还 ×4，因为 4 个分位各建一遍）。全程留在 numpy 里就没这些来回。
+    @property
+    def ChipList(self):
+        if self._chip_list is None:
+            self._build_dicts()
+        return self._chip_list
+
+    @ChipList.setter
+    def ChipList(self, value):
+        self._chip_list = value
+
+    @property
+    def Chip(self):
+        if self._chip is None:
+            self._build_dicts()
+        return self._chip
+
+    @Chip.setter
+    def Chip(self, value):
+        self._chip = value
+
+    def _build_dicts(self):
+        """从 `self._arr` 惰性构建 `ChipList` / `Chip`（老接口兼容）。"""
+        self._chip_list, self._chip = {}, {}
+        if self._arr is None:
+            return
+        prices, values = self._arr
+        dates = self.data['date'].values
+        for i in range(len(dates)):
+            d = {}
+            for p, v in zip(prices[i], values[i]):
+                if np.isnan(p) or np.isnan(v) or v <= 0:
+                    continue
+                d[p] = v
+            self._chip_list[dates[i]] = d
+            if i == len(dates) - 1:
+                self._chip = d
 
     def get_data(self, code, data=None, offset='', verbose=False):
         if (data is None) or (len(data) > 1920):
@@ -906,9 +706,27 @@ class ChipDistribution():
         avg = self.data['avg'].values
         date = self.data['date'].values
         
-        self.ChipList, self.Chip = _calculate_chip_distribution(
-            date, low, high, vol, TurnoverRate, avg, minD=0.01, flag=flag, AC=AC
-        )
+        # 保留 JIT 的 2-D 数组（NaN 尾部填充），dict 版本按需再建
+        cp, cv, cc = _calculate_chip_distribution_jit(
+            np.ascontiguousarray(low, dtype=np.float64),
+            np.ascontiguousarray(high, dtype=np.float64),
+            np.ascontiguousarray(vol, dtype=np.float64),
+            np.ascontiguousarray(TurnoverRate, dtype=np.float64),
+            np.ascontiguousarray(avg, dtype=np.float64),
+            0.01, flag, AC)
+        # ⚠️ **原地**把 `chip_counts` 之后的尾巴写成 NaN。
+        # 之前用 `np.where(pad, nan, cp)`：pad 是 (n_dates, max_chips) 的 bool，
+        # 再加两个结果数组 ⇒ 峰值内存是 JIT 输出的 ~2.5 倍（688502 那种长尾
+        # 直接多出几 GB）。逐行切片赋值没有额外大数组。
+        for _i in range(cp.shape[0]):
+            _c = int(cc[_i])
+            if _c < cp.shape[1]:
+                cp[_i, _c:] = np.nan
+                cv[_i, _c:] = np.nan
+        self._arr = (cp, cv)
+        # 换手/窗口变了 ⇒ dict 缓存作废
+        self._chip_list = None
+        self._chip = None
         
     def winner(self, p=None):
         """
@@ -917,18 +735,12 @@ class ChipDistribution():
         if p is None:
             p = self.data['close']
         
-        if isinstance(p, pd.Series):  # 不输入默认close
-            Profit = list(_calcu_winner1(
-                p=p,
-                ChipList=self.ChipList,
-            ))
-        else:
-            Profit = list(_calcu_winner2(
-                p=p,
-                ChipList=self.ChipList,
-            ))
-            
-        return Profit
+        if self._arr is None:
+            raise RuntimeError(
+                'ChipDistribution.winner(): 先调 calcuChip() —— '
+                '旧的 dict 回落实现已于 2026-11-23 删除（D89 之后的清理）')
+        pv = np.asarray(p, dtype=np.float64)
+        return list(_winner_calculation_jit(self._arr[0], self._arr[1], pv))
 
     def lwinner(self, N=5, p=None):
         """
@@ -1009,9 +821,12 @@ class ChipDistribution():
         """
         date = self.data['date']
         
-        result = _calcu_cost(date=date, N=N, ChipList=self.ChipList)
-                    
-        return result*self.adj
+        if self._arr is None:
+            raise RuntimeError(
+                'ChipDistribution.cost(): 先调 calcuChip() —— '
+                '旧的 dict 回落实现已于 2026-11-23 删除（D89 之后的清理）')
+        return _cost_calculation_jit(
+            self._arr[0], self._arr[1], N / 100.0) * self.adj
 
     def calc_cost5_bootstrap(
         self, 

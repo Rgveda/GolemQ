@@ -44,10 +44,12 @@ ETF day 路由、水位幂等、目标行过滤）；coldstart 最小集 + Proph
 每码省约 28 秒）；
 落库/水位已改为 **Active Market 取 DB 实例 + 参数注入**；持久化检查见
 `pipeline/review/persistence.py`（按目标表已有 review 行选缺失 bar，不看侧表水位；
-目标下界 day 2560 / min 800 天）。878 条测试全绿。
+目标下界 day 2560 / min 800 天）。2026-11-16 全量 **1,125 OK（skipped=1）**。
 
-**下一步**：全量对拍分类（`compare_review_golden.py`）、coldstart `m9tBsl`
-（需 compact 特征链）、`--eval fast/etf/index/all` 回填；internal 入口的 `--review-runtime` 端到端冒烟。
+**下一步（2026-11-17 复核）**：全量对拍分类（`compare_review_golden.py`，**仍无运行记录**）、
+coldstart `m9tBsl`（仍卡 compact 特征链）、`--eval` 回填（股票只剩 **228** 码、ETF 仍
+**2/1,737**，见下「全市场覆盖缺口」）；internal 入口的 `--review-runtime` 端到端冒烟
+**仍无记录**（只有 mock 单测 `TestRuntimeNoWrites`）。
 ⚠️ `--eval` 是**全局唯一**的 scope 选项（`eval_scope`），与 `--review` / `--scan` /
 `--strategy` 组合；**不要再造** `--review-eval` 这类前缀变体（D58）。
 ⚠️ `--daily` **已删除**（语义不明）；`--review` == `--strategy review`。
@@ -78,17 +80,78 @@ fetch/attach 的还原值与重算分子逐值一致。做法是**复制上一�
 还原侧（2026-11-16 收尾）也已对齐：`PRICE_RATIO_COLUMNS` 补齐 `rTrePrcD/rTreSlopD`、
 删死名 `regtreePriceD`；帧首日盘中用日线兜底；close 为空时不写 NaN。
 
-#### Review 列覆盖度（2026-10-27 实测，见 D71/D72）
+#### Review 列覆盖度（**2026-11-17 全库实测**，见 D71/D72）
+
+口径：`stock_reality_feat_60min` 的 review 行（`zDLagR` 非空，**10,658,363** 行 / 5,356 码）。
 
 | 列 | 覆盖 | 结论 / 下一步 |
 |:--|--:|:--|
-| `stage` / `garPD` | 99.7% | 不用重跑；缺的多为短历史 / 定带失败 |
-| `poly9MajD` / `poly9WekD` | 100% | — |
-| `rTrePrcMajD` / `rTreSlopMajD` | 93% | 缺的是 `<450` 根 / 拟合失败，**历史不足补不了** |
-| `prophetLbD` 等 | **42%** | 需专门「只补 Prophet」的重型工具，或接受现状（**待你决定**） |
-| `se`（**60min 表**，D78） | 回填中 | 撤销 D74；`tools/backfill_hour_extra.py` 按码写 `*_reality_feat_60min`；2026-10-31 三机分片（`--shard i/3`）：Babel 1/3、Gilgamesh 2/3、Nightwatcher 3/3，1511/2434 码 |
-| `ZenPivotCnt`（**60min 表**，D78） | 回填中 | 与 `se` 同批；口径 = 截至当前 60min bar 的因果中枢数 |
-| `renkoSpriceD` 等 14 列 | **100%** | `tools/backfill_renko.py`（D72）已补齐 2,935,202 行 / 1,883 码，14 列缺失 0 |
+| `stage` / `garPD` | 99.8% | 不用重跑；缺的多为短历史 / 定带失败 |
+| `poly9MajD` / `poly9WekD` | 99.7% | — |
+| `rTrePrcMajD` / `rTreSlopMajD` | 95.3% | 缺的是 `<450` 根 / 拟合失败，**历史不足补不了** |
+| `prophetLbD` | **30.7%**（2,654/5,356 码） | `prophetLbMajD` 26.0%。**全码要么全有要么全无**（2024/25/26 各约 30%），不是按年丢失。需专门「只补 Prophet」的重型工具，或接受现状（**待你决定**） |
+| `se`（**60min 表**，D78） | ✅ 99.98% | 10,656,494 行 / 5,356 码；D74 已撤销，列只落 60min |
+| `ZenPivotCnt`（**60min 表**，D78） | ✅ 99.98% | 10,656,949 行 / 5,354 码；口径 = 截至当前 60min bar 的因果中枢数 |
+| `renkoSpriceD` 等 14 列 | 100% | `tools/backfill_renko.py`（D72）已补齐 2,935,202 行 / 1,883 码，14 列缺失 0 |
+
+> 2026-10-27 旧表里的 99.7 / 100 / 93 / 42 已过时；`se` / `ZenPivotCnt` 的
+> 「回填中」也已收口（2026-11-17 复核，见 worklog 同日「文档核对」）。
+> `stage` 自 **2026-11-18** 起由 review 按 **4.4 算法**重算（D81 更正），
+> 表中覆盖率仍是 11-17 存量口径；新 bar 要跑一轮 `--review` 才有。
+
+#### ~~`stage` 源断供~~ —— ✅ **2026-11-18 已修：改回「移植 4.4 算法」**
+
+**D81 的「从 4.4 搬落库行」是对用户意图的误读**（用户 2026-11-18：
+「我不是要 4.4 搬运落库数据，而是要搬运 4.4 旧树的算法」）。当时的症状：
+`stage` 非空行数 11-11 15,694 → 11-12/13 6,543 → 11-16 241 → 11-17 **0**，
+`STAGE_MODE` 从 11-16 起 NaN。
+
+**修复**（D81 顶部更正 + D83）：
+* `analysis/stages.py` 新增 `calc_cluster_checkpoints`（4.4
+  `calc_blh_ground_zero_anchor` 的 checkpoint 段，**不用 `iloc[::21]` 近似**）
+  与 `calc_stage_frame`（`CLT_GRP_CHK` → `calc_garident_stages`）；
+* `compact._base_frame` 补 `deaOLag` / `difOLag`，`_derive_major` 补
+  `POLYNOMIAL9_MAJOR`；
+* review 的 `build_hour_extra_frame(..., day=ctx.frame('day'))` 已产出 `stage`
+  并进 `contract.HOUR_STAGE_COLUMNS` / `ZEN_COLUMNS`；
+* 历史存量（1,337 万行）保留作对拍基准；`tools/migrate_stage_from44.py`
+  **降级为校验工具**，不再是数据源。
+
+**仍需做**：① 跑一轮 `--review` 把 11-14 之后的 `stage` 补上（当前库内最新只到
+11-13）；② 重跑 `--strategy mainstream --eval all` 刷新 `STAGE_MODE`。
+反弹统计见 worklog 2026-11-17「STAGE_MODE=-0.5 区间」。
+**2026-11-19 再次触发**（`STAGE_MODE=-0.5` + `MasPosOnhold=0` + `PosBottom=1`，
+`StageModeStreak=1`），为第 7 段（1 天，尚无后续数据）；18 天 / 7 段的完整统计见
+worklog 2026-11-21「STAGE_MODE=-0.5 事件区间复核」。
+
+#### `ZenPivotLag` 三条（D84，2026-11-20）—— ✅ 代码已接，历史待回填
+
+| 列 | 表 | 状态 |
+|:--|:--|:--|
+| `ZenPivotLag` | 60min | ✅ 原有 |
+| `ZenPivotLagMaj` | day | ✅ 新增（`pivot_stats(freq=D)`，逐目标滚动） |
+| `ZenPivotLagMin` | 15min | ✅ 新增（`pivot_lag_minor_window`，尾部 4 根） |
+
+* attach 三条都在（修了 `_attach_15min` 丢原样列的 bug）；
+* 因果性由 `test_pivot_lag_causal.py` 锁定（全量 vs 截断逐值相同）；
+* ⚠️ **checkpoint 000711 2026-01-22~23**：`ZenPivotLag` / `ZenPivotLagMaj`
+  > 63 ✅；`ZenPivotLagMin` **不转负**（CZSC 中枢仍 open）；真正突然转负的是已有
+  列 `zDLagMinR`（71→16→-1）。60min `ZenPivotLag` 实际首次转负 =
+  **2026-04-01**（-138），day = 2026-04-02（-44）。
+* **待做**：`ZenPivotLagMaj` / `ZenPivotLagMin` 的历史日/15min 行还没全市场回填；
+  全市场形态扫描（用 `zDLagMinR`）4,830 事件 / 67 个 60 日翻倍，详见 D84。
+
+#### `COST5_UPRISING_BEFORE`（D85）—— 纯函数已落，**未接 massive**
+
+* `analysis/cost5_uprising.py::calc_cost5_uprising_before`（L2 化简：只留
+  `RETURN_COST5` + `bstStgBf`/MACD 零轴交叉前两个分支）；doctest + 3 条单测；
+* `chip_cost_by_day(..., with_return_cost5=True)` 可带出 `RetCost5`（不乘 adj）；
+  `compact._derive_major` 补 `macdMaj`；
+* ⚠️ 原型（000711 2025-04-07）**不触发**：stage=2 ⇒ `bstStgBf` ~1,900，丢掉的
+  XGB/1K/Prophet 分支才是原式里能拉回条件的那部分；日线 `RetCost5` 也进不了
+  `(0.00618, 1.68)`；
+* 待你定：① 补 60min `RETURN_COST5` 生产者；② 放宽成 L1（只留 RetCost5 区间）；
+  ③ 补齐 XGB echo / 1K stage / Prophet（工作量大）。
 
 #### 全市场覆盖缺口（2026-11-01 查明，进行中）
 
@@ -141,6 +204,12 @@ tools/run_review_shard.py _review_missing_20261112.txt --pct-of-cores 19 --revie
 日志 `_review_missing_20261112.log`（各机本地 `C:\Users\azai\GQ_review_20261103`）。
 ⚠️ 该目录**没有 .git**，同步一律靠整包覆盖；远端 mtime 不能当版本依据。
 
+进度（**2026-11-17 复核**）：`stock_list` 5,583 码，有 review 行 **5,355**，缺 **228**
+（225 只日线 ≥250 根 —— 是真缺口、不是新股；2 只无日线：688845 / 920067；
+1 只短历史）。另有 1 个码在 review 表但不在码表（000016）。
+ETF 仍只有 **2/1,737** 码有 review（4,045 行）。
+下一步：这 228 只重跑 `--eval etc`；ETF 单独排 `--eval etf`。
+
 #### ChipDist 四列（2026-11-06 修复）
 
 * 根因：`hour_extra.chip_cost_by_day` 遇到 960 日窗口内**任一天**缺换手率就
@@ -157,6 +226,10 @@ tools/run_review_shard.py _review_missing_20261112.txt --pct-of-cores 19 --revie
   全库仍缺 **23** 个码：均为日线 <30 根或换手率 <30 天（如 001381 日线 5 根、
   920799 换手率仅 20 天），需先补 turnover 才能算 chip，不是回填进程问题。
   日志 `_chip_only_shard{1,2}.log`、`_chip_rescue61.log`。
+* 存量复核（**2026-11-17**）：60min 表仍缺 chip 的码 **385**（5,356 个 review 码中
+  4,971 有值）。样本全为 2026-11 新增 review 的新上市 / 短历史码（001232 / 301569 /
+  301583 等，日线 0–48 根）—— 不是回填进程问题，需先有足够日线才能算。
+  日表 chip 缺 **4,722,037 行**（见下 Gate 5）。
 * ~~**正在跑的 review 进程加载的是旧代码**，收尾后仍需 backfill 一遍。~~
   2026-11-11 已停止旧进程（PID 34036），同步 `pivot.py` 修复后重启。
   存量 `ZenPivotLag` **9,041,118 行全负（正值 0）**，涉及 **4,364 码**
@@ -169,41 +242,31 @@ tools/run_review_shard.py _review_missing_20261112.txt --pct-of-cores 19 --revie
   反弹策略回测（2024-08~2026-11）也在工作日志：**无限仓 avg 215 持仓不可行**；
   限仓 30~50 时 CAGR 约 **29.5%**（截断规则尚未定，见日志表）。
 
-#### 回填结束后第一件事：消除补数与 `--review` 的**编排**平行实现（2026-10-31 挂账）
+#### ~~消除补数与 `--review` 的编排平行实现（2026-10-31 挂账）~~ —— ✅ **已收口**
 
-两侧**算法本体已共用**（`pipeline/review/steps/hour_extra.py` 的
-`sample_entropy_by_day` / `pivot_stats` / `renko_by_day` / `native_by_day` /
-`chip_cost_by_day`，`zen.py` 与工具 import 同一组），但**映射编排有两份**：
-
-| 分叉点 | 管线侧 | 工具侧 |
-|:--|:--|:--|
-| se / 中枢 / Renko / 原生 → 每目标的 `searchsorted` + Renko ÷close | `steps/zen.py:101-132`（逐 T 内联） | `backfill_hour_extra.compute_frame`（向量化） |
-| 日族采样（15:00=当日、盘中=上一交易日） | `steps/daily.py::day_sample_step`（ctx `_day_sample_rows` 缓存） | `backfill_hour_extra.day_sample_frame`（直接读日表） |
-| ChipDist 取数 | `day_core_step`：ctx 日帧 + 换手率 | 工具：自己 `get_kline_price_v3` + 换手率 |
-
-当前两条路径**输出一致**（Gate 2 三码逐值对拍、Gate 3 五码 2027 行审计 0 异常），
-但属于 `CLAUDE.md` 警告的「平行实现只会分叉」。整改（**回填期间不动代码**）：
-
-1. `hour_extra.py` 抽 `hour_extra_block(ohlc60, targets, code)` →
-   `se + ZenPivotCnt + ZenPivotLag + Renko14 + Native11`，`zen.py` 与工具都调它；
-2. 抽 `day_sample_map(dates, rows, targets, close60, chip_abs)`：管线传 ctx 缓存、
-   工具读库后传进来，映射规则只剩一份；
-3. ChipDist 的取数差异保留（日表 chip 尚未回填完成），但都经 `chip_cost_by_day`；
-4. 验收：`tools/compare_review_golden.py` 对拍前后逐值不变，再提交。
+**2026-11-07 `c7b53f5` 已完成**：`hour_extra.py` 提供
+`build_hour_extra_frame` / `build_chip_frame` / `chip_ratios_from_abs` /
+`sample_day_frame`，review 与 `tools/backfill_hour_extra.py` **全部改调同一份**，
+两套 `searchsorted` 映射已删；ChipDist 取数差异保留、但同经 `chip_cost_by_day`。
+回归测试在 `test_review_chip.py` / `test_review_pipeline.py`。
+（2026-11-17 文档核对时发现本节仍挂在「未完成」，已更正。）
 
 #### 与上面同批待办（Gate 5，2026-10-31 挂账）
 
 1. **日表 ChipDist 4 列回填**：新建 `tools/backfill_day_chip.py`，复用
    `hour_extra.chip_cost_by_day`（960 日线窗口 + `adj` 缩放），逐码对已存在的
    review 日行算绝对成本 → ÷当日 close 写 `cost5/15/85/95PrzD`；
-   实测库里 **14/18 列有值，chip 4 列全缺**；
+   **2026-11-17 实测**：stock day 缺 **4,722,037 行**（review 7,734,337 /
+   有 chip 3,012,300），ETF day 2,492 行全缺；
 2. **日表清理**：跑 `backfill_hour_extra --unset-day --unset-day-renko`
-   （`$unset` `se` / `ZenPivotCnt` / Renko 14 列）—— 库中实测仍有
-   **3.8M 行**带这些列，D78 要求只在 60min 表；
-3. 顺序：60min 全量回填收尾 → 抽公共映射（对拍验收）→ chip 回填 → `$unset` → 提交。
-   （先抽映射，`backfill_day_chip.py` 才能直接复用同一份日采样/chip 映射。）
+   （`$unset` `se` / `ZenPivotCnt` / Renko 14 列）—— **2026-11-17 实测**仍有
+   `se` **3,806,255** 行 / `ZenPivotCnt` **3,804,589** 行 / Renko **3,806,384** 行
+   （stock day），D78 要求只在 60min 表；
+3. 顺序：60min 全量回填收尾 → 抽公共映射（**✅ 2026-11-07 `c7b53f5` 已完成**）
+   → chip 回填 → `$unset` → 提交。
+   （映射已共享，`backfill_day_chip.py` 可直接复用同一份日采样/chip 映射。）
 
-### 指标搬迁（`DECISIONS.md` D49 / **D50**）—— ✅ **四块全部收口**（③ 的编排按你的决定挂账）
+### 指标搬迁（`DECISIONS.md` D49 / **D50**）—— ✅ **四块全部收口**（原「③ 的编排」挂账已于 2026-11-07 `c7b53f5` 收口）
 
 | 步 | 内容 | 状态 |
 |:--|:--|:--|
@@ -428,15 +491,15 @@ mainstream-credits 等模型函数；牛股诊股数据也未搬。
 
 | 任务 | 内容 | 状态 |
 |:--|:--|:--|
-| **C2** | `zen_bt.py` 撮合按契约移植进 `engine.py` | ⛔ **需你先写策略实现**（`XGB_ECHO_TIMING_LAG` + `QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY`）—— 信号公式属策略侧，不猜（D7）|
+| **C2** | `zen_bt.py` 撮合按契约移植进 `engine.py` | ⛔ **需你先写策略实现**（`XGB_ECHO_TIMING_LAG` + `QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY`）—— 信号公式属策略侧，不猜（D7）。**2026-11-17 核对**：`portfolio/engine.py` 仍是骨架（`run()` → `NotImplementedError`），`strategy.py` 只有 docstring 示例 |
 | **A** | 5 个参考集合灌进 8.3 | **4/5** —— `financial` 已有 **182,769 行**（4.4 早搬完，见 worklog 的计数表注），但**停在 2020-03-31**；续数据须走 `tdxaidata`（要 field_list）|
 
-### 代码完成、等一个时间窗口验证
+### ~~代码完成、等一个时间窗口验证~~ —— ✅ **2026-11-17 已由实时库数据证实**
 
-| 任务 | 待验什么 | 决策 |
+| 任务 | 待验什么 | 结论 / 决策 |
 |:--|:--|:--|
-| **RT** | 开盘时段跑一次 `--sub l1_tencent`：8.3 出 `realtime_<今天>`、带 UTC-aware `ts`、读回来非空、`--purge-l1` 打得出来 | D10 |
-| **L1-AUDIT 收尾** | 两处浪费已改并单测过（单遍与两遍**逐值相同**）。开盘跑一次确认实时集合照常写入 | D46 |
+| **RT** | 开盘时段跑一次 `--sub l1_tencent`：8.3 出 `realtime_<今天>`、带 UTC-aware `ts`、读回来非空、`--purge-l1` 打得出来 | ✅ 实时库有 **24** 个 `realtime_*`，最新 `realtime_2026-11-17` **3,921,225** 行；样本 `ts` 为 UTC-aware（01:00Z = 北京 09:00）。`--purge-l1` **未跑**（会删真数据，按既有纪律不跑）。D10 |
+| **L1-AUDIT 收尾** | 两处浪费已改并单测过（单遍与两遍**逐值相同**）。开盘跑一次确认实时集合照常写入 | ✅ 同上：当日集合在写，两处改动后写入未断。D46 |
 
 ### 待你决定（不是 Bug，是取舍）
 
@@ -483,7 +546,7 @@ mainstream-credits 等模型函数；牛股诊股数据也未搬。
 | **L2-DEL** | **腾讯 L2 整条删除** + QMT 五档占位一并删（子集流、还比 L1 慢）。`GQSUBSCRIBER` 回到 2 键 | D47 |
 | **ETF/INDEX-L1** | **ETF 与指数进 L1 tick 流**：码表扩成 `stock ∪ etf ∪ index` = 7,878 只，一律带交易所前缀 | D48 |
 | **DOC-SPLIT** | 文档拆成「索引 + 一份决策一文件 + worklog」，`gen_docs_index.py` 守索引 | — |
-| **IND-PORT** | 三组指标搬迁（`BOOTSTRAP_STAGE_BEFORE` / Poly9 / Magic Nine Turns）+ 两表合并 | 🔶 **算法侧只剩 `2f`（Poly9 编排）**（`DECISIONS.md` **D49**）：常量补齐 ✅ / Garident STAGE ✅ / `rolling_poly9_v2` ✅ / M9T 核 ✅ / `mapower`+JIT ✅ / `TA_HMA` ✅ / 两列「背离」与废弃函数一并清除 ✅。⚠️ **第 4 步两表合并、第 5 步解 stub 还没动 —— 见下** |
+| **IND-PORT** | 三组指标搬迁（`BOOTSTRAP_STAGE_BEFORE` / Poly9 / Magic Nine Turns）+ 两表合并 | ✅ **全部收口**（`DECISIONS.md` **D49 / D50**）：常量 / Garident STAGE / `rolling_poly9_v2` / M9T 核 / `mapower`+JIT / `TA_HMA` / Poly9 编排（`2f`）/ 第 4 步两表合并 / 第 5 步解 stub 均已完成。⚠️ 本行原写「🔶 只剩 `2f`、第 4/5 步还没动」是过期状态，2026-11-17 核对时更正 |
 | **CV-PORT** | 4.4 的 ChartScan CV 检出结果搬进 8.3 六族（**1628.8 万行，丢弃 0**） | ✅ D51 |
 | **CV-ROUTE-FIX** | ChartScan 写库路由 4 处分叉（日族漏写 / 60min 索引错 / 60min 少一笔 / 15min 标记少一张） | ✅ D51 第四节，14 条用例钉住 |
 | **CV-CLI** | `--scan ChartScan` / `--server ChartScan` 进 CLI，**自动切 GolemAI env**（re-exec），围栏无豁免 | ✅ D51 五之二，18 条用例 |
@@ -502,7 +565,7 @@ mainstream-credits 等模型函数；牛股诊股数据也未搬。
 | **15MIN-ZEN** | 15min minor 补齐老树 `calc_zen_wavelet_reality_minor` 的 **19 列**（新增 `zDLagMinR/zPLagMinR`，用 `calc_zen_timing_lag`）；60min 的这两列仍由 `zen_snapshots` 产出 | ✅ worklog 2026-10-20 |
 | **REGTREE-RS** | 删除零读取的 `REGTREE_TREND_RS` 常量 + 4 处赋值；`TREND`/`RETURNS` 保留（内部依赖） | ✅ worklog 2026-10-20 |
 | **GAR-EP** | coldstart 输出 `EP_STG_BF` + `garP/garPCount/garPClr/garPAnchor/garSLag` 到 60min；`garP` 存比值带；历史未回填 | ✅ worklog 2026-10-20 |
-| **CN-COMMENT-AUDIT** | 千股千评只搬了 `TurnoverRate`；牛股诊股（`stock_diagnosis*`）与旧 `stock_moneyflow` **完全未搬**；新采集仅当日/近 7 日 | ⚠️ 见 worklog 2026-10-20 |
+| **CN-COMMENT-AUDIT** | 千股千评只搬了 `TurnoverRate`；牛股诊股（`stock_diagnosis*`）与旧 `stock_moneyflow` 完全未搬；新采集仅当日/近 7 日 | ⚠️ 采集已由 **D63** 并入 `--save tdx`（`crawler/diagnosis.py` + moneyflow）；**历史存量仍未搬**，新采集仍只有当日/近 7 日（2026-11-17 核对） |
 | **M9T-AUDIT** | raw+lag 四列齐全（`m9tMajR/m9tLagMajR/m9tWekR/m9tLagWekR`）；`m9tBsl/m9tBslLag/m9tBf/m9tSxBf/m9tDmy` 缺失，卡上游特征链 | ⚠️ worklog 2026-10-20 |
 | **POOLCOEF** | `--strategy poolcoef` 暂不能恢复：新 `models/poolcoef.py` 缺 `calc_stock_poolcoef_analysis`；需单独移植 `benchmark/poolcoef.py::workload` | ⏳ 待排期 |
 | **REVIEW-MODEL** | **模型说明** [`docs/review_model.md`](docs/review_model.md)：日线/60min/15min 三族、落库关系、互相映射 | 📌 接手 review 先读 |
@@ -537,6 +600,16 @@ mainstream-credits 等模型函数；牛股诊股数据也未搬。
 | **BOTTOM-ROOF** | `btmP`/`roofP` 是**绝对价**：`garPD`(比值)→还原`garP`(绝对)→取 band 首底/末顶；补老树常量、`stages.garident_bottom_roof`、attach 接线；**不落库** | ✅ **D76**，由用户更正 D49 的「同病」误记 |
 | **NAMING-AUDIT** | 列名伪驼峰：39 个老树真值全改（`mpwr3*`/`hmpwr12`/`lrgPrice`/`cciNorm`/`ma90Clr*`/`volNorm*`/`peak*`/`fin*`/`lastClose` 等），28 个标准名/已落库元数据保留；8.3 存量扫描 0 命中（4.4 只读不动） | ✅ **D77**，全量 1003 条测试 |
 | **EXAMPLES-RENKO-ASOF** | examples 的 Renko 图改读落库 `*_reality_feat_60min`（as-of）：`app_renko` 砖序 = 快照变化点；`app_pivot_renko{,_coef}` 非 60min 禁用 Renko；顺带修 `_attach_day` 的 ChipDist 列重叠（510300/000711） | ✅ 2026-11-03，全量 1029 条测试；详见 [`docs/worklog/2026-11.md`](docs/worklog/2026-11.md) |
+| **DECOUPLE-44** | **`GolemQ/` + `examples/` 与 4.4 完全解耦**：通道移到 `tools/migrate44.py`；删除运行时的换手率 / CV 存量 / `index_list` 搬运函数与 `--migrate-*`（只留 8.3→8.3 的 metadata merge）；守卫 `test_no_44_runtime.py`（AST） | ✅ **D83**，2026-11-18，全量 **1,127 OK（skipped=1）** |
+| **STAGE-ALGO** | **D81 更正**：`stage` 不搬 4.4 的行，改为移植 4.4 算法 —— `CLT_GRP_CHK` checkpoint + `calc_garident_stages`；review 重算并落库 | ✅ 2026-11-18（待补 11-14 之后的 bar + 重跑 mainstream） |
+| **PIVOT-LAG-3** | 60min `ZenPivotLag` + day `ZenPivotLagMaj` + 15min `ZenPivotLagMin` 三表落库，attach 全部映射到 60min features；因果性测试锁定 | ✅ **D84**，2026-11-20，1,131 测试；历史 Maj/Min 待回填 |
+| **COST5-UPRISING** | `COST5_UPRISING_BEFORE` 的 **L2 化简版**：`analysis/cost5_uprising.py`（纯函数 + 截断因果对拍）；`chip_cost_by_day` 可带出 `RetCost5`，`compact` 补 `macdMaj` | ✅ **D85**，2026-11-21；**未接 massive**，原型在 000711 2025-04-07 不触发 |
+| **WEK-BACKFILL-2018** | `tools/backfill_quad_pwrln_wek.py` 支持长区间回填：`--day-start`（默认 start−3000 自然日 ≈2050 交易日，**MA233 周线需要 ≈1165 根日线**，原来写死 2016 起会让 2018 年段系统性偏低 1~2 档）、日期轴改取日线表交易日历（massive 15:00 行只有 2022-06-16 起）、`--out` CSV；尾部截断周用**延伸日历**判「该周最后交易日」；`--min-weeks 233` 只算成熟码（原来 `len(day)<520` 闸让**面板随 `end` 变**，2022-10 之后 83 天 Med 不一致） | ✅ **D86**；用例 `test_cases/tools/test_quad_pwrln_wek.py` 9 条；60min `4QPwrlnWek` 写 **2,753,648 行** + `--synthetic-60min` 补 **3,752,516 行**（**D87**）；CSV `output/mas_quad_pwrln_wek_2018_2026.csv`（2018-01-02~2026-11-20，2,012 交易日，面板 2,226→4,615）；**massive 未写**（2018~2022-06 无行，按用户口径不插稀疏行） |
+| **MASSIVE-TIMING** | **模型说明** [`docs/massive_timing.md`](docs/massive_timing.md)：`MasPosOnhold`（`ds_conf×(1-uncertainty)`，`m_bear>0.618` 强制清仓）/ `STAGE_MODE` / `PosFull·PosReClear·PosBottom` / 周线 `4QPwrln` 共振；复跑 `tools/massive_timing_report.py` + `tools/masquad_bull_episodes.py`（用例 `test_cases/tools/test_masquad_bull_episodes.py`） | ✅ 2026-11-22；**四基准评估（沪深300/科创200/创业板/中证1000，中证2000 库里无数据用中证1000 替代）**：底带首日 20d 67~83%、`PosFullOnset` 60d 67~78%；周线「跨上 2.2」顶部警戒 20d 11~33%；**沪深300 上几乎无效、中小盘才有效**；`STAGE_MODE=-0.5` 7 段/18 天，20d 后失效 |
+| **ZEN-OLS-LAG** | `ZenOLSLag` **重新实现**（D89）：分段 = 60min `ZenPivotLag` 符号，段内 LIS/LDS 找波浪趋势，`in_pivot_marks=True`；峰点用 CZSC 分型（带确认时间 ⇒ 因果），**逐 target 2160 窗口**算（整帧 CZSC 有未来函数）；走 review 落库，不经 compact/mainstream | ✅ `analysis/zen_ols.py` + 10 条用例；`HOUR_ZEN_COLUMNS` 已含该列；**历史未回填**（review 跑到即算） |
+| **REVIEW-PERF** | ChipDist 与 RegTree 的 JIT 核查：ChipDist 的 JIT 核在跑但被**762MB/次的超额数组**+**3.5M 元素 dict 往返**拖慢（2.14→0.27s/天）；RegTree 的 jit 建树器**写了没接**，review 走的是 np.matrix 纯 Python 版（0.81→0.007s/次）。实测 `day_core` 59.6→11.8s、`zen_snapshots` 69.7→41.1s | ✅ **D88 ⑤⑥**；用例 `TestArrayFastPath` 3 条 + `test_regtree_builder.py` 3 条；全量回填外推 2.5h→45min；旧 Python 实现加**不可过滤** stderr 提醒（`presentation.legacy_python_warning`，防误用不删代码） |
+| **REVIEW-TIMEOUT** | `Slowest 1%` 里那些 7200s 的码：**不是数据不足**，是「review 从没跑过」的全量回填（day 缺 1,700 / 15min 缺 8,100+）。实测 `day_core` 3.97s/天（ChipDist 2.3 + Prophet 0.66 + _frame_features 1.05）、`zen_snapshots` 1.16s/目标 ⇒ 全新码约 **2.5 小时**。修了三处：①完成判据剔除外部列（`4QPwrlnWek`，真 bug，否则回填 2024 以前会静默漏算）②`raw_bars()` 向量化（`minor_features` -37%）③单码护栏 2h→3h ④**按年切块、块末落库**（`chunk_targets` 生成器 + `ReviewOptions.max_years=1`，切块 vs 一次性逐列验证一致）| ✅ **D88**；`test_persist_check_columns.py` 4 条；**未做**：ChipDist/Prophet/RegTree 逐日算法（需数值对拍，另立项） |
+| **STATS-SLOWEST** | `Statistics` 增「Slowest 1%」：按 **sum(各码耗时)** 算占比（并行下 sum≫墙钟）、慢码带状态标记与 `CodeResult.meta` 分阶段耗时（review 写 `fetch/steps/write`）；「深挖单个码」用 `python -m GolemQ.cli.internal --review-runtime --runtime-code` | ✅ 2026-11-21；用例 `test_cases/pipeline/test_pipeline_slowest.py` 4 条 |
 
 ---
 

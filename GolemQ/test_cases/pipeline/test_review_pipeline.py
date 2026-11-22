@@ -816,8 +816,11 @@ class TestPipelineInterrupt(unittest.TestCase):
         exited = []
 
         class _FakeParallel:
-            def __init__(self, n_jobs):
+            # ⚠️ 2026-11-22：`run_codes` 现在显式传 `batch_size=1`（进度条逐码），
+            # 桩必须接受这个关键字，否则走不到 KeyboardInterrupt 分支。
+            def __init__(self, n_jobs=None, batch_size=None):
                 self.n_jobs = n_jobs
+                self.batch_size = batch_size
 
             def __enter__(self):
                 return self
@@ -868,8 +871,11 @@ class TestPipelineInterrupt(unittest.TestCase):
                 return CodeResult(code=code)
 
         class _FakeParallel:
-            def __init__(self, n_jobs):
+            # ⚠️ 2026-11-22：`run_codes` 现在显式传 `batch_size=1`（进度条逐码），
+            # 桩必须接受这个关键字，否则走不到 KeyboardInterrupt 分支。
+            def __init__(self, n_jobs=None, batch_size=None):
                 self.n_jobs = n_jobs
+                self.batch_size = batch_size
 
             def __enter__(self):
                 return self

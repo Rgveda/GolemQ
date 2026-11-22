@@ -21,6 +21,7 @@ python -m unittest GolemQ.test_cases.test_doctests -v                     # 只�
 | `analysis/` | 指标算法、与老树逐值对拍的模块 | `GolemQ/analysis/**` |
 | `cli/` | 环境自检、banner、命令注册表 | `GolemQ/cli/**` |
 | `core/` | 常量 / 表现层 / 全树守卫 + **基础设施**（`agents/` `supervisor/` `gateway/`） | `GolemQ/core/**` 等 |
+| `tools/` | 回填 / 迁移脚本的口径（回看长度、周标签、成熟度门槛…） | `tools/**`（非包，用例里把 `<repo>/tools` 塞进 `sys.path`） |
 | 顶层 | `old_tree.py`（老树对拍夹具）、`run_tests.py`、`test_doctests.py` | — |
 
 ⚠️ **`old_tree.py` / `run_tests.py` / `test_doctests.py` 必须留在顶层** ——

@@ -13,7 +13,7 @@
     python tools/dump_review_golden.py --out GolemQ/test_cases/pipeline/fixtures
 
 4.4 通道只用于一次性搬运（`DECISIONS.md` D33 修正条 / D34）；
-**运行时代码禁止 import `core.migrate44`**，本工具也不被任何运行时路径引用。
+**运行时代码禁止 import `tools.migrate44`**（D83），本工具也不被任何运行时路径引用。
 
 输出
 ====
@@ -166,7 +166,7 @@ def main(argv=None) -> int:
     ap.add_argument('--out', default='GolemQ/test_cases/pipeline/fixtures')
     args = ap.parse_args(argv)
 
-    from GolemQ.core.migrate44 import db44
+    from tools.migrate44 import db44
     from GolemQ.markets.StockCN.symbol import is_stock_cn
     from GolemQ import get_active_market
 

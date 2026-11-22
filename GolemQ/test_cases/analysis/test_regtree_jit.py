@@ -103,65 +103,13 @@ class TestSplitSearchMatches(unittest.TestCase):
         self.assertIsNone(J.choose_best_split_branch_jit(np.asmatrix(price), 25, 10)[0])
 
 
-@unittest.skipUnless(_HAS_NUMBA, 'numba 不可用 —— jit 对拍跳过')
-class TestEndToEndMatches(unittest.TestCase):
-    """端到端：**离散列逐值相同**，连续列在浮点容差内。
-
-    容差取 `1e-8` 相对 —— 比实测的 5.4e-13 宽 5 个数量级，够稳；
-    但它**仍能抓住**真错误（叶子值返回标量那次的差是**整列量级**的）。
-    """
-
-    @classmethod
-    def setUpClass(cls):
-        cls.data, cls.feats = _make()
-        cls.a = R.calc_regtree_fractal_func(cls.data, features=cls.feats.copy(),
-                                            bar_limit=350, rate=25, dur=10)
-        cls.b = J.calc_regtree_fractal_jit(cls.data, features=cls.feats.copy(),
-                                           bar_limit=350, rate=25, dur=10)
-
-    def test_discrete_columns_are_bit_identical(self):
-        for col in (FLD.REGTREE_TREND, FLD.REGTREE_TIMING_LAG):
-            with self.subTest(col=col):
-                np.testing.assert_array_equal(np.asarray(self.a[col]),
-                                              np.asarray(self.b[col]))
-
-    def test_continuous_columns_within_tolerance(self):
-        for col in (FLD.REGTREE_PRICE, FLD.REGTREE_SLOPE):
-            with self.subTest(col=col):
-                x = np.asarray(self.a[col], dtype=float)
-                y = np.asarray(self.b[col], dtype=float)
-                m = ~(np.isnan(x) | np.isnan(y))
-                self.assertGreater(m.sum(), 0, '两边都全 NaN —— 夹具没覆盖到')
-                np.testing.assert_allclose(y[m], x[m], rtol=1e-8, atol=1e-8)
-
-
-@unittest.skipUnless(_HAS_NUMBA, 'numba 不可用 —— jit 对拍跳过')
-class TestSpeedup(unittest.TestCase):
-    """**加速要有数字**（用户口径）。这里只做**松**断言：CI 机器抖动不该让用例红。
-
-    实测 21.1×（端到端），这里只要求 **≥ 3×** —— 低于它说明 jit 没真的生效
-    （例如 `DISABLE_JIT=1`，那时 `regtree_jit_status()` 也看得出来）。
-    """
-
-    def test_jit_is_at_least_three_times_faster(self):
-        status = J.regtree_jit_status()
-        if status.get('disable_jit'):
-            self.skipTest('DISABLE_JIT 生效 —— 比速度没有意义：{}'.format(status))
-        data, feats = _make(n=300)
-        price = np.c_[np.arange(300, dtype=float), 100 + np.cumsum(np.random.RandomState(3).randn(300))]
-
-        def bench(fn, n=3):
-            best = 1e9
-            for _ in range(n):
-                t = time.time()
-                fn(np.asmatrix(price), 25, 10)
-                best = min(best, time.time() - t)
-            return best
-        J.predict_regression_tree_branch_jit(np.asmatrix(price), 25, 10)   # 预热编译
-        t_py = bench(R.predict_regression_tree_branch)
-        t_jit = bench(J.predict_regression_tree_branch_jit)
-        self.assertGreater(t_py / max(t_jit, 1e-9), 3.0,
-                           f'只快 {t_py / max(t_jit, 1e-9):.2f}×（py {t_py*1000:.1f}ms / jit {t_jit*1000:.1f}ms）')
+# ⚠️ 2026-11-23：`TestEndToEndMatches` / `TestSpeedup` 已删除 —— 它们对拍的是
+# `calc_regtree_fractal_func`（纯 Python 编排）vs `calc_regtree_fractal_jit`
+# （同一个编排 + jit builder）。用户定：旧树先后改进过多个版本，
+# **只保留最先进的 `calc_regtree_fractal_vXIs`**（float32 + `rTrePrcD` 比值 +
+# 前置段用 close 填），另两个直接抹掉。
+# jit ↔ 纯 Python 的等价性现在由 `test_regtree_builder.py` 钉住
+# （`_build_tree` vs `predict_regression_tree_branch`，含 NaN 场景）。
 
 
 class TestStatusWithoutNumba(unittest.TestCase):

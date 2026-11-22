@@ -54,7 +54,6 @@ __all__ = [
     'SNAPSHOT_BLOCKED_PREFIXES',
     'snapshot_universe',
     'save_refdata',
-    'save_index_list_from44',
     'refresh_stock_codes_cache',
     'refdata_status',
     'format_status',
@@ -640,63 +639,6 @@ def refresh_stock_codes_cache(verbose: bool = False, echo=None) -> dict:
             if diff:
                 head = ','.join(diff[:20]) + ('...' if len(diff) > 20 else '')
                 say(f'    {label}: {head}')
-    return out
-
-
-def save_index_list_from44(dry_run: bool = False, verbose: bool = True,
-                          echo=None) -> dict:
-    """把 4.4 的 `quantaxis.index_list` **补**进 8.3 的 `index_list`（**只补缺**）。
-
-    **为什么需要这一步**：`index_list` 在 4.4 里是 1291 行，迁移时**整张漏了**
-    （8.3 此前根本没有这张表），于是 `kline83._display_name` 对真指数一直回落成
-    代码 —— 用户 2026-10-11 实报「标的：301308（301308）」时顺带发现的。
-
-    现在 `--save tdx` 能从 pytdx 取到 **1221** 条（见
-    `pytdx_source.fetch_index_list`，零误选），但那 70 条**只在 4.4 里**的
-    指数（TDX 已下架）取不回来 —— 本函数就是补那一段。
-
-    ⚠️ **只补缺、不覆盖**（区别于 `save_refdata` 的 upsert）：
-    4.4 的 `pre_close` 是 2026 年那一版、早已过期，拿它盖掉 pytdx 刚取的新值
-    是净损失。只补缺还让本函数的**执行顺序无关** —— `--save tdx` 之前跑、
-    之后跑，结果一样。
-
-    :returns: ``{'read':…, 'written':…, 'exists':…, 'skipped':…}``
-    """
-    from GolemQ.core.migrate44 import db44
-    say = echo or print
-    coll = GOLEMQ_STOCK_CN['index_list']
-    have = {d['code'] for d in coll.find({}, {'_id': 0, 'code': 1})}
-    rows = list(db44('quantaxis').index_list.find({}, {'_id': 0}))
-    out = {'read': len(rows), 'written': 0, 'exists': 0, 'skipped': 0}
-    docs = []
-    for r in rows:
-        code = r.get('code')
-        if not code:
-            out['skipped'] += 1
-            continue
-        if code in have:
-            out['exists'] += 1
-            continue
-        # 键序与 `pytdx_source.TdxSource._row` 对齐；`source` 标明来路
-        docs.append({'code': str(code),
-                     'volunit': r.get('volunit'),
-                     'decimal_point': r.get('decimal_point'),
-                     'name': r.get('name'),
-                     'pre_close': r.get('pre_close'),
-                     'sse': r.get('sse'),
-                     'sec': r.get('sec') or 'index_cn',
-                     'source': 'quantaxis-4.4'})
-    if dry_run:
-        out['written'] = len(docs)
-        say('[index_list] 干跑：读 {} / 可补 {} / 已存在 {} / 丢弃 {}（【没有写库】）'
-            .format(out['read'], len(docs), out['exists'], out['skipped']))
-        return out
-    if docs:
-        coll.insert_many(docs, ordered=False)
-    out['written'] = len(docs)
-    if verbose:
-        say('[index_list] 4.4 补缺：读 {} / 写入 {} / 已存在 {} / 丢弃 {}'.format(
-            out['read'], out['written'], out['exists'], out['skipped']))
     return out
 
 

@@ -111,7 +111,14 @@
 | `D78` | 60min 一体化特征行 + 全量 as-of（撤销 D74） | 2026-10-30 | [decisions/D78.md](docs/decisions/D78.md) |
 | `D79` | Mainstream「全局智能仓位」移植：新树口径自洽，不逐值复刻 4.4 | 2026-11-01 | [decisions/D79.md](docs/decisions/D79.md) |
 | `D80` | QuadrantGear 特征改用 Apache Hamilton 列级 DAG | 2026-11-05 | [decisions/D80.md](docs/decisions/D80.md) |
-| `D81` | `stage` 权威源 = **4.4 搬运**；新树两条重算链全部删除 | 2026-11-16 | [decisions/D81.md](docs/decisions/D81.md) |
+| `D81` | `stage` 权威源 = **4.4 旧树的算法**（2026-11-18 更正；不是搬它的落库行） | 2026-11-16 | [decisions/D81.md](docs/decisions/D81.md) |
 | `D82` | 比值列（`*D` / `*_DUMMY`）的分母 = **分子所在快照的 as-of 收盘** | 2026-11-16 | [decisions/D82.md](docs/decisions/D82.md) |
+| `D83` | 4.4 旧库只允许 `tools/` 访问；`GolemQ/` 与 `examples/` 完全解耦 | 2026-11-18 | [decisions/D83.md](docs/decisions/D83.md) |
+| `D84` | 三条 `ZenPivotLag`（60min / day / 15min）与 000711 形态扫描 | 2026-11-20 | [decisions/D84.md](docs/decisions/D84.md) |
+| `D85` | `COST5_UPRISING_BEFORE` 的 L2 化简移植（先落纯函数，不接 massive） | 2026-11-21 | [decisions/D85.md](docs/decisions/D85.md) |
+| `D86` | 周线 `4QPwrlnWek` 回填口径：回看长度 / 周标签 / 成熟度门槛 | 2026-11-22 | [decisions/D86.md](docs/decisions/D86.md) |
+| `D87` | `stock_reality_feat_60min` 是**特征表**，允许插「只有特征列」的稀疏行 | 2026-11-22 | [decisions/D87.md](docs/decisions/D87.md) |
+| `D88` | review 单码超时的根因与三处修正 | 2026-11-22 | [decisions/D88.md](docs/decisions/D88.md) |
+| `D89` | `ZenOLSLag` 重新实现：按 `ZenPivotLag` 分段 + 段内 LIS/LDS | 2026-11-22 | [decisions/D89.md](docs/decisions/D89.md) |
 
 <!-- END GENERATED -->

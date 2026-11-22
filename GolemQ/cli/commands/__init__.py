@@ -76,11 +76,8 @@ register([
     # ⚠️ 放在 MONEYFLOW / FILL_TURNOVER **之后**：它是**只读报告**，
     # 跑在写路径后面才看得出刚补上的列
     metadata_align.METADATA_ALIGN,   # --metadata-align（只读覆盖率）
-    # —— 一次性搬运（连 4.4；`core/migrate44.py` 的唯一消费者）——
-    migrate.MIGRATE_TURNOVER,
-    migrate.MIGRATE_INDEX_LIST,
+    # —— 8.3 内部一次性合并（**不连 4.4**；4.4 只在 `tools/`，D83）——
     migrate.MIGRATE_METADATA_MERGE,
-    migrate.MIGRATE_REALITY_FEAT,
 ])
 
 __all__ = ['COMMANDS', 'Command', 'dispatch', 'no_arguments', 'pick',

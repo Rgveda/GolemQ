@@ -163,11 +163,15 @@ class TestMissingTurnoverRaises(unittest.TestCase):
 
 @unittest.skipIf(_OLD_CHIP is None, '老树 GolemQ_old/ 不在场，对拍跳过')
 class TestMatchesOldNonJit(unittest.TestCase):
-    """新 `ChipDistribution_jit` vs 老树**非 jit** `ChipDistribution.py`。
+    """**生产路径**（JIT 数组）vs 老树**非 jit** `ChipDistribution.py`。
+
+    2026-11-23 起，`ChipDistribution_jit` 里那套 dict 旧实现（`_calcu_cost` /
+    `_calcu_winner1/2` / `_calculate_chip_distribution`）已删除 —— 生产只走
+    「JIT 出 2-D 数组 → `cost()`/`winner()` 数组直算」。所以对拍对象也换成
+    **真正在跑的那条路**，否则测的是没人调用的死代码。
 
     实测（2026-10-21，60 天 / minD=0.01）：筹码字典逐键逐值一致（max diff 0），
-    `_calcu_winner1/2` 差 ≤2.6e-15，`_calcu_cost` 完全一致；
-    `_calculate_chip_distribution` **37.36 ms → 14.72 ms（2.5×）**。
+    winner 差 ≤2.6e-15，cost 完全一致。
     """
 
     def _inputs(self, n=60, seed=0):
@@ -180,44 +184,53 @@ class TestMatchesOldNonJit(unittest.TestCase):
         turn = rng.uniform(0.005, 0.03, n)
         return dates, low, high, avg, vol, turn, close
 
-    def _chips(self):
+    def _run(self):
         dates, low, high, avg, vol, turn, close = self._inputs()
-        old_chips = _OLD_CHIP._calculate_chip_distribution(
+        old_chips, _ = _OLD_CHIP._calculate_chip_distribution(
             dates, low, high, vol, turn, avg)
-        new_chips = _MOD._calculate_chip_distribution(
-            dates, low, high, vol, turn, avg)
-        return dates, close, old_chips, new_chips
+        # 生产路径：与 `chip_cost_by_day` / `return_cost5_by_frame` 同一入口
+        w = pd.DataFrame({
+            'date': dates, 'open': close, 'high': high, 'low': low,
+            'close': close, 'volume': vol, 'TurnoverRate': turn, 'avg': avg})
+        chip = ChipDistribution()
+        chip.data = w
+        chip.calcuChip(flag=1, AC=1)
+        return dates, close, old_chips, chip
 
-    def test_calculate_chip_distribution_matches(self):
-        _, _, old_chips, new_chips = self._chips()
-        self.assertEqual(list(old_chips[0]), list(new_chips[0]))
-        for day in old_chips[0]:
-            a, b = old_chips[0][day], new_chips[0][day]
+    def test_chip_list_matches(self):
+        """数组路径惰性建出的 `ChipList` 与老树逐键逐值一致。"""
+        dates, _, old_chips, chip = self._run()
+        new = chip.ChipList
+        self.assertEqual(sorted(new), sorted(old_chips))
+        for day in old_chips:
+            a, b = old_chips[day], new[day]
             self.assertEqual(set(a), set(b), day)
             for price in a:
                 self.assertAlmostEqual(a[price], b[price], places=12,
                                        msg=f'{day} {price}')
 
     def test_winner_and_cost_match(self):
-        dates, close, old_chips, new_chips = self._chips()
+        dates, close, old_chips, chip = self._run()
         p = pd.Series(close, index=dates)
-
-        a = _OLD_CHIP._calcu_winner1(p, old_chips[0])
-        b = _MOD._calcu_winner1(p, new_chips[0])
-        np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-12, equal_nan=True)
-
-        a = _OLD_CHIP._calcu_winner2(100.5, old_chips[0])
-        b = _MOD._calcu_winner2(100.5, new_chips[0])
-        np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-12, equal_nan=True)
-
-        a = _OLD_CHIP._calcu_cost(dates, 90, old_chips[0])
-        b = _MOD._calcu_cost(dates, 90, new_chips[0])
-        np.testing.assert_allclose(a, b, equal_nan=True)
+        np.testing.assert_allclose(
+            np.asarray(chip.winner(), dtype=float),
+            np.asarray(_OLD_CHIP._calcu_winner1(p, old_chips), dtype=float),
+            rtol=1e-12, atol=1e-12, equal_nan=True)
+        for N in (5, 15, 85, 95):
+            np.testing.assert_allclose(
+                np.asarray(chip.cost(N), dtype=float),
+                np.asarray(_OLD_CHIP._calcu_cost(dates, N, old_chips), dtype=float)
+                * chip.adj, equal_nan=True, rtol=1e-12, atol=1e-12,
+                err_msg=f'cost({N})')
 
 
 def test_performance():
     """命令行直接运行入口（保持原脚本用法）"""
     TestChipDistributionPerformance("test_performance").test_performance()
+
+
+if __name__ == "__main__":
+    test_performance()
 
 
 if __name__ == "__main__":

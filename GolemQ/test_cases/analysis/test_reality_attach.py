@@ -318,3 +318,32 @@ class TestAsofClose(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAttach15MinKeepsPivotLag(unittest.TestCase):
+    """15min 组里**不在 `_RENAME_15` 表**的列（`ZenPivotLagMin`）不能被丢掉。
+
+    历史 bug：`_attach_15min` 的 `keep` 只取 `_RENAME_15.values()`，
+    任何原样保留的列都会被静默丢弃 —— 用户 2026-11-20 要求三条 pivot lag
+    都要 attach 到 60min features，这条用例钉住它。
+    """
+
+    def test_non_renamed_column_survives(self):
+        from GolemQ.analysis.reality_attach import _attach_15min
+
+        feats = _features()
+        idx = pd.MultiIndex.from_tuples([
+            (pd.Timestamp('2026-01-08 15:00'), '600519'),
+            (pd.Timestamp('2026-01-09 10:30'), '600519'),
+            (pd.Timestamp('2026-01-09 15:00'), '600519'),
+            (pd.Timestamp('2026-01-12 10:30'), '600519'),
+            (pd.Timestamp('2026-01-12 15:00'), '600519'),
+        ], names=['datetime', 'code'])
+        r15 = pd.DataFrame({'ClsMin': ['Buy'] * 5,
+                            'ZenPivotLagMin': [1.0, 2.0, 3.0, 4.0, 5.0]},
+                           index=idx)
+        loaded = {}
+        out = _attach_15min(feats, r15, loaded)
+        self.assertIn('ZenPivotLagMin', out.columns)
+        self.assertIn('ZenPivotLagMin', loaded['15min'])
+        self.assertEqual(out['ZenPivotLagMin'].notna().sum(), len(feats))

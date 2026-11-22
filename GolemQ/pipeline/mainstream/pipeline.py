@@ -146,13 +146,9 @@ class MainstreamPipeline(BasePipeline):
         f60, f15, fd = self._fetch(code, as_of)
         return self._features_from_frames(code, f60, f15, fd)
 
-    def code_masks(self, code: str, as_of: Optional[pd.Timestamp] = None):
-        """单码 → `(ts, bull, bear)` 三个等长数组（只含可判定 bar）。
-
-        不可判定的 bar（缺 `QuadDwnRskLagMaj` / `zDLagD` 等）**不投票**，
-        与旧树的「NaN 落入 Ω」不同 —— 旧树 60min 特征行若存在，四列必有值；
-        这里缺值意味着数据不足，计入 Ω 会把"没数据"当成"看不清"，宁可剔除。
-        """
+    def code_masks_and_pwrln(self, code: str,
+                             as_of: Optional[pd.Timestamp] = None):
+        """单码 → `(ts, bull, bear, pwrln_major)`；`pwrln_major` 供 `MasQuadPwrlnMaj`。"""
         feat = self.code_features(code, as_of)
         if feat is None:
             return None
@@ -163,17 +159,29 @@ class MainstreamPipeline(BasePipeline):
         valid = np.isfinite(upr) & np.isfinite(ep) & np.isfinite(z)
         bull = valid & (upr < ep)
         bear = valid & (ep < upr) & (z < -1e-12)
-        return idx60.to_numpy(), bull, bear
+        pwrln = feat[LTT.QUADRANT_POWERLINE_MAJOR].to_numpy(dtype=float)
+        return idx60.to_numpy(), bull, bear, pwrln
+
+    def code_masks(self, code: str, as_of: Optional[pd.Timestamp] = None):
+        """单码 → `(ts, bull, bear)` 三个等长数组（只含可判定 bar）。
+
+        不可判定的 bar（缺 `QuadDwnRskLagMaj` / `zDLagD` 等）**不投票**，
+        与旧树的「NaN 落入 Ω」不同 —— 旧树 60min 特征行若存在，四列必有值；
+        这里缺值意味着数据不足，计入 Ω 会把"没数据"当成"看不清"，宁可剔除。
+        """
+        r = self.code_masks_and_pwrln(code, as_of)
+        return None if r is None else r[:3]
 
     # ------------------------------------------------------------------ #
     def run_code(self, code: str, **kwargs) -> CodeResult:
         try:
-            masks = self.code_masks(code, kwargs.get('as_of'))
-            if masks is None:
+            r = self.code_masks_and_pwrln(code, kwargs.get('as_of'))
+            if r is None:
                 return CodeResult(code=code, status='no_data')
-            ts, bull, bear = masks
+            ts, bull, bear, pwrln = r
             return CodeResult(code=code, status='ok',
-                              result={'ts': ts, 'bull': bull, 'bear': bear})
+                              result={'ts': ts, 'bull': bull, 'bear': bear,
+                                      'pwrln_major': pwrln})
         except Exception as exc:                    # noqa: BLE001
             return CodeResult(code=code, status='error',
                               error=f'{type(exc).__name__}: {exc}')
@@ -223,7 +231,7 @@ class MainstreamPipeline(BasePipeline):
         from GolemQ.pipeline.mainstream.snapshot import snapshot_frame
         db = get_active_market().get_database()
         cols = ('stage', 'poly9NorMajR', 'cost5PrzD', 'cost95PrzD',
-                'm9t', 'm9tLagMajR', 'm9tLagWekR')
+                'm9t', 'm9tLagMajR', 'm9tLagWekR', '4QPwrlnWek')
         # ⚠️ 是 **OR** 不是 AND：各列各取各的（`aggregate_snapshot` 内部再逐列
         # dropna）。用 AND 会把「只有 stage 没有 cost」的 bar 全丢掉 ⇒ 同一个
         # 契约列在不同时期来自不同聚合，且旧值因 write_nulls=False 不被覆盖。
@@ -275,12 +283,15 @@ class MainstreamPipeline(BasePipeline):
 
         total = np.zeros((3, len(timeline)), dtype=np.int32)
         T = len(timeline)
-        for r in results:
+        # 横截面 `4QPwrlnMaj` —— 每根 bar 的**中位数**（`MasQuadPwrlnMaj`）
+        pwrln_mat = np.full((len(results), T), np.nan, dtype=np.float32)
+        for _i, r in enumerate(results):
             if not r.ok or not isinstance(r.result, dict):
                 continue
             ts = np.asarray(r.result['ts'])
             bull = np.asarray(r.result['bull'], dtype=bool)
             bear = np.asarray(r.result['bear'], dtype=bool)
+            pwr = np.asarray(r.result.get('pwrln_major', ()), dtype=float)
             if len(ts) == 0:
                 continue
             pos = np.searchsorted(timeline, ts)
@@ -291,6 +302,20 @@ class MainstreamPipeline(BasePipeline):
             total[0] += np.bincount(p[bull[ok]], minlength=T)
             total[1] += np.bincount(p[bear[ok]], minlength=T)
             total[2] += np.bincount(p, minlength=T)
+            if len(pwr) == len(ts):
+                pwrln_mat[_i, p] = pwr[ok]
+
+        with np.errstate(invalid='ignore'):
+            import warnings as _w
+            with _w.catch_warnings():
+                _w.simplefilter('ignore', category=RuntimeWarning)
+                mas_pwrln_maj_med = np.nanmedian(pwrln_mat, axis=0)
+                _mat = pd.DataFrame(pwrln_mat)
+                _mode = _mat.mode(axis=0, dropna=True)
+                mas_pwrln_maj_mode = np.full(T, np.nan)
+                if len(_mode):
+                    mas_pwrln_maj_mode[np.asarray(_mode.columns)] = \
+                        _mode.iloc[0].to_numpy(dtype=float)
 
         res = calc_position_series(total[2], total[0], total[1])
         # 快照契约（一次 groupby(bar)）：STAGE_MODE / 各 MEDIAN / COMBO
@@ -340,6 +365,9 @@ class MainstreamPipeline(BasePipeline):
             'PosPad': res['m_omega'],
             'PosNegBsln': res['m_bear'],
             'MasPosOnhold': res['onhold'],
+            # 横截面 `4QPwrlnMaj` 的中位数 / 众数（用户 2026-11-21）
+            'MasQuadPwrlnMajMed': mas_pwrln_maj_med,
+            'MasQuadPwrlnMajMode': mas_pwrln_maj_mode,
             'DS_BelBull': res['bel_bull'],
             'DS_BelBear': res['bel_bear'],
             'DS_PlBull': res['pl_bull'],

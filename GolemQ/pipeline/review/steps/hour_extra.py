@@ -23,13 +23,15 @@ import pandas as pd
 
 from GolemQ.core.constants import AKA
 from GolemQ.core.constants import FIELD as FLD
+from GolemQ.models.alias import ZEN
 
 SE_WINDOW = 2160
 CZSC_MAX_BI = 512
 _DAY_END = dtime(15, 0)
 
 __all__ = ['SE_WINDOW', 'sample_entropy_by_day',
-           'renko_by_day', 'native_by_day', 'pivot_stats', 'chip_cost_by_day',
+           'renko_by_day', 'native_by_day', 'pivot_stats', 'pivot_lag_by_day',
+           'pivot_lag_minor_window', 'chip_cost_by_day',
            'build_hour_extra_frame', 'build_chip_frame', 'renko_ratio_frame',
            'asof_close_by_ts',
            'chip_ratios_from_abs', 'sample_day_frame']
@@ -185,12 +187,19 @@ def native_by_day(ohlc: pd.DataFrame, targets):
                          columns=list(HOUR_NATIVE_COLUMNS)))
 
 
-def pivot_stats(ohlc: pd.DataFrame, targets, code: str):
-    """每个目标：`ZenPivotCnt` + `ZenPivotLag`（2160 根 as-of 窗口）。
+def pivot_stats(ohlc: pd.DataFrame, targets, code: str,
+                freq=None, window: int = None,
+                snapshot_at_15: bool = True):
+    """每个目标：`ZenPivotCnt` + `ZenPivotLag`（**逐目标滚动窗口**，无未来函数）。
 
     `ZenPivotLag` = 距**出中枢**（`ZenPivotZD` 变 NaN）以来的 lag —— 与
     `ZenPivotCnt` 用同一批 CZSC 中枢，`causal_pivot_series` 展开成逐 bar 的
     ZD 后做事件 lag（用户 2026-10-30：中枢还有一个 Lag，别漏）。
+
+    :param freq: CZSC 频率（默认 `Freq.F60`）；日线版传 `Freq.D`。
+    :param window: 每个目标回看的 bar 数（默认 `SE_WINDOW=2160`）。
+    :param snapshot_at_15: 60min 目标取每个交易日 **15:00** 那根当快照；
+        日线帧每根 bar 本身就是一个快照，传 ``False``。
     """
     from GolemQ.analysis.pivot import (calc_pivots, causal_pivot_count,
                                        causal_pivot_series)
@@ -203,29 +212,23 @@ def pivot_stats(ohlc: pd.DataFrame, targets, code: str):
     try:
         from czsc import CZSC
         from czsc.objects import Freq, RawBar
+        freq = Freq.F60 if freq is None else freq
+        window = SE_WINDOW if window is None else int(window)
         ts = pd.DatetimeIndex(pd.to_datetime(ohlc.index.get_level_values(0)))
         cut = pd.DatetimeIndex(pd.to_datetime(targets))
-        bars15 = ts[ts.time == _DAY_END]
+        bars15 = ts[ts.time == _DAY_END] if snapshot_at_15 else ts
         if len(bars15) == 0:
             return pd.DatetimeIndex([]), empty
         pos = bars15.searchsorted(cut, side='right') - 1
         need = sorted(set(bars15[pos[pos >= 0]]))
-        bars_all = []
-        for i, (t, (_, row)) in enumerate(zip(ts, ohlc.iterrows())):
-            bars_all.append(RawBar(
-                symbol=code, dt=t, id=i, freq=Freq.F60,
-                open=float(row.get('open', np.nan)),
-                close=float(row.get('close', np.nan)),
-                high=float(row.get('high', np.nan)),
-                low=float(row.get('low', np.nan)),
-                vol=float(row.get('volume', row.get('vol', 0)) or 0),
-                amount=float(row.get('amount', 0) or 0),
-            ))
+        from GolemQ.analysis.zen import raw_bars
+        bars_all = raw_bars(ohlc, code, freq, strict=False,
+                            vol_keys=('volume', 'vol'))
         idx_of = {t: i for i, t in enumerate(ts)}
         days, rows = [], []
         for T in need:
             j = idx_of[T]
-            w = bars_all[max(0, j - SE_WINDOW + 1): j + 1]
+            w = bars_all[max(0, j - window + 1): j + 1]
             czsc = CZSC(w[:1], max_bi_count=CZSC_MAX_BI, verbose=False)
             conf: dict = {}
             prev = None
@@ -240,7 +243,7 @@ def pivot_stats(ohlc: pd.DataFrame, targets, code: str):
                               strict=True)
             cnt = int(causal_pivot_count(piv, pd.DatetimeIndex([T]),
                                          strict=True)[0])
-            dts = ts[max(0, j - SE_WINDOW + 1): j + 1]
+            dts = ts[max(0, j - window + 1): j + 1]
             zd = causal_pivot_series(piv, dts, strict=True)[0]
             lag = int(calc_event_timing_lag(
                 np.where(~np.isnan(np.asarray(zd, dtype=float)), 1, -1))[-1])
@@ -254,7 +257,69 @@ def pivot_stats(ohlc: pd.DataFrame, targets, code: str):
         return pd.DatetimeIndex([]), empty
 
 
-def chip_cost_by_day(day: pd.DataFrame, targets, code: str, turnover=None):
+def pivot_lag_minor_window(ohlc: pd.DataFrame, code: str) -> pd.Series:
+    """15min 窗口 → 逐 bar `ZenPivotLagMin`（CZSC 中枢 lag）。
+
+    ⚠️ 只保证**窗口尾部**（最近几根）的因果性：调用方 `minor_features`
+    每根 60min 目标传一个**截止 T** 的 15min 窗口，只取该窗口最后 4 根写
+    15min 表。窗口内部的早期 bar 会被最终 `bi_list` 的修订影响，但那些 bar
+    不落库（每个 15min bar 都会在它所属小时的 60min 目标里重新算一次）。
+    """
+    try:
+        from czsc import CZSC
+        from czsc.objects import Freq, RawBar
+        from GolemQ.analysis.pivot import (calc_pivots, causal_pivot_series)
+        from GolemQ.analysis.timing import calc_event_timing_lag
+    except Exception:               # noqa: BLE001
+        return pd.Series(dtype=float)
+    if ohlc is None or len(ohlc) < 30:
+        return pd.Series(dtype=float)
+    ohlc = ohlc[~ohlc.index.duplicated(keep='last')].sort_index()
+    ts = pd.DatetimeIndex(pd.to_datetime(ohlc.index.get_level_values(0)))
+    from GolemQ.analysis.zen import raw_bars
+    bars = raw_bars(ohlc, code, Freq.F15, strict=False,
+                    vol_keys=('volume', 'vol'))
+    try:
+        czsc = CZSC(bars[:1], max_bi_count=CZSC_MAX_BI, verbose=False)
+        conf: dict = {}
+        prev = None
+        for bar in bars[1:]:
+            czsc.update(bar)
+            if czsc.bi_list:
+                key = czsc.bi_list[-1].fx_b.dt
+                if key != prev:
+                    conf[key] = bar.dt
+                    prev = key
+        piv = calc_pivots(bi_list=list(czsc.bi_list), conf_map=conf, strict=True)
+        zd = causal_pivot_series(piv, ts, strict=True)[0]
+        lag = calc_event_timing_lag(
+            np.where(~np.isnan(np.asarray(zd, dtype=float)), 1, -1))
+        return pd.Series(np.asarray(lag, dtype=float), index=ts)
+    except Exception:               # noqa: BLE001
+        return pd.Series(dtype=float)
+
+
+def pivot_lag_by_day(day: pd.DataFrame, targets, code: str) -> pd.Series:
+    """日线 `ZenPivotLagMaj`：**逐目标滚动窗口**（与 60min 同一套 `pivot_stats`）。
+
+    ⚠️ **不能用「全帧一次 CZSC」**：实测 000711 在 2026-01-23 的值，
+    截断到当日算 **239**、全历史算 **-1** —— 最终 `bi_list` 会被后续 bar 改写，
+    属未来函数。这里每个目标只用 ``≤T`` 的最近 ``SE_WINDOW`` 根日线重建 CZSC，
+    与 60min `ZenPivotLag` 完全同一套因果口径。
+
+    :returns: 以目标日为索引的 lag Series；短历史/异常返回空 Series。
+    """
+    from czsc.objects import Freq
+    from GolemQ.models.alias import ZEN
+    days, df = pivot_stats(day, targets, code, freq=Freq.D,
+                           snapshot_at_15=False)
+    if len(days) == 0:
+        return pd.Series(dtype=float)
+    return pd.Series(df[ZEN.PIVOT_TIMING_LAG].to_numpy(dtype=float), index=days)
+
+
+def chip_cost_by_day(day: pd.DataFrame, targets, code: str, turnover=None,
+                     with_return_cost5: bool = False):
     """ChipDist：**960 根日线窗口**、逐日 as-of，返回成本价（绝对价）四列。
 
     ⚠️ 两个关键点（2026-10-30 实测）：
@@ -265,8 +330,10 @@ def chip_cost_by_day(day: pd.DataFrame, targets, code: str, turnover=None):
     2. 传 `len(data) > 1920` 会触发模块**重新取数**（`realtime=True`，
        含未来）—— 所以这里固定只传 960 根，绝不超过 1920。
     """
+    from GolemQ.core.constants import AKA
     from GolemQ.core.constants import FIELD as FLD
-    cols = ('cost5Prz', 'cost15Prz', 'cost85Prz', 'cost95Prz')
+    _cost_cols = ('cost5Prz', 'cost15Prz', 'cost85Prz', 'cost95Prz')
+    cols = _cost_cols + ((AKA.RETURN_COST5,) if with_return_cost5 else ())
     empty = pd.DataFrame(columns=list(cols))
     if day is None or len(day) < 30 or targets is None or len(targets) == 0:
         return pd.DatetimeIndex([]), empty
@@ -291,7 +358,6 @@ def chip_cost_by_day(day: pd.DataFrame, targets, code: str, turnover=None):
 
     from GolemQ.analysis.ChipDistribution_jit import (
         calc_stock_chip_distribution_jit)
-    from GolemQ.core.constants import AKA
     by_day = {}
     for key in sorted(need):
         w = day.loc[ts <= key].tail(960).copy()
@@ -319,7 +385,10 @@ def chip_cost_by_day(day: pd.DataFrame, targets, code: str, turnover=None):
             row = out.loc[(key, code)]
         except Exception:           # noqa: BLE001 单日失败留空
             continue
-        by_day[key] = {c: (row.get(c, np.nan) * adj) for c in cols}
+        # 成本价按 adj 还原；`RETURN_COST5` 是**对数比值**，量纲无关，不能再乘 adj。
+        by_day[key] = {c: (row.get(c, np.nan) * adj) for c in _cost_cols}
+        if with_return_cost5:
+            by_day[key][AKA.RETURN_COST5] = row.get(AKA.RETURN_COST5, np.nan)
     if not by_day:
         return pd.DatetimeIndex([]), empty
     days = pd.DatetimeIndex(sorted(by_day))
@@ -433,11 +502,56 @@ def renko_ratio_frame(ohlc: pd.DataFrame, targets, code: str) -> pd.DataFrame:
     return pd.DataFrame(rk, index=idx, columns=list(RENKO_DAY_COLUMNS))
 
 
-def build_hour_extra_frame(ohlc: pd.DataFrame, targets, code: str) -> pd.DataFrame:
-    """`se` + `ZenPivotCnt/Lag` + Renko 14 + 60min 原生 10 列的**唯一构造器**。
+def return_cost5_by_frame(ohlc: pd.DataFrame, code: str) -> pd.Series:
+    """**60min 全帧一次** ChipDist → `RETURN_COST5`（D85）。
+
+    ⚠️ 不逐日拆窗口：`calc_stock_chip_distribution_jit` 对 9,285 根 60min
+    实测 **1.1s**；逐日 1,920 根会把同一份计算重复 800 多次。
+    """
+    from GolemQ.analysis.ChipDistribution_jit import (
+        calc_stock_chip_distribution_jit)
+    from GolemQ.markets.StockCN.refdata import (
+        GQ_fetch_stock_reality_feat_day)
+    empty = pd.Series(dtype=float)
+    if ohlc is None or len(ohlc) < 30:
+        return empty
+    ohlc = ohlc[~ohlc.index.duplicated(keep='last')].sort_index()
+    ts = pd.DatetimeIndex(pd.to_datetime(ohlc.index.get_level_values(0)))
+    tr = GQ_fetch_stock_reality_feat_day(
+        code, start=str(ts.min().date()), end=str(ts.max().date()),
+        columns=[AKA.TURNOVER])
+    if tr is None or len(tr) == 0:
+        return empty
+    turnover = pd.Series(
+        tr[AKA.TURNOVER].to_numpy(),
+        index=pd.DatetimeIndex(
+            pd.to_datetime(tr.index.get_level_values(0))).normalize())
+    turnover = turnover[~turnover.index.duplicated(keep='last')]
+    w = ohlc.copy()
+    w[FLD.TURNOVER_RATE] = turnover.reindex(ts.normalize()).to_numpy()
+    w = w[w[FLD.TURNOVER_RATE].notna()]
+    if len(w) < 30:
+        return empty
+    try:
+        out = calc_stock_chip_distribution_jit(
+            features=pd.DataFrame(index=w.index), ohlc_data=w, code=code)
+    except Exception:               # noqa: BLE001
+        return empty
+    _ts = pd.DatetimeIndex(pd.to_datetime(out.index.get_level_values(0)))
+    s = pd.Series(out[AKA.RETURN_COST5].to_numpy(dtype=float), index=_ts)
+    return s[~s.index.duplicated(keep='last')]
+
+
+def build_hour_extra_frame(ohlc: pd.DataFrame, targets, code: str,
+                           day: pd.DataFrame = None) -> pd.DataFrame:
+    """`se` + `ZenPivotCnt/Lag` + Renko 14 + 60min 原生 10 + `stage` 的唯一构造器。
 
     口径与 `steps/zen.py::zen_snapshots_step`、`tools/backfill_hour_extra.py`
     完全一致；两边都调这里，禁止再各自写 searchsorted 映射。
+
+    ``day`` 给了才计算 `stage`（4.4 算法：`CLT_GRP_CHK` + Garident 带，
+    见 `analysis/stages.py::calc_stage_frame`）。不给则 `stage` 留 NaN ——
+    不是「算失败」，是调用方没有日线帧。
     """
     from GolemQ.pipeline.review.contract import HOUR_NATIVE_COLUMNS
     targets = pd.DatetimeIndex(pd.to_datetime(targets))
@@ -453,6 +567,33 @@ def build_hour_extra_frame(ohlc: pd.DataFrame, targets, code: str) -> pd.DataFra
     for j, c in enumerate(piv_df.columns):
         frame[c] = piv[:, j]
 
+    # `ZenOLSLag`（2026-11-22，D89）：段 = `ZenPivotLag` 符号相同的连续 bar，
+    # 段内用 LIS/LDS 找「波浪里的最大趋势」，再折成 event lag。
+    # ⚠️ 与 `ZenPivotLag` **同一趟**算：分型用整帧一次 CZSC（带确认时间 ⇒ 因果），
+    # 不是每个 target 重建一次。
+    try:
+        from GolemQ.analysis.zen_ols import calc_zen_ols_timing_lag
+        # ⚠️ **逐 target 用 ≤T 的 2160 根窗口**，与 `pivot_stats` 同一口径。
+        # 为什么不能用「整帧一次」：整帧 CZSC 的笔/中枢会被**后续 bar 修订**，
+        # 同一根 bar 在不同时点算出来的段边界不同（实测 601595 T=3000：
+        # 截断 +3 vs 全量 -129），也就是 D84 踩过的那个未来函数。
+        # 逐窗口的代价实测 0.075s/目标（含窗口内 CZSC 重建）。
+        _ts_all = pd.DatetimeIndex(pd.to_datetime(
+            ohlc.index.get_level_values(0)))
+        _tg = pd.DatetimeIndex(pd.to_datetime(targets))
+        _vals = np.full(len(_tg), np.nan)
+        for _i, _T in enumerate(_tg):
+            _w = ohlc.loc[_ts_all <= _T].tail(SE_WINDOW)
+            if len(_w) < 30:
+                continue
+            try:
+                _vals[_i] = float(calc_zen_ols_timing_lag(_w).iloc[-1])
+            except Exception:       # noqa: BLE001 单点失败留 NaN
+                continue
+        frame[ZEN.OLS_TIMING_LAG] = _vals
+    except Exception:               # noqa: BLE001 短历史/异常 ⇒ 留 NaN
+        frame[ZEN.OLS_TIMING_LAG] = np.nan
+
     rk = renko_ratio_frame(ohlc, targets, code)
     for c in rk.columns:
         frame[c] = rk[c].to_numpy()
@@ -461,6 +602,58 @@ def build_hour_extra_frame(ohlc: pd.DataFrame, targets, code: str) -> pd.DataFra
     nat = map_last_rows(nat_days, nat_df, targets)
     for j, c in enumerate(HOUR_NATIVE_COLUMNS):
         frame[c] = nat[:, j]
+
+    stage_full = None
+    frame[AKA.STAGE] = np.nan
+    if day is not None and len(day):
+        try:
+            from GolemQ.analysis.stages import calc_stage_frame
+            sf = calc_stage_frame(ohlc, day)
+            _ts = pd.DatetimeIndex(pd.to_datetime(
+                sf.index.get_level_values(0)))
+            stage_full = pd.Series(sf[AKA.STAGE].to_numpy(dtype=float),
+                                   index=_ts)
+            stage_full = stage_full[~stage_full.index.duplicated(keep='last')]
+            frame[AKA.STAGE] = stage_full.reindex(targets).to_numpy(dtype=float)
+        except Exception:           # noqa: BLE001 短历史/缺列 ⇒ 留 NaN
+            frame[AKA.STAGE] = np.nan
+
+    # ChipDist 60min **全帧一次** → RETURN_COST5；cost5UprBf 在全帧上做
+    # `Timeline_duration`，再取样到 targets（不能只在 targets 上算，否则计数
+    # 单位变成 4 根/天，不是 60min bar）。
+    ret5 = return_cost5_by_frame(ohlc, code)
+    ohlc_ts = pd.DatetimeIndex(pd.to_datetime(
+        ohlc.index.get_level_values(0)))
+    frame[AKA.RETURN_COST5] = (ret5.reindex(targets).to_numpy(dtype=float)
+                               if len(ret5) else np.nan)
+
+    from GolemQ.analysis.cost5_uprising import calc_cost5_uprising_before
+    from GolemQ.analysis.indicators import calc_macd_qa
+    full = pd.DataFrame(index=ohlc.index)
+    full[AKA.RETURN_COST5] = (ret5.reindex(ohlc_ts).to_numpy(dtype=float)
+                              if len(ret5) else np.nan)
+    full[AKA.STAGE] = (stage_full.reindex(ohlc_ts).to_numpy(dtype=float)
+                       if stage_full is not None else np.nan)
+    _, _, macd = calc_macd_qa(pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce'))
+    _macd = pd.Series(np.asarray(macd), index=ohlc_ts)
+    _macd = _macd[~_macd.index.duplicated(keep='last')]
+    full[FLD.MACD] = _macd.reindex(ohlc_ts).to_numpy()
+    if day is not None and len(day):
+        from GolemQ.analysis.compact import _map_causal
+        _, _, dm = calc_macd_qa(pd.to_numeric(day[AKA.CLOSE],
+                                              errors='coerce'))
+        _dts = pd.DatetimeIndex(pd.to_datetime(
+            day.index.get_level_values(0)))
+        _dm = pd.Series(np.asarray(dm), index=_dts)
+        _dm = _dm[~_dm.index.duplicated(keep='last')]
+        full[FLD.MACD_MAJOR] = _map_causal(_dm, ohlc.index).to_numpy()
+    else:
+        full[FLD.MACD_MAJOR] = np.nan
+    upr = calc_cost5_uprising_before(full)
+    _upr = pd.Series(upr.to_numpy(), index=ohlc_ts)
+    _upr = _upr[~_upr.index.duplicated(keep='last')]
+    frame[AKA.COST5_UPRISING_BEFORE] = (_upr.reindex(targets).to_numpy()
+                                        if len(_upr) else np.nan)
     return frame
 
 

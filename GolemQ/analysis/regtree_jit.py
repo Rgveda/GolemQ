@@ -54,6 +54,7 @@ try:
     import talib
 except Exception:                      # noqa: BLE001
     print('PLEASE run "pip install TALIB" to call these modules')
+from GolemQ.core.presentation import legacy_python_warning
 from GolemQ.core.constants import (
     AKA,
     FIELD as FLD,
@@ -260,10 +261,15 @@ def create_whole_forecast_tree(tree, seq_data, directions:bool=False):
 
 def predict_regression_tree_branch(seq_data, rate, dur, 
                                    level=0, code=''):
+    """生成回归树（**纯 Python 递归**，老树逐行照抄）。
+
+    ⚠️ **生产路径不该调它** —— 它的 jit 版是
+    :func:`predict_regression_tree_branch_jit`（同一算法，建树 0.81s → 0.007s）。
+    留着只为对拍 / `_build_tree` 的异常兜底；一旦被调到会打**不可过滤**的提醒。
     """
-    生成回归树, seq_data是数据, rate是误差下降, dur是叶节点的最小样本数
-    寻找最佳划分点, feat为切分点, val为值
-    """
+    legacy_python_warning('regtree.predict_regression_tree_branch',
+                          'predict_regression_tree_branch_jit',
+                          extra=(f'code={code}' if code else ''))
     feat, val = choose_best_split_branch(seq_data, rate, dur)
     if feat == None:
         return val # 不再可分
@@ -314,460 +320,40 @@ def fit_regtree_trend(tree,
     return ret_regtree_flu
 
 
-def calc_regtree_fractal_func(data, *args, **kwargs):
-    '''
-    快速计算regtree拟合线，因为超过500bar计算速度会变得很慢（超过5秒），所以 bar_limit 默认限制为 300
-    '''
-    # 针对多标的，拆分 indices 数据再自动合并
-    code = data.index.get_level_values(level=1)[0]
-    if ('features' in kwargs.keys()):
-        features = kwargs['features'].loc[(slice(None), code), :]
-    elif (len(args) > 0):
-        features = args[0].loc[(slice(None), code), :]
-    else:
-        features = None
-    bar_limit = kwargs['bar_limit'] if ('bar_limit' in kwargs.keys()) else 300
-    rate = kwargs['rate'] if ('rate' in kwargs.keys()) else 25
-    dur = kwargs['dur'] if ('dur' in kwargs.keys()) else 10
+def _build_tree(price, rate, dur, code: str = ''):
+    """建回归树：**优先 jit 版**，失败回落 `np.matrix` 的纯 Python 版。
 
-    #if (len(features) - bar_limit - 300) > 0:
-    #    pre_ohlc_data = data[-bar_limit - 300:-bar_limit].copy()
-    #    pre_price_dummy = features[FLD.HMA10][-bar_limit - 300:-bar_limit].copy()
-    #    pre_price = np.c_[pre_ohlc_data.apply(lambda x:pre_ohlc_data.index.get_level_values(level=0).get_loc(x.name[0]), axis=1),
-    #                      pre_price_dummy]
-    #    pre_tree = predict_regression_tree_branch(np.asmatrix(pre_price), rate, dur, code=code)
-    #    pre_ohlc_data['seq_index'] = pre_price[:, 0]
-    #    pre_regtree_flu = fit_regtree_trend(pre_tree, pre_ohlc_data)
+    2026-11-22 实测（601595，450 根窗口）：纯 Python 版 **0.81s/次**，
+    jit 版稳态 **0.007s/次**（首次含编译 ~1.5s），树结构逐层一致。
+    review 的日族每天建一棵树 ⇒ 全量回填 1,700 天能省下 ~23 分钟/码。
 
-    ohlc_data = data[-bar_limit:].copy()
-    price_dummy = features[FLD.HMA10][-bar_limit:].copy()
-    price = np.c_[ohlc_data.apply(lambda x:ohlc_data.index.get_level_values(level=0).get_loc(x.name[0]), axis=1),
-                  price_dummy]
-    # ⚠️ **2026-10-10 唯一一处对旧实现的改动**：加一个 `builder=` 逃生口。
-    # 默认仍是本模块的 `predict_regression_tree_branch`（**行为一字不变**），
-    # 只为让 `regtree_jit.calc_regtree_fractal_jit` 能换成 jit 建树器 ——
-    # 否则那份 60 行的编排就得**复制一遍**，正是本项目最忌的平行实现。
-    builder = kwargs.get('builder') or predict_regression_tree_branch
+    ⚠️ 回落必须保留：jit 版对 `seq_data` 的形状/类型更敏感（必须 float64 二维
+    数组），异常时退回老路径，行为与优化前一致。
+    """
+    _arr = np.ascontiguousarray(price, dtype=np.float64)
+    # 兜底：任何调用方漏了 NaN 过滤，这里也要挡住 —— numba 的 OLS 遇到 NaN
+    # 会抛 `LinAlgError`，回落到慢 100 倍的纯 Python 实现。
+    _ok = np.isfinite(_arr).all(axis=1)
+    if not _ok.all():
+        _arr = _arr[_ok]
+        if len(_arr) < 3:
+            raise ValueError('价格矩阵全是 NaN/inf，无法建树')
     try:
-        tree = builder(np.asmatrix(price), rate, dur,
-                       level=0, code=code)
-    except Exception as e:
-        if (len(ohlc_data)>460):
-            print(u'Code:{} length:{}'.format(code, len(ohlc_data)), e)
-        tree = None
-        features[FLD.REGTREE_PRICE] = np.nan
-        features[FLD.REGTREE_TREND] = np.nan
-        features[FLD.REGTREE_SLOPE] = np.nan
-        features[FLD.REGTREE_TIMING_LAG] = np.nan
-        features[FLD.REGTREE_TREND_RETURNS] = np.nan
-        return features
-
-    ohlc_data['seq_index'] = price[:, 0]
-    regtree_flu = fit_regtree_trend(tree, ohlc_data)
-    if (len(features) - bar_limit) > 0:
-        #print(kwargs.keys(), len(features), bar_limit)
-        #if (len(features) - bar_limit - 300) > 0:
-        #    features[FLD.REGTREE_PRICE] = np.r_[np.empty(len(features) - bar_limit - 300), pre_regtree_flu[:, 0], regtree_flu[:, 0]]
-        #else:
-        #features[FLD.REGTREE_PRICE] = np.r_[np.empty(len(features) - bar_limit), regtree_flu[:, 0]]
-        features[FLD.REGTREE_PRICE] = np.r_[features[FLD.MA30][: - bar_limit], regtree_flu[:, 0]]
-        features[FLD.REGTREE_TREND] = np.r_[np.empty(len(features) - bar_limit), regtree_flu[:, 1]]
-        features[FLD.REGTREE_TIMING_LAG] = np.r_[np.empty(len(features) - bar_limit), calc_event_timing_lag(features[FLD.REGTREE_TREND].tail(bar_limit))]
-        features[FLD.REGTREE_TREND_RETURNS] = np.r_[np.empty(len(features) - bar_limit), calc_onhold_returns_np(ohlc_data.close.values,
-                                                                                                                features[FLD.REGTREE_TREND].tail(bar_limit).values)]
-
-    else:
-        features[FLD.REGTREE_PRICE] = regtree_flu[:, 0]
-        features[FLD.REGTREE_TREND] = regtree_flu[:, 1]
-        features[FLD.REGTREE_TIMING_LAG] = calc_event_timing_lag(features[FLD.REGTREE_TREND])
-        features[FLD.REGTREE_TREND_RETURNS] = calc_onhold_returns_np(ohlc_data.close.values,
-                                                                     features[FLD.REGTREE_TREND].values)
-
-    # ⚠️ 老树这里还有两列「背离」—— `POLY9_REGTREE_DIVERGENCE` /
-    # `ATR_LB_REGTREE_DIVERGENCE`：
-    #     (poly9  − rtrePrz) / rtrePrz
-    #     (ATR_LB − rtrePrz) / rtrePrz
-    # **已删除**（2026-10-16，用户定）。画像与 `STOCK_TREND_*` 那批一样：
-    # 老树五个 `*_columns_of_persistence` 清单**都不含**、8.3 三库里**一个都没出现过**、
-    # **新树零读取方**（唯一引用就是下面那两行赋值本身）。
-    #
-    # ⚠️ **一处与 `STOCK_TREND_*` 不同、必须如实记下**：这两列在老树里**有真消费** ——
-    # 但那 **24 处 + 6 处**（`GolemQ_old/fractal/v8_1.py`）**全部落在
-    # `calc_Empirical_AMIRA_fractal`（`:5816-6100`）这一个函数里面**，
-    # 而该函数**已废弃**（用户 2026-10-16 明确：「这个函数废弃了」）、**不搬**。
-    # ⇒ 删的依据是「**消费方已废弃**」，不是「老树没人用」也不是「那条链没搬」。
-    #
-    # 将来真要恢复：公式就在上面这两行注释里，一行成本。
-    # 见 `docs/decisions/D49.md` 第九节。
-    #try:
-    #    features[FLD.REGTREE_TREND_RETURNS] =
-    #    calc_onhold_returns_np(ohlc_data.close.values,
-    #                                                                 features[FLD.REGTREE_TREND].values)
-    #except Exception as e:
-    #    print(e)
-    #    print(u'计算股票代码 {} 的利润数据出现意外 length:{}，忽略错误进行下一个分组...'.format(code,
-    #    len(data)))
-
-    features[FLD.REGTREE_SLOPE] = talib.LINEARREG_SLOPE(features[FLD.REGTREE_PRICE], timeperiod=14)
-    features[FLD.REGTREE_MA90_INTERCEPT] = lineareg_intercept(features[FLD.REGTREE_SLOPE], 
-                                                            features[FLD.REGTREE_PRICE], 
-                                                            features[FLD.MA90_SLOPE], 
-                                                            features[FLD.MA90])
-
-    if (FLD.DEA_ZERO_TIMING_LAG in features.columns):
-        deny_line = ((features[FLD.REGTREE_TIMING_LAG] > 0) & \
-                    ((features[FLD.DEA_ZERO_TIMING_LAG] < 0) | \
-                    (features[FLD.DEA_ZERO_TIMING_LAG] <= 6) & \
-                    (features[FLD.MACD_DELTA] < 0)) & \
-                    (features[FLD.REGTREE_MA90_INTERCEPT] > 9.27) & \
-                    (features[FLD.REGTREE_PRICE] < features[FLD.MA90]) & \
-                    (features[FLD.REGTREE_PRICE] < features[FLD.HMA5])) | \
-                    ((features[FLD.REGTREE_TIMING_LAG] > 36) & \
-                    (features[FLD.REGTREE_SLOPE] < 0.0008) & \
-                    (features[FLD.REGTREE_PRICE] < features[FLD.HMA10]) & \
-                    (features[FLD.REGTREE_PRICE] < features[FLD.HMA5])) | \
-                    ((features[FLD.REGTREE_TIMING_LAG] > 18) & \
-                    (features[FLD.REGTREE_SLOPE] < 0.002) & \
-                    (features[FLD.REGTREE_PRICE] < features[FLD.HMA10]) & \
-                    (features[FLD.REGTREE_PRICE] < features[FLD.HMA5])) | \
-                    ((features[FLD.REGTREE_TIMING_LAG] > 18) & \
-                    (features[FLD.REGTREE_TREND_RETURNS] < -0.0168) & \
-                    (features[FLD.HMA10].diff(1) < 0))
-        features[FLD.REGTREE_DENY_LINE] = deny_line
-
-    #print(regtree_flu[-1, 1], regtree_flu[-1, 2])
-    corrcoef = features[FLD.REGTREE_PRICE].tail(bar_limit).corr(features[FLD.HMA10].tail(bar_limit))
-    features[FLD.REGTREE_CORRCOEF] = corrcoef
-
-    #p = np.polynomial.Chebyshev.fit(ohlc_data['seq_index'], ohlc_data.close,
-    #9)
-    #y_fit_n = p(ohlc_data['seq_index'])
-    #features[FLD.POLYNOMIAL9] = y_fit_n
-    #features[FLD.POLYNOMIAL9_TIMING_LAG] =
-    #calc_event_timing_lag(np.where(features[FLD.POLYNOMIAL9].diff(1) > 0, 1,
-    #-1))
-
-    if (FLD.COMBINE_DENSITY in features.columns):
-        features[FLD.MAPOWER30_QUARTER] = np.where((features[FLD.MAPOWER30_TIMING_LAG] > 0) & \
-            (features[FLD.MAPOWER30] < features[FLD.COMBINE_DENSITY]), 1,
-                                                   np.where((features[FLD.MAPOWER30_TIMING_LAG] > 0) & \
-            (features[FLD.MAPOWER30] > features[FLD.COMBINE_DENSITY]), 2,
-                                                            np.where((features[FLD.MAPOWER30_TIMING_LAG] < 0) & \
-            (features[FLD.MAPOWER30] > features[FLD.COMBINE_DENSITY]), -2, 
-                                                                     np.where((features[FLD.MAPOWER30_TIMING_LAG] < 0) & \
-            (features[FLD.MAPOWER30] < features[FLD.COMBINE_DENSITY]), -1, 0))))
-        features[FLD.MAPOWER120_QUARTER] = np.where((features[FLD.MAPOWER120_TIMING_LAG] > 0) & \
-            (features[FLD.MAPOWER120] < features[FLD.COMBINE_DENSITY]), 1,
-                                                   np.where((features[FLD.MAPOWER120_TIMING_LAG] > 0) & \
-            (features[FLD.MAPOWER120] > features[FLD.COMBINE_DENSITY]), 2,
-                                                            np.where((features[FLD.MAPOWER120_TIMING_LAG] < 0) & \
-            (features[FLD.MAPOWER120] > features[FLD.COMBINE_DENSITY]), -2, 
-                                                                     np.where((features[FLD.MAPOWER120_TIMING_LAG] < 0) & \
-            (features[FLD.MAPOWER120] < features[FLD.COMBINE_DENSITY]), -1, 0))))
-        features[FLD.HMAPOWER120_QUARTER] = np.where((features[FLD.HMAPOWER120_TIMING_LAG] > 0) & \
-            (features[FLD.HMAPOWER120] < features[FLD.COMBINE_DENSITY]), 1,
-                                                   np.where((features[FLD.HMAPOWER120_TIMING_LAG] > 0) & \
-            (features[FLD.HMAPOWER120] > features[FLD.COMBINE_DENSITY]), 2,
-                                                            np.where((features[FLD.HMAPOWER120_TIMING_LAG] < 0) & \
-            (features[FLD.HMAPOWER120] > features[FLD.COMBINE_DENSITY]), -2, 
-                                                                     np.where((features[FLD.HMAPOWER120_TIMING_LAG] < 0) & \
-            (features[FLD.HMAPOWER120] < features[FLD.COMBINE_DENSITY]), -1, 0))))
-
-    return features
+        return predict_regression_tree_branch_jit(_arr, rate, dur, level=0)
+    except Exception as exc:        # noqa: BLE001 回落纯 Python 版
+        # 回落本身是设计好的兜底，但**必须能看见为什么** —— 2026-11-22 实测
+        # review 里突然出现 `[legacy]` 提醒，却不知道 jit 那条路为什么抛。
+        # 每进程只报一次，避免回填时刷屏。
+        if not getattr(_build_tree, '_warned', False):
+            _build_tree._warned = True
+            import sys as _sys
+            print('[GolemQ][regtree] code={} jit 建树失败，回落纯 Python'
+                  '（慢约 100 倍）：{}: {}'.format(code, type(exc).__name__, exc),
+                  file=_sys.stderr, flush=True)
+        return predict_regression_tree_branch(np.asmatrix(price), rate, dur,
+                                              level=0, code=code)
 
 
-def calc_regtree_renko_fractal_func(data, *args, **kwargs):
-    '''
-    计算 regtree_renko 延长形态
-    '''
-    # 针对多标的，拆分 indices 数据再自动合并
-    code = data.index.get_level_values(level=1)[0]
-    if ('features' in kwargs.keys()):
-        features = kwargs['features'].loc[(slice(None), code), :]
-    elif (len(args) > 0):
-        features = args[0].loc[(slice(None), code), :]
-    else:
-        features = None
-
-    # 扩展一点点主升浪启动阶段
-    #if (FLD.RENKO_BOOST_L_TIMING_LAG in features.columns):
-    #    renko_bold = np.where((features[FLD.MAPOWER30_TIMING_LAG] < 0) & \
-    #        (features[FLD.DEA_ZERO_TIMING_LAG] > 0) & \
-    #        ((features[FLD.ZEN_WAVELET_TIMING_LAG] < 0) | \
-    #        (((features[FLD.MAPOWER120] - features[FLD.MAPOWER30]) > 0.512) &
-    #        \
-    #        (features[FLD.DEA_SLOPE] < -0.008)) | \
-    #        (features[FLD.LINEAREG_BAND_TIMING_LAG] < 0) | \
-    #        (features[FLD.RENKO_TREND_L_TIMING_LAG] <
-    #        features[FLD.RENKO_BOOST_L_TIMING_LAG])) & \
-    #        (features[FLD.RENKO_TREND_L_TIMING_LAG] < 0) & \
-    #        ~((features[FLD.MAPOWER30] < 0.0382) & \
-    #        (features[FLD.RENKO_BOOST_L_TIMING_LAG] > 0)) & \
-    #        ~((features[FLD.RENKO_BOOST_L_TIMING_LAG] > 0) & \
-    #        (features[FLD.DIF_ZERO_TIMING_LAG] > 0) & \
-    #        (features[FLD.PEAK_LOW_TIMING_LAG] <= 4) & \
-    #        (features[FLD.MAPOWER120] > features[FLD.MAPOWER30]) & \
-    #        (features[FLD.MAPOWER30] < features[FLD.CCI_NORM]) & \
-    #        (features[FLD.ZEN_WAVELET_TIMING_LAG] >= -4)), -1,
-    #                          np.where((features[FLD.MAPOWER30_TIMING_LAG] <
-    #                          0) & \
-    #                                   (features[FLD.DIF_ZERO_TIMING_LAG] < 0)
-    #                                   & \
-    #                                   (features[FLD.MACD_ZERO_TIMING_LAG] <
-    #                                   features[FLD.DIF_ZERO_TIMING_LAG]) & \
-    #                                   (features[FLD.MAPOWER30_TIMING_LAG] <
-    #                                   features[FLD.DIF_ZERO_TIMING_LAG]) & \
-    #                                   ((features[FLD.ZEN_WAVELET_TIMING_LAG]
-    #                                   < 0) | \
-    #                                   (features[FLD.LINEAREG_BAND_TIMING_LAG]
-    #                                   < 0) | \
-    #                                   (features[FLD.RENKO_TREND_L_TIMING_LAG]
-    #                                   <
-    #                                   features[FLD.RENKO_BOOST_L_TIMING_LAG]))
-    #                                   & \
-    #                                   (features[FLD.LINEAREG_BAND_TIMING_LAG]
-    #                                   < 0) & \
-    #                                   ~((features[FLD.MAPOWER30] < 0.0382) &
-    #                                   \
-    #                                   (features[FLD.RENKO_BOOST_L_TIMING_LAG]
-    #                                   > 0)), -1,
-    #                          np.where((features[FLD.MAPOWER30_TIMING_LAG] <
-    #                          0) & \
-    #                                   (features[FLD.DEA_ZERO_TIMING_LAG] > 0)
-    #                                   & \
-    #                                   ((features[FLD.ZEN_WAVELET_TIMING_LAG]
-    #                                   < 0) | \
-    #                                   (features[FLD.LINEAREG_BAND_TIMING_LAG]
-    #                                   < 0) | \
-    #                                   (features[FLD.RENKO_TREND_L_TIMING_LAG]
-    #                                   <
-    #                                   features[FLD.RENKO_BOOST_L_TIMING_LAG]))
-    #                                   & \
-    #                                   (features[FLD.LINEAREG_BAND_TIMING_LAG]
-    #                                   < 0) & \
-    #                                   ~((features[FLD.MAPOWER30] < 0.0382) &
-    #                                   \
-    #                                   (features[FLD.RENKO_BOOST_L_TIMING_LAG]
-    #                                   > 0)) & \
-    #                                   ~((features[FLD.RENKO_BOOST_L_TIMING_LAG]
-    #                                   > 0) & \
-    #                                   (features[FLD.DIF_ZERO_TIMING_LAG] > 0)
-    #                                   & \
-    #                                   (features[FLD.PEAK_LOW_TIMING_LAG] < 4)
-    #                                   & \
-    #                                   (features[FLD.MAPOWER120] >
-    #                                   features[FLD.MAPOWER30]) & \
-    #                                   (features[FLD.MAPOWER30] <
-    #                                   features[FLD.CCI_NORM]) & \
-    #                                   (features[FLD.ZEN_WAVELET_TIMING_LAG]
-    #                                   >= -4)), -1,
-    #                                   np.where((features[FLD.MAPOWER30_TIMING_LAG]
-    #                                   < 0) & \
-    #                                            (features[FLD.DEA_ZERO_TIMING_LAG]
-    #                                            < 0) & \
-    #                                            (((features[FLD.ZEN_WAVELET_TIMING_LAG]
-    #                                            < 0) & \
-    #                                            (features[FLD.DEA_ZERO_TIMING_LAG]
-    #                                            <
-    #                                            features[FLD.ZEN_WAVELET_TIMING_LAG]))
-    #                                            | \
-    #                                            ((features[FLD.LINEAREG_BAND_TIMING_LAG]
-    #                                            < 0) & \
-    #                                            (features[FLD.LINEAREG_PRICE]
-    #                                            > features[FLD.HMA10]) & \
-    #                                            (features[FLD.DEA_ZERO_TIMING_LAG]
-    #                                            <
-    #                                            features[FLD.LINEAREG_BAND_TIMING_LAG]))
-    #                                            | \
-    #                                            ((features[FLD.RENKO_BOOST_L_TIMING_LAG]
-    #                                            < 0) & \
-    #                                            (features[FLD.LINEAREG_PRICE]
-    #                                            > features[FLD.HMA10]) & \
-    #                                            (features[FLD.DEA_ZERO_TIMING_LAG]
-    #                                            <
-    #                                            features[FLD.RENKO_BOOST_L_TIMING_LAG]))
-    #                                            & \
-    #                                            (features[FLD.CCI_NORM] <
-    #                                            features[FLD.MAPOWER30])) & \
-    #                                            ~((features[FLD.MAPOWER30] <
-    #                                            0.0382) & \
-    #                                            (features[FLD.RENKO_BOOST_L_TIMING_LAG]
-    #                                            > 0)), -1,
-    #                                            np.where((features[FLD.DEA_ZERO_TIMING_LAG]
-    #                                            < 0) & \
-    #                                                     ((features[FLD.ZEN_WAVELET_TIMING_LAG]
-    #                                                     < 0) | \
-    #                                                     ((features[FLD.CCI_NORM].shift(1)
-    #                                                     > 0.618) & \
-    #                                                     (features[FLD.CCI_NORM].shift(1)
-    #                                                     >
-    #                                                     features[FLD.CCI_NORM])
-    #                                                     & \
-    #                                                     (features[FLD.CCI_NORM]
-    #                                                     <
-    #                                                     features[FLD.MAPOWER30])
-    #                                                     & \
-    #                                                     (features[FLD.DEA_ZERO_TIMING_LAG]
-    #                                                     <
-    #                                                     features[FLD.ZEN_WAVELET_TIMING_LAG]))
-    #                                                     | \
-    #                                                     (features[FLD.HMA10]
-    #                                                     <
-    #                                                     features[FLD.LINEAREG_PRICE]))
-    #                                                     & \
-    #                                                     (features[FLD.CCI_NORM]
-    #                                                     <
-    #                                                     features[FLD.MAPOWER30])
-    #                                                     & \
-    #                                                     ~((features[FLD.ATR_SuperTrend_TIMING_LAG]
-    #                                                     > 0) & \
-    #                                                     (features[FLD.MAPOWER30_TIMING_LAG]
-    #                                                     > 0) & \
-    #                                                     (features[FLD.ZEN_WAVELET_TIMING_LAG]
-    #                                                     > 0) & \
-    #                                                     (features[FLD.RENKO_TREND_L_TIMING_LAG]
-    #                                                     +
-    #                                                     features[FLD.ATR_SuperTrend_TIMING_LAG]
-    #                                                     > 0)), -1, 1)))))
-    #    features[FLD.RENKO_BOLD_TIMING_LAG] =
-    #    calc_event_timing_lag(renko_bold)
-
-        #renko_bold = np.where((features[FLD.MAPOWER30_TIMING_LAG] < -2) & \
-        #                      (features[FLD.PEAK_LOW_TIMING_LAG] < -2) & \
-        #                      (features[FLD.RENKO_BOLD_TIMING_LAG] == 1), -1,
-        #                      renko_bold)
-        #features[FLD.RENKO_BOLD_TIMING_LAG] =
-        #calc_event_timing_lag(renko_bold)
-
-        #features[FLD.RENKO_BOOST_L_TIMING_LAG] =
-        #np.where((features[FLD.RENKO_BOOST_L_TIMING_LAG] > 0) & \
-        #    (features[FLD.RENKO_TREND_L_TIMING_LAG] > 12) & \
-        #    (features[FLD.COMBINE_DENSITY].rolling(4).mean() < 0.466) & \
-        #    ((features[FLD.REGTREE_TIMING_LAG] <= -6) | \
-        #    ((features[FLD.REGTREE_TIMING_LAG] < 0) & \
-        #    (features[FLD.MA90_CLEARANCE] > 1.68))) & \
-        #    (features[FLD.MACD] < features[FLD.DIF]), -1,
-        #                                                 features[FLD.RENKO_BOOST_L_TIMING_LAG])
-
-        #features[FLD.RENKO_TREND_L_TIMING_LAG] = np.where((features[FLD.MA90]
-        #> features[FLD.MA120]) & \
-        #    (features[FLD.MA90_CLEARANCE_TIMING_LAG] > 36) & \
-        #    (features[FLD.REGTREE_PRICE] > features[FLD.MA90]) & \
-        #    (features[FLD.REGTREE_TIMING_LAG] > 0) & \
-        #    (features[FLD.DEA_ZERO_TIMING_LAG] > 0) & \
-        #    (features[FLD.RENKO_BOOST_L_TIMING_LAG] ==
-        #    features[FLD.RENKO_TREND_L_TIMING_LAG]), 1,
-        #                                                 features[FLD.RENKO_TREND_L_TIMING_LAG])
-        #features[FLD.RENKO_TREND_L_TIMING_LAG] = np.where(((features[FLD.MA90]
-        #> features[FLD.MA120]) | \
-        #    (features[FLD.COMBO_FLOW_TIMING_LAG] > 0)) & \
-        #    ((features[FLD.DEA_ZERO_TIMING_LAG] < 0) | \
-        #    (features[FLD.MACD_ZERO_TIMING_LAG] < 0)) & \
-        #    (features[FLD.COMBINE_DENSITY].diff(1) > 0) & \
-        #    (features[FLD.HMA10].diff(1) > 0) & \
-        #    ((features[FLD.REGTREE_TIMING_LAG] > 0) | \
-        #    (features[FLD.ZEN_WAVELET_TIMING_LAG] > 0) | \
-        #    ((features[FLD.HMA10] > features[FLD.LINEAREG_PRICE]))), 1,
-        #                                                 features[FLD.RENKO_TREND_L_TIMING_LAG])
-
-        #features[FLD.RENKO_TREND_L_TIMING_LAG] =
-        #np.where((features[FLD.DEA_ZERO_TIMING_LAG] < 0) & \
-        #    (features[FLD.COMBINE_DENSITY] < 0.3) & \
-        #    (features[FLD.HMA10].diff(1) > 0) & \
-        #    (features[FLD.HMA10] > features[FLD.LINEAREG_PRICE]), 1,
-        #                                                 features[FLD.RENKO_TREND_L_TIMING_LAG])
-
-        #features[FLD.RENKO_TREND_L_TIMING_LAG] = np.where(((features[FLD.MA90]
-        #> features[FLD.MA120]) | \
-        #    ((features[FLD.RENKO_TREND_L_TIMING_LAG] > 0) | \
-        #    (features[FLD.MACD_DELTA] > 0)) | \
-        #    (features[FLD.COMBO_FLOW_TIMING_LAG] > 0)) & \
-        #    ((features[FLD.DEA_ZERO_TIMING_LAG] < 0) | \
-        #    (features[FLD.MACD_ZERO_TIMING_LAG] < 0)) & \
-        #    ((features[FLD.COMBINE_DENSITY].diff(1) > 0) | \
-        #    (features[FLD.MACD_DELTA].shift(1) > 0)) & \
-        #    (features[FLD.HMA10].diff(1) > 0) & \
-        #    ((features[FLD.REGTREE_TIMING_LAG] > 0) | \
-        #    (features[FLD.ZEN_WAVELET_TIMING_LAG] > 0) | \
-        #    ((features[FLD.HMA10] > features[FLD.LINEAREG_PRICE]))), 1,
-        #                                                 features[FLD.RENKO_TREND_L_TIMING_LAG])
-
-        #features[FLD.RENKO_TREND_L_TIMING_LAG] =
-        #calc_event_timing_lag(np.where((features[FLD.RENKO_TREND_L_TIMING_LAG]
-        #> 0), 1, -1))
-        #features[FLD.RENKO_TREND_L_TIMING_LAG] =
-        #calc_event_timing_lag(np.where((features[FLD.RENKO_TREND_L_TIMING_LAG]
-        #> 0) & \
-        #    ~((features[FLD.RENKO_TREND_L_TIMING_LAG] <= 6) & \
-        #    (features[FLD.CCI].diff(2) < 0)), 1, -1))
-
-    #checkpoint =
-    #features.loc[features.index.get_level_values(level=0).intersection(pd.date_range('2020-09-16',
-    #                                                                    periods=240,
-    #                                                                    freq='30min')),
-    #                          [FLD.RENKO_BOOST_L_TIMING_LAG,
-    #                           FLD.COMBINE_DENSITY,
-    #                           FLD.REGTREE_TIMING_LAG,
-    #                           FLD.DEA_SLOPE]]
-    #print(checkpoint)
-    #checkpoint =
-    #data.loc[data.index.get_level_values(level=0).intersection(pd.date_range('2020-11-18',
-    #                                                                                      periods=240,
-    #                                                                                      freq='30min')),
-    #                          :]
-    #print(checkpoint)
-    return features
-
-
-def calc_regtree_fractal_vXI(data, *args, **kwargs):
-    '''
-    快速计算regtree拟合线，因为超过500bar计算速度会变得很慢（超过5秒），所以 bar_limit 默认限制为 300
-    '''
-    # 针对多标的，拆分 indices 数据再自动合并
-    code = data.index.get_level_values(level=1)[0]
-    if ('features' in kwargs.keys()):
-        features = kwargs['features'].loc[(slice(None), code), :]
-    elif (len(args) > 0):
-        features = args[0].loc[(slice(None), code), :]
-    else:
-        features = None
-    bar_limit = kwargs['bar_limit'] if ('bar_limit' in kwargs.keys()) else 300
-    rate = kwargs['rate'] if ('rate' in kwargs.keys()) else 25
-    dur = kwargs['dur'] if ('dur' in kwargs.keys()) else 10
-
-    ohlc_data = data[-bar_limit:].copy()
-    price_dummy = features[FLD.HMA10][-bar_limit:].copy()
-    price = np.c_[ohlc_data.apply(lambda x:ohlc_data.index.get_level_values(level=0).get_loc(x.name[0]), axis=1),
-                  price_dummy]
-    try:
-        tree = predict_regression_tree_branch(np.asmatrix(price), rate, dur, 
-                                              level=0)
-    except Exception as e:
-        if (len(ohlc_data)>460):
-            print(u'Code:{} length:{}'.format(code, len(ohlc_data)), e)
-        tree = None
-        features[FLD.REGTREE_PRICE] = np.nan
-        features[FLD.REGTREE_TREND] = np.nan
-        features[FLD.REGTREE_SLOPE] = np.nan
-        features[FLD.REGTREE_TIMING_LAG] = np.nan
-        return features
-
-    ohlc_data['seq_index'] = price[:, 0]
-    regtree_flu = fit_regtree_trend(tree, ohlc_data)
-    if (len(features) - bar_limit) > 0:
-        features[FLD.REGTREE_PRICE] = np.r_[features[FLD.MA30][: - bar_limit], regtree_flu[:, 0]]
-        features[FLD.REGTREE_TREND] = np.r_[np.empty(len(features) - bar_limit), regtree_flu[:, 1]]
-        features[FLD.REGTREE_TIMING_LAG] = np.r_[np.empty(len(features) - bar_limit), calc_event_timing_lag(features[FLD.REGTREE_TREND].tail(bar_limit))]
-    else:
-        features[FLD.REGTREE_PRICE] = regtree_flu[:, 0]
-        features[FLD.REGTREE_TREND] = regtree_flu[:, 1]
-        features[FLD.REGTREE_TIMING_LAG] = calc_event_timing_lag(features[FLD.REGTREE_TREND])
-
-    features[FLD.REGTREE_SLOPE] = talib.LINEARREG_SLOPE(features[FLD.REGTREE_PRICE], timeperiod=14)
-
-    return features
-
-    
 def calc_regtree_fractal_vXIs(data, *args, **kwargs):
     '''
     快速计算regtree拟合线，因为超过500bar计算速度会变得很慢（超过5秒），所以 bar_limit 默认限制为 300
@@ -792,6 +378,18 @@ def calc_regtree_fractal_vXIs(data, *args, **kwargs):
         price_dummy = ohlc_data[AKA.CLOSE][-bar_limit:].copy()
     price = np.c_[ohlc_data.apply(lambda x:ohlc_data.index.get_level_values(level=0).get_loc(x.name[0]), axis=1),
                   price_dummy]
+    # ⚠️ **必须剔除 NaN/inf 行**（2026-11-23）：`HMA10` 在窗口头部/停牌段会是
+    # NaN，而 OLS（`np.linalg.solve` / `det`）遇到 NaN 直接抛
+    # `LinAlgError: Array must not contain infs or NaNs` ⇒ jit 建树失败 ⇒
+    # 回落纯 Python（慢 100 倍），日志刷 `[legacy]`。
+    # ⚠️ 这条**必须三个入口都加**（`calc_regtree_fractal_func` / `_vXI` / `_vXIs`）：
+    # review 的日族与 60min 原生列走的是 **`_vXIs`**，只改另两个等于没改。
+    _finite = np.isfinite(price).all(axis=1)
+    if not _finite.all():
+        price = price[_finite]
+        ohlc_data = ohlc_data.loc[_finite]
+    if len(price) == 0:
+        return features
 
     features = features.reindex(columns=list(set([*features.columns,
                                                 *[FLD.REGTREE_PRICE,
@@ -799,8 +397,7 @@ def calc_regtree_fractal_vXIs(data, *args, **kwargs):
                                                 FLD.REGTREE_SLOPE,
                                                 FLD.REGTREE_TIMING_LAG,]])))
     try:
-        tree = predict_regression_tree_branch(np.asmatrix(price), rate, dur, 
-                                              level=0)
+        tree = _build_tree(price, rate, dur, code=code)
     except Exception as e:
         if (len(ohlc_data)>460):
             print(u'Code:{} length:{}'.format(code, len(ohlc_data)), e)
@@ -888,6 +485,10 @@ def _kernels():
         m, k = X.shape
         if m == 0:
             return np.inf
+        # ⚠️ `y` 必须是**连续**数组：否则 numba 报
+        # `NumbaPerformanceWarning: '@' is faster on contiguous arrays`
+        # （`dt` 是 C 连续、`y` 从切片传进来常是 A 布局）。顺带也更快。
+        y = np.ascontiguousarray(y)
         # 设计矩阵：第 0 列 1，其后是 X 的各列
         D = np.empty((m, k + 1))
         for i in range(m):
@@ -917,6 +518,7 @@ def _kernels():
         奇异时返回全 NaN（旧版抛 `NameError`）。
         """
         m, k = X.shape
+        y = np.ascontiguousarray(y)     # 同 `_ols_err`：消除 numba 的连续性问题告警
         D = np.empty((m, k + 1))
         for i in range(m):
             D[i, 0] = 1.0
@@ -1055,40 +657,24 @@ def predict_regression_tree_branch_jit(seq_data, rate, dur, level=0, code=''):
 
 
 def tree_forecast_jit(tree, seq_data, directions=False):
-    """`:func:`regtree.create_whole_forecast_tree` 的 jit 遍历版。
+    """`:func:`regtree.create_whole_forecast_tree` 的**同名**包装。
 
-    遍历本身是纯标量小循环 —— numba 化的收益有限，但**留作对照与将来的入口**
-    （真要把整条链 jit 掉，就得从这里往下打通）。
-    当前实现与旧版**逐值相同**（对拍见 `test_regtree_jit.py`）。
+    ⚠️ **名字带 jit，实现不是 jit**：遍历本身是纯标量小循环，numba 化的收益有限
+    （真正贵的是建树，见 :func:`predict_regression_tree_branch_jit`）。
+    留作对照与将来的入口；当前与旧版逐值相同（对拍见 `test_regtree_jit.py`）。
+    被调用时会打**不可过滤**的提醒，防止有人以为它已经 jit 了。
     """
+    legacy_python_warning(
+        'regtree.tree_forecast_jit（名字带 jit，实际是纯 Python 遍历）')
     return create_whole_forecast_tree(tree, seq_data, directions=directions)
 
 
-def calc_regtree_fractal_jit(data, *args, **kwargs):
-    """`:func:`regtree.calc_regtree_fractal_func` 的 jit 建树版。
-
-    **不是复制体** —— 它把 jit 建树器经 `builder=` 传回**同一个**编排函数
-    （见 `regtree.calc_regtree_fractal_func` 里那段说明）。所以：
-    特征写入、`bar_limit`/`rate`/`dur` 的默认值、异常兜底**全都只有一份**。
-
-    用法与旧版逐字相同：``calc_regtree_fractal_jit(data, features=features)``。
-    """
-    kwargs = dict(kwargs)
-    kwargs['builder'] = predict_regression_tree_branch_jit
-    # ⚠️ `type: ignore` 不适用 —— 这里就是**同一个** `*args/**kwargs` 签名，透传即可。
-    return calc_regtree_fractal_func(data, *args, **kwargs)
-
-
-# --------------------------------------------------------------------------- #
-# 兼容旧公开名（唯一实现 = 本模块；原 regtree.py 已删除）
-# --------------------------------------------------------------------------- #
 __all__ = ['available', 'regtree_jit_status',
            'choose_best_split_branch_jit', 'predict_regression_tree_branch_jit',
-           'tree_forecast_jit', 'calc_regtree_fractal_jit',
+           'tree_forecast_jit',
            'choose_best_split_branch', 'split_data_into_binary',
            'solve_lineareg_func', 'fit_lineareg_slope_of_the_model_leaf',
            'calc_err_of_the_model', 'tree_model_evaluation_func', 'is_tree_py',
            'tree_model_forecast_decision_func_np', 'create_whole_forecast_tree',
            'predict_regression_tree_branch', 'fit_regtree_trend',
-           'calc_regtree_fractal_func', 'calc_regtree_renko_fractal_func',
-           'calc_regtree_fractal_vXI', 'calc_regtree_fractal_vXIs']
+           'calc_regtree_fractal_vXIs']

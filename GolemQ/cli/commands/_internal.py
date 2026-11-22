@@ -24,7 +24,8 @@
 * `--fill-turnover-codes/start/end`。
 
 **整条命令**（`Command.internal_only=True`）：`--save-coverage` / `--save-status` /
-`--metadata-align` / `--review-runtime` / 全部 `--migrate-*`。
+`--metadata-align` / `--review-runtime` / `--migrate-metadata-{merge,verify}`
+（4.4 搬运命令已随 D83 移出运行时）。
 
 它们在用户 parser 里**不存在**，因此 `run_*` 一律用
 ``getattr(args, 'xxx', default)`` 读取。
@@ -53,7 +54,7 @@ def add_internal_arguments(parser) -> None:
                         help='[internal] 分布式分片 "i/N"（1-based）：按 code md5 '
                              '取模，多台机器各跑一片。')
     parser.add_argument('--migrate-limit', dest='migrate_limit', type=int, default=None,
-                        help='[internal] 只搬前 N 行（试跑用；不传 = 全量）。')
+                        help='[internal] 合并只处理前 N 行（试跑用；不传 = 全量）。')
     parser.add_argument('--save-collections', dest='save_collections',
                         help='[internal] 限定要保存的参考集合，逗号分隔。')
     parser.add_argument('--save-start', dest='save_start', default='2015-01-01',
@@ -89,7 +90,7 @@ def add_internal_arguments(parser) -> None:
                         help='[internal] 资金流/千股千评只取数统计，不写库。')
     parser.add_argument('--migrate-dry-run', dest='migrate_dry_run',
                         action='store_true', default=False,
-                        help='[internal] 迁移只读 4.4 并统计，不写 8.3。')
+                        help='[internal] 合并只读统计，不写 8.3。')
     parser.add_argument('--fill-turnover-codes', dest='fill_turnover_codes',
                         default=None,
                         help='[internal] fill-turnover 的 6 位代码，逗号分隔。')

@@ -148,6 +148,12 @@ def _base_frame(ohlc: pd.DataFrame, annual: int) -> pd.DataFrame:
         cross_above(dea, dif).to_numpy(np.int16)).astype(np.int32)
     f[FIELD.MACD_ZERO_TIMING_LAG] = calc_event_timing_lag(
         np.where(macd > 0, 1, np.where(macd < 0, -1, 0))).astype(np.int16)
+    # DEA / DIF 的零轴 lag（4.4 `features/base.py:638-646`）：`DEA_ZERO_TIMING_LAG`
+    # 是 `calc_blh_ground_zero_anchor` 的 checkpoint 输入；DIF 是它的孪生列。
+    f[FIELD.DEA_ZERO_TIMING_LAG] = calc_event_timing_lag(
+        np.where(dea > 0, 1, np.where(dea < 0, -1, 0))).astype(np.int16)
+    f[FIELD.DIF_ZERO_TIMING_LAG] = calc_event_timing_lag(
+        np.where(dif > 0, 1, np.where(dif < 0, -1, 0))).astype(np.int16)
 
     # ---- CCI / RSI / MAXFACTOR ----
     rsi = talib.RSI(close.to_numpy(), timeperiod=12)
@@ -375,6 +381,10 @@ def _derive_major(ohlc_day: pd.DataFrame, target_index: pd.MultiIndex) -> pd.Dat
     day[FIELD.POLYNOMIAL9_TIMING_LAG_MAJOR] = calc_event_timing_lag(
         np.where(day[FIELD.POLYNOMIAL9].diff(4) > 0, 1, -1)).astype(np.int16)
     day[FIELD.POLYNOMIAL9_NORM_MAJOR] = day[FIELD.POLYNOMIAL9_NORM]
+    # 日线 MACD 原值（L2 `cost5UprBf` 的 `MACD_CROSS_{JX,SX}_BEFORE_MAJOR` 输入）
+    day[FIELD.MACD_MAJOR] = day[FIELD.MACD]
+    # 绝对价 Poly9（日频）—— `calc_blh_ground_zero_anchor` 的 checkpoint 输入。
+    day[FIELD.POLYNOMIAL9_MAJOR] = day[FIELD.POLYNOMIAL9]
     day[FIELD.BOLL_LB_HMA5_TIMING_LAG_MAJOR] = calc_event_timing_lag(
         np.where(day[FIELD.BOLL_LB_HMA5_TIMING_LAG] > 0, 1, -1)).astype(np.int16)
     day[FIELD.MACD_ZERO_TIMING_LAG_MAJOR] = calc_event_timing_lag(
@@ -409,6 +419,7 @@ def _derive_major(ohlc_day: pd.DataFrame, target_index: pd.MultiIndex) -> pd.Dat
         FIELD.DIF_NORM_TIMING_LAG_MAJOR, FIELD.DEA_NORM_TIMING_LAG_MAJOR,
         FIELD.MTM_NORM_TIMING_LAG_MAJOR,
         FIELD.POLYNOMIAL9_TIMING_LAG_MAJOR, FIELD.POLYNOMIAL9_NORM_MAJOR,
+        FIELD.POLYNOMIAL9_MAJOR, FIELD.MACD_MAJOR,
         FIELD.ATR_Stopline_TIMING_LAG_MAJOR,
         FIELD.ATR_SuperTrend_TIMING_LAG_MAJOR,
         FIELD.ATR_Stopline_PRICE_MAJOR,
@@ -449,22 +460,28 @@ def calc_compact_features(ohlc_data: pd.DataFrame,
     out = _base_frame(ohlc_data, annual=annual)
     if ohlc_day is not None and len(ohlc_day) > 0:
         major = _derive_major(ohlc_day, ohlc_data.index)
-        for col in major.columns:
-            out[col] = major[col]
+        # ⚠️ 一次 concat，不要逐列赋值 —— 60+ 列逐列 insert 会把帧打碎，
+        # 后续任何 `out[col] = ...` 都抛 `PerformanceWarning`（2026-11-20 实测）。
+        # 与 `_base_frame` 同名的列（RSI / cciNorm …）按老语义由日线值**覆盖**，
+        # 所以先从 out 里去掉再 concat，别产生重复列。
+        if len(major.columns):
+            out = pd.concat(
+                [out.drop(columns=[c for c in major.columns
+                                   if c in out.columns]), major], axis=1)
     else:
         out[FIELD.MACD_CROSS_SX_BEFORE_MAJOR] = Timeline_duration(
             np.where(pd.Series(out[FIELD.MACD_CROSS_SX_BEFORE]).diff(1) < 0,
                      1, 0)).astype(np.int32)
 
     # 单帧模式没有的周线列 / 延迟列：补 NaN，保证 37 列契约完整。
-    for col in COMPACT_COLUMNS:
-        if col not in out.columns:
-            out[col] = np.nan
+    # ⚠️ 同样一次 concat，别在循环里 `out[col] = np.nan`（碎片化告警的源头）。
+    _missing = [c for c in COMPACT_COLUMNS if c not in out.columns]
+    if _missing:
+        out = pd.concat(
+            [out, pd.DataFrame(np.nan, index=out.index, columns=_missing)],
+            axis=1)
 
     # 保留 OHLCV（rank 需要 close；落库/下游也常用）。
-    # ⚠️ **一次 `pd.concat`，不要逐列 `out[col] = ...`**：上面已经逐列插过
-    # `COMPACT_COLUMNS` / `major`，帧已高度碎片化，再逐列 insert 会抛
-    # `PerformanceWarning: DataFrame is highly fragmented`（2026-11-16 实测）。
     _ohlcv = {c: ohlc_data[c] for c in (AKA.OPEN, AKA.HIGH, AKA.LOW,
                                         AKA.CLOSE, AKA.VOLUME, AKA.AMOUNT)
               if c in ohlc_data.columns}
@@ -477,13 +494,15 @@ def calc_compact_features(ohlc_data: pd.DataFrame,
     out = out.reindex(ohlc_data.index)
     if include_rank:
         ranked = calc_portfolio_rank(out, verbose=verbose)
-        for col in (PFL.STOCK_PORTFOLIO_RANK, PFL.STOCK_PORTFOLIO_RETURNS,
-                    PFL.STOCK_PORTFOLIO_RANK_NEGATIVE,
-                    PFL.STOCK_PORTFOLIO_RANK_BEFORE,
-                    PFL.STOCK_PORTFOLIO_RANK_TRACING,
-                    PFL.STOCK_PORTFOLIO_RANK_METAPHASE,
-                    PFL.STOCK_PORTFOLIO_RANK_METAPHASE_MAJOR):
-            out[col] = ranked[col]
+        _rank_cols = (PFL.STOCK_PORTFOLIO_RANK, PFL.STOCK_PORTFOLIO_RETURNS,
+                      PFL.STOCK_PORTFOLIO_RANK_NEGATIVE,
+                      PFL.STOCK_PORTFOLIO_RANK_BEFORE,
+                      PFL.STOCK_PORTFOLIO_RANK_TRACING,
+                      PFL.STOCK_PORTFOLIO_RANK_METAPHASE,
+                      PFL.STOCK_PORTFOLIO_RANK_METAPHASE_MAJOR)
+        out = pd.concat(
+            [out.drop(columns=[c for c in _rank_cols if c in out.columns]),
+             ranked[list(_rank_cols)]], axis=1)
     if verbose:
         print('[compact] {} bars / {} cols'.format(len(out), len(out.columns)))
     return out

@@ -44,6 +44,8 @@ class LTT:
     QUADRANT_POWERLINE_MINOR = '4QPwrlnMin'
     QUADRANT_POWERLINE_MAJOR = '4QPwrlnMaj'
     QUADRANT_POWERLINE_TIMING_LAG_MAJOR = '4QPwrlnLagMaj'
+    #: 周线 `4QPwrln`（用户 2026-11-21）：跟随其他周线指标一起算，映射到 60min 落库。
+    QUADRANT_POWERLINE_WEEKLY = '4QPwrlnWek'
     #: 15min 重命名族（老树 `reviews.py:1815-1835`）。
     ONE_QUADRANT_UPRISING_TIMING_LAG_MINOR = '1QUprLagMin'
     TWO_QUADRANT_UPRISING_TIMING_LAG_MINOR = '2QUprLagMin'
@@ -201,4 +203,13 @@ class ZEN:
     PIVOT_DD = 'ZenPivotDD'              # 中枢最低点（延伸下界）
     PIVOT_DIRECTION = 'ZenPivotDir'      # 中枢方向 up/down
     PIVOT_TIMING_LAG = 'ZenPivotLag'     # 距离开中枢（PIVOT_ZD NaN）以来的 lag
+    #: **日线版**（用户 2026-11-20）：日表落 `ZenPivotLagMaj`，attach 时与 60min
+    #: `ZenPivotLag` 并列映射到 60min features。
+    PIVOT_TIMING_LAG_MAJOR = 'ZenPivotLagMaj'
+    #: **15min 版**：15min 表落 `ZenPivotLagMin`，attach 时一并映射到 60min features。
+    PIVOT_TIMING_LAG_MINOR = 'ZenPivotLagMin'
     PIVOT_COUNT = 'ZenPivotCnt'          # 截至当前 bar 已确认的中枢个数（因果）
+    #: **重新实现**的「波浪内最大趋势」时序（2026-11-22，`analysis/zen_ols.py`）：
+    #: 段 = `ZenPivotLag` 符号相同的连续 bar；段内用 LIS/LDS 找趋势主干，
+    #: 再折成 event lag。**不搬**老树那条聚类/小波链，故与老树数值不同。
+    OLS_TIMING_LAG = 'ZenOLSLag'

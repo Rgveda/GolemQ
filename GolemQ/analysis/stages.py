@@ -66,7 +66,8 @@ from functools import cmp_to_key
 import numpy as np
 import pandas as pd
 
-from GolemQ.core.constants import AKA, FIELD as FLD
+from GolemQ.core.constants import AKA, FIELD as FLD, TREND_STATUS as ST
+from GolemQ.analysis.timing import Timeline_duration
 
 __all__ = [
     'calc_garident_price',
@@ -274,6 +275,120 @@ def calc_garident_stage(curr_closep: float, curr_garident_prices) -> float:
     if ret_stage == -1 and np.isnan(curr_closep):
         return np.nan
     return ret_stage
+
+
+#: `calc_blh_ground_zero_anchor` 的输入列（4.4 `fractal/vXII.py:501-549`）。
+_CHECKPOINT_INPUTS = (
+    FLD.BOLL_LB_HMA5_TIMING_LAG,
+    FLD.MACD_ZERO_TIMING_LAG_MAJOR,
+    FLD.POLYNOMIAL9_TIMING_LAG_MAJOR,
+    FLD.POLYNOMIAL9_MAJOR,
+    FLD.BOLL_LB_HMA5_TIMING_LAG_MAJOR,
+    FLD.MAPOWER30_TIMING_LAG,
+    FLD.MAPOWER30,
+    FLD.DEA_ZERO_TIMING_LAG,
+    FLD.DIF_ZERO_TIMING_LAG,
+)
+
+
+def calc_cluster_checkpoints(features: pd.DataFrame) -> pd.DataFrame:
+    """4.4 `calc_blh_ground_zero_anchor` 的 **checkpoint 段**（逐字搬运）。
+
+    写 `ST.CLUSTER_GROUP_CHECKPOINTS`（值 1/2/NaN）及两个**中间列**
+    （`BOLL_L_HMA5_CHK` / `_BF`、`CLT_GRP_CHK_BF`，不落库）。
+
+    ⚠️ **这是 stage 的关键差异点**：新树 2026-10 曾用 `iloc[::21]` 近似
+    checkpoint，导致 `-0.5` 半档永远出不来。4.4 真正的 checkpoint 由下面这组
+    信号决定（用户 2026-11-18：「要搬的是 4.4 的算法，不是 4.4 的行」）。
+
+    输入缺列时**整列置 NaN**（不抛）—— 短历史/非 compact 帧应保持静默空值。
+    """
+    # `calc_compact_features` 返回的帧经过多次 concat/reindex，可能仍是分片的；
+    # 先 copy() 一次（pandas 官方给的去碎片化手段），否则下面的逐列赋值会刷
+    # `PerformanceWarning: DataFrame is highly fragmented`（2026-11-20 实测）。
+    f = features.copy()
+    f[ST.CLUSTER_GROUP_CHECKPOINTS] = np.nan
+    f[FLD.BOLL_LB_HMA5_CHECKOUT] = np.nan
+    f[FLD.BOLL_LB_HMA5_CHECKOUT_BEFORE] = np.nan
+    f[ST.CLUSTER_GROUP_CHECKPOINTS_BEFORE] = np.nan
+    if any(c not in f.columns for c in _CHECKPOINT_INPUTS):
+        return f
+
+    num = lambda c: pd.to_numeric(f[c], errors='coerce')  # noqa: E731
+    boll_lag = num(FLD.BOLL_LB_HMA5_TIMING_LAG)
+    poly_maj = num(FLD.POLYNOMIAL9_MAJOR)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        poly_chg = np.log(poly_maj / poly_maj.shift(4))
+
+    # 1) BOLL_L_HMA5_CHK：1 = 跌破下轨 + MACD/Poly9 都在零轴下；2 = 日线也弱。
+    chk = np.where(
+        (boll_lag < 4)
+        & (num(FLD.MACD_ZERO_TIMING_LAG_MAJOR) < 0)
+        & (num(FLD.POLYNOMIAL9_TIMING_LAG_MAJOR) < 0)
+        & (poly_chg < -0.00618)
+        & (num(FLD.POLYNOMIAL9_TIMING_LAG_MAJOR) < boll_lag), 1,
+        np.where(num(FLD.BOLL_LB_HMA5_TIMING_LAG_MAJOR) < 0, 2, np.nan))
+    f[FLD.BOLL_LB_HMA5_CHECKOUT] = np.asarray(chk, dtype=np.float16)
+    f[FLD.BOLL_LB_HMA5_CHECKOUT_BEFORE] = Timeline_duration(
+        np.where(f[FLD.BOLL_LB_HMA5_CHECKOUT] > 0, 1, 0)).astype(np.int16)
+
+    # 2) 中间一段：MAPOWER30 转负且与上一 checkpoint 的间隔 <= 0 ⇒ 3。
+    f[FLD.BOLL_LB_HMA5_CHECKOUT] = np.where(
+        f[FLD.BOLL_LB_HMA5_CHECKOUT] > 0.00168,
+        f[FLD.BOLL_LB_HMA5_CHECKOUT],
+        np.where((num(FLD.MAPOWER30_TIMING_LAG) < 0)
+                 & ((num(FLD.MAPOWER30_TIMING_LAG)
+                     + num(FLD.BOLL_LB_HMA5_CHECKOUT_BEFORE)) <= 0),
+                 3, f[FLD.BOLL_LB_HMA5_CHECKOUT])).astype(np.float16)
+    f[FLD.BOLL_LB_HMA5_CHECKOUT_BEFORE] = Timeline_duration(
+        np.where(f[FLD.BOLL_LB_HMA5_CHECKOUT] > 0, 1, 0)).astype(np.int16)
+
+    # 3) CLT_GRP_CHK：1 = 常规 checkpoint；2 = MAPOWER30 刚转正（强启动）。
+    _before = num(FLD.BOLL_LB_HMA5_CHECKOUT_BEFORE)
+    _mp_lag = num(FLD.MAPOWER30_TIMING_LAG)
+    _mp = num(FLD.MAPOWER30)
+    chk = np.where(
+        ((_before < 20)
+         | ((_before < 40)
+            & (num(FLD.DEA_ZERO_TIMING_LAG) < 0)
+            & (num(FLD.DIF_ZERO_TIMING_LAG) < 0)
+            & ((_before + num(FLD.POLYNOMIAL9_TIMING_LAG_MAJOR)) < 0)))
+        & (_mp_lag > 0) & (_mp > 0.0927) & (_mp.shift(1) < 0.0927), 1, np.nan)
+    chk = np.where(
+        (_before < 1)
+        & (num(FLD.DEA_ZERO_TIMING_LAG) < 0)
+        & (num(FLD.DIF_ZERO_TIMING_LAG) < 0)
+        & (_mp_lag == 1) & (_mp > 0.0927), 2, chk)
+    f[ST.CLUSTER_GROUP_CHECKPOINTS] = np.asarray(chk, dtype=np.float16)
+    f[ST.CLUSTER_GROUP_CHECKPOINTS_BEFORE] = Timeline_duration(
+        np.where(f[ST.CLUSTER_GROUP_CHECKPOINTS] > 0, 1, 0)).astype(np.float16)
+    return f
+
+
+def calc_stage_frame(ohlc, ohlc_day=None, random_state=None) -> pd.DataFrame:
+    """60min + 日线 → 4.4 的 **stage 族**（算法移植，不是行搬运）。
+
+    链路与 4.4 `benchmark/compact.py` 一致：
+
+    1. `calc_compact_features` 造 60min 特征 + 日线 `_MAJOR` 映射；
+    2. :func:`calc_cluster_checkpoints` 算 `CLT_GRP_CHK`；
+    3. 取 `CLT_GRP_CHK > 0` 的行做 checkpoint，调 :func:`calc_garident_stages`
+       定带并逐 bar 判 stage。
+
+    ⚠️ **K-Means 有随机性**（老树没设 `random_state`）—— 不传 `random_state`
+    才与 4.4 同一口径；要可复现就显式传固定值，但结果会与 4.4 有少量差异。
+    这是算法本身的性质，不是移植缺陷。
+
+    :returns: `ohlc` 同索引的帧，含 `stage` / `garPCount` / `garPClr` /
+        `garPAnchor` / 绝对价带 `GARIDENT_PRICE`（未落库的中间列可忽略）。
+    """
+    from GolemQ.analysis.compact import calc_compact_features
+    f = calc_compact_features(ohlc, ohlc_day, include_rank=False)
+    f = calc_cluster_checkpoints(f)
+    ck = f[f[ST.CLUSTER_GROUP_CHECKPOINTS] > 0]
+    if len(ck) == 0:
+        return f
+    return calc_garident_stages(ck, f, random_state=random_state)
 
 
 def calc_garident_stages(checkpoints: pd.DataFrame, features: pd.DataFrame,

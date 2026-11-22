@@ -302,8 +302,11 @@ def markup_uprising_labels(features: pd.DataFrame,
     regtree_col = _pick(features, 'REGTREE_SLOPE', required=False)
     if regtree_col is None and len(features) > 456 and \
             all(c in features.columns for c in ohlc_cols):
-        from GolemQ.analysis.regtree_jit import calc_regtree_fractal_func
-        features = calc_regtree_fractal_func(features[list(ohlc_cols)],
+        from GolemQ.analysis.regtree_jit import calc_regtree_fractal_vXIs
+        # ⚠️ 2026-11-23：`calc_regtree_fractal_func` / `_vXI` 已删除（被
+        # `_vXIs` 取代：float32 + `rTrePrcD` 比值 + 前置段用 close 填）。
+        # 这里只用它补 `REGTREE_SLOPE`，`_vXIs` 同样产出该列。
+        features = calc_regtree_fractal_vXIs(features[list(ohlc_cols)],
                                              features=features,
                                              bar_limit=450, rate=25, dur=10)
         regtree_col = _pick(features, 'REGTREE_SLOPE', required=False)

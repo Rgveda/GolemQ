@@ -26,7 +26,7 @@ from GolemQ.analysis.quadrant_jit import (calc_bs_signals, calc_four_quadrant_bo
 from GolemQ.analysis.timing import calc_event_timing_lag
 from GolemQ.analysis.zen import calc_zen_timing_lag
 from GolemQ.core.constants import AKA, FEATURES, FIELD as FLD
-from GolemQ.models.alias import LTT, TRD
+from GolemQ.models.alias import LTT, TRD, ZEN
 from GolemQ.pipeline.steps import FeatureStep, ReviewContext, TIER_DAILY
 from GolemQ.pipeline.review.contract import MINOR_15MIN_COLUMNS, MINOR_COLUMNS
 
@@ -84,6 +84,14 @@ def minor_features(ohlc: pd.DataFrame, code: str,
     # 5) zen（老树 `calc_zen_chopstickss` 的核，新树 czsc 0.7.10）
     feats = calc_zen_timing_lag(ohlc, features=feats,
                                 market_type=market_type)
+
+    # 15min 版中枢 lag（用户 2026-11-20）：窗口截止到当前 60min 目标，
+    # 只取窗口最后 4 根写 15min 表（`zen_snapshots` 的 `last_hour`）。
+    from GolemQ.pipeline.review.steps.hour_extra import (
+        pivot_lag_minor_window)
+    _pl = pivot_lag_minor_window(ohlc, code)
+    feats[ZEN.PIVOT_TIMING_LAG_MINOR] = (_pl.reindex(ohlc.index)
+                                         if len(_pl) else np.nan)
 
     feats = feats.rename(columns=_RENAME)
     out = pd.DataFrame(index=ohlc.index)

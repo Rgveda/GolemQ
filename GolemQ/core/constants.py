@@ -363,6 +363,8 @@ class AKA(metaclass=_StubMeta):
     TRADE_CAL = 'tradeCalendar'
     COST5_PRICE = 'cost5Prz'
     COST5_PRICE_DUMMY = 'cost5PrzD'
+    #: D85 化简版 `COST5_UPRISING_BEFORE`（`Timeline_duration` 计数）。
+    COST5_UPRISING_BEFORE = 'cost5UprBf'
     RETURN_COST95 = 'RetCost95'
     COST15_PRICE = 'cost15Prz'
     COST15_PRICE_DUMMY = 'cost15PrzD'
@@ -484,6 +486,10 @@ class FIELD(metaclass=_StubMeta):
     MAPOWER30 = 'mpwr3'
     MACD_ZERO_TIMING_LAG_MAJOR = 'macdOLagMaj'
     BOLL_LB_HMA5_TIMING_LAG_MAJOR = 'bollLHma5LagMaj'
+    #: 4.4 `calc_blh_ground_zero_anchor` 的 checkpoint 中间列（**不落库**，仅内存）。
+    #: 值沿用旧树真名，见 `GolemQ_old/utils/parameter.py:1731`。
+    BOLL_LB_HMA5_CHECKOUT = 'BOLL_L_HMA5_CHK'
+    BOLL_LB_HMA5_CHECKOUT_BEFORE = 'BOLL_L_HMA5_CHK_BF'
     DEA_NORM_MAJOR = 'deaNormMaj'
     DIF_NORM_MAJOR = 'difNormMaj'
     MTM_NORM_MAJOR = 'mtmNormMaj'
@@ -634,6 +640,8 @@ class FIELD(metaclass=_StubMeta):
     ATR_LB_MAJOR = 'ATR_LB_MAJ'
     COMBINE_DENSITY = 'combDensity'
     DEA_ZERO_TIMING_LAG = 'deaOLag'
+    #: DEA 的孪生列（旧树 `DIF_O_LAG`）；新树按伪驼峰命名，DIF 原先缺失。
+    DIF_ZERO_TIMING_LAG = 'difOLag'
     HMA10 = 'HMA10'
     HMA5 = 'HMA5'
     HMAPOWER120 = 'hmpwr12'
@@ -796,6 +804,8 @@ class TREND_STATUS(metaclass=_StubMeta):
     """
     _instance = None
     CLUSTER_GROUP_CHECKPOINTS = 'CLT_GRP_CHK'
+    #: 距上一个 checkpoint 的持续根数（4.4 `CLT_GRP_CHK_BF`，中间列不落库）。
+    CLUSTER_GROUP_CHECKPOINTS_BEFORE = 'CLT_GRP_CHK_BF'
 
     def __new__(cls):
         if cls._instance is None:

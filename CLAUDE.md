@@ -16,6 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 5 | [`MIGRATION_STATUS.md`](MIGRATION_STATUS.md) | 重构遗留缺陷清单（含修复顺序建议）|
 | 6 | [`API_INDEX.md`](API_INDEX.md) | **导航索引**（模块 / 名称 + 一行摘要，由 `tools/gen_api_index.py` 生成）。找东西先查它，比逐个 `Read` 源文件省一个数量级 |
 | 7 | [`docs/data_inventory.md`](docs/data_inventory.md) | **数据暗线**：三个库、频率阶梯（1min 是母数据）、`*_removed`、实时滚动库、4.4 遗留与坑。**说「数据不够 / 没搬全」之前先读它** |
+| 8 | [`docs/massive_timing.md`](docs/massive_timing.md) | **Massive 择时模型**：`MasPosOnhold` / `STAGE_MODE` / 满仓-清仓暴击 / 周线 `4QPwrln` 共振怎么算、怎么读、历史检验结果与坑（含「两月牛」日期校准） |
 | — | [`docs/worklog/`](docs/worklog/) | **历史**（每轮做了什么、为什么）。**不是指南、只增不改** —— 按需 `grep`，**别通读** |
 
 **改代码前先查 `PITFALLS.md` 与 `GLOSSARY.md`。**
@@ -299,7 +300,7 @@ python -m GolemQ.cli.internal --fill-turnover --fill-turnover-codes 600519,00000
 - **Market registry**: `GQMARKETS` (dict in `core/market_registry.py`，再导出到 `GolemQ.__init__`) holds market instances. `cli/tools.py` auto-discovers and registers them. `GQSUBSCRIBER` maps subscription keys (e.g., `l1_tencent`) to subscriber functions. **取数据的唯一入口是市场实例**：`get_active_market()`（尊重 `set_active_market` 的切换）或 `get_default_market()`（始终系统默认的那个）。⚠️ 2026-10-10 起 `GolemQ/fetch/` 整包已删 —— 没有中转门面，别再造一层。
 - **StockCN singleton**: `StockCN.__new__` enforces a single instance. Auto-instantiated on module import and registered into `GQMARKETS`.
 - **Configuration**: `GQ_Setting` reads/writes `~/.GolemQ/settings/config.ini`. Sections `DINGTALK`, `SERVERCHAN`, `XTQUANT` are stored in the INI file; other sections fall back to MongoDB.
-- **Single database**: 一律 MongoDB **8.3** —— 行情与参考数据在 `GOLEMQ_STOCK_CN`（`golemq_stock_cn`）、实时在 `GOLEMQ_STOCK_CN_REALTIME`、框架运维（心跳/签到/关注列表）在 `GOLEMQ`（`golemq`）。**QUANTAXIS 已全树剔除**（`DECISIONS.md` D12）。4.4 通道：2026-10-10 曾按 D33 整条删除，**同日发现前提有误**（元数据类集合从没搬过）后**按需恢复**，用途限定为一次性搬运（`core/migrate44.py` = 唯一入口，只读，运行时代码禁止 import）—— 见 `DECISIONS.md` 的 **D33 修正条**与 **D34**。
+- **Single database**: 一律 MongoDB **8.3** —— 行情与参考数据在 `GOLEMQ_STOCK_CN`（`golemq_stock_cn`）、实时在 `GOLEMQ_STOCK_CN_REALTIME`、框架运维（心跳/签到/关注列表）在 `GOLEMQ`（`golemq`）。**QUANTAXIS 已全树剔除**（`DECISIONS.md` D12）。4.4 通道：2026-10-10 曾按 D33 整条删除，**同日发现前提有误**（元数据类集合从没搬过）后**按需恢复**；**2026-11-18 起（D83）只在 `tools/migrate44.py`**，`GolemQ/` 与 `examples/` **完全解耦**（不得 import / 自连 4.4）—— 见 **D33 修正条**、**D34**、**D83**，守卫 `test_no_44_runtime.py`。
 - **库名不外泄**（硬规定）：A 股行情库名 `'golemq_stock_cn'` 与两个行情库句柄 `GOLEMQ_STOCK_CN` / `GOLEMQ_STOCK_CN_REALTIME` **只允许出现在 `markets/StockCN/` 之内**。别处一律经市场对象的中性访问口 `get_active_market().get_database()` 取实例，**不准引用句柄常量、不准自己连库、不准拼库名** —— 判错**不会报错**，只会静默读到另一个库/空集。
 - **Heartbeat/mutex**: `HeartbeatModule.mutex()` checks for conflicting running instances in MongoDB before starting, using a timeout-based lock. `HeartbeatMonitor` runs a daemon thread that detects stale modules and fires alerts.
 - **Data flow**: Free data sources (Tencent, Sina, EastMoney via `easyquotation/`) → `services/` feature extraction → MongoDB → `analysis/` / `pipeline/` consumption. XTQuant gateway provides live position/order data.

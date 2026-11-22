@@ -58,6 +58,9 @@ SNAPSHOT_AGS: Sequence[Agg] = (
     # RETURN_COST5 = cost5/close - 1；库里 `cost5PrzD` 是 cost5/close 的比值
     Agg('RETURN_COST5_MEDIAN', 'cost5PrzD', 'median', pre=lambda s: s - 1.0),
     Agg('RETURN_COST95_MEDIAN', 'cost95PrzD', 'median', pre=lambda s: s - 1.0),
+    # 周线 4QPwrln 的横截面中位数 / 众数（用户 2026-11-21）
+    Agg('MasQuadPwrlnWekMed', '4QPwrlnWek', 'median'),
+    Agg('MasQuadPwrlnWekMode', '4QPwrlnWek', 'mode'),
     # 逐码 M9T combo（COMPOUNDED）的众数 / 中位数
     Agg('MAGIC_NINE_TURNS_DUMMY_COMPOUNDED_MODE', 'm9tCmpod', 'mode',
         drop_zero=True),

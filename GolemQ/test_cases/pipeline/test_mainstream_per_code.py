@@ -75,9 +75,13 @@ class _StubMainstream(MainstreamPipeline):
     def market_timeline(self, as_of):
         return self._timeline
 
-    def code_masks(self, code, as_of):
+    def code_masks_and_pwrln(self, code, as_of):
         self.called.append(code)                 # ← 记录每个码被单独调用一次
-        return self._masks.get(code)
+        r = self._masks.get(code)
+        if r is None:
+            return None
+        ts, bull, bear = r
+        return ts, bull, bear, np.full(len(ts), np.nan)
 
     def snapshot_contracts(self):
         return None
