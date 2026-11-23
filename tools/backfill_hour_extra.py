@@ -61,7 +61,8 @@ def _market_type(code: str):
 
 def target_datetimes(code: str, since: str = '',
                      marker: str = _MARKER,
-                     missing: bool = False) -> pd.DatetimeIndex:
+                     missing: bool = False,
+                     all_rows: bool = False) -> pd.DatetimeIndex:
     """该码的 60min 时刻（按 `datetime` 字符串解析）。
 
     :param missing: ``True`` ⇒ 取**该列还空着**的行（`--zen-ols-only` 的「填空」
@@ -70,7 +71,10 @@ def target_datetimes(code: str, since: str = '',
     db = _db()
     from GolemQ.markets.StockCN.reality_save import reality_feat_name
     name = reality_feat_name('60min', _market_type(code))
-    q = {'code': str(code), marker: (None if missing else {'$ne': None})}
+    if all_rows:
+        q = {'code': str(code)}          # 该码全部行（覆盖/重算）
+    else:
+        q = {'code': str(code), marker: (None if missing else {'$ne': None})}
     cur = db[name].find(q, {'datetime': 1, '_id': 0})
     vals = [pd.Timestamp(d['datetime']) for d in cur if d.get('datetime')]
     if not vals:
@@ -258,8 +262,12 @@ def backfill_code(code: str, apply: bool, since: str = '',
             marker = 'ZenPivotLag'
         else:
             marker = _MARKER
-        targets = target_datetimes(code, since=since, marker=marker,
-                                   missing=bool(zen_ols_only))
+        # `--zen-ols-only`：默认只补空值；`--redo` ⇒ 该码**全部行重算**
+        # （改了口径/规则后覆盖已有值，2026-11-23）
+        targets = target_datetimes(
+            code, since=since, marker=marker,
+            missing=bool(zen_ols_only and not redo),
+            all_rows=bool(zen_ols_only and redo))
         if len(targets) == 0:
             return {'code': code, 'status': 'no_targets'}
         if apply and not redo and not zen_pivot_only and not zen_ols_only:

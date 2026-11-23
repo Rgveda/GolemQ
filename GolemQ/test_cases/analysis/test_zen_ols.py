@@ -31,7 +31,9 @@ except ImportError:
     sys.path.insert(0, os.path.abspath(
         os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 
-from GolemQ.analysis.zen_ols import (calc_zen_ols_timing_lag,
+from GolemQ.analysis.zen_ols import (MIN_PEAKS_SIDE, WIDEN_FACTOR,
+                                     _collect_peaks,
+                                     calc_zen_ols_timing_lag,
                                      calc_zen_ols_timing_lag_streaming,
                                      cross_marks, lds_positions,
                                      lis_positions, segment_ids)
@@ -197,3 +199,27 @@ class TestScaleInvariance(unittest.TestCase):
             np.testing.assert_array_equal(
                 np.asarray(got, dtype=float), np.asarray(base, dtype=float),
                 err_msg=f'整体 ×{k} 改变了 ZenOLSLag —— 引入了绝对量纲')
+
+
+class TestMinPeaksRule(unittest.TestCase):
+    """一侧峰点 < 3 ⇒ 不出该方向交叉；此时取样窗扩到 **2 倍段长** 重取。
+
+    起因（用户 2026-11-23）：000711 在 2026-09-22 10:30 出 +1 时，所在段
+    （75 根、`ZenPivotLag=+75`）里**只有 1 个高峰** —— 这一浪根本还没成形；
+    一小时后价格出中枢、段切到 205 根，又出 -1，同一小时内来回翻。
+    """
+
+    def test_constants(self):
+        self.assertEqual(MIN_PEAKS_SIDE, 3)
+        self.assertEqual(WIDEN_FACTOR, 2)
+
+    def test_collect_peaks_counts_by_side(self):
+        import numpy as np
+        marks = np.array([0, 1, 0, -1, 0, 1, -1, 0], dtype=np.int8)
+        low = np.full(8, 10.0); high = np.full(8, 11.0)
+        lo, hi = _collect_peaks(marks, low, high, 0, 7)
+        self.assertEqual(lo, [1, 5])
+        self.assertEqual(hi, [3, 6])
+        lo2, hi2 = _collect_peaks(marks, low, high, 0, 2)   # 只到下标 2
+        self.assertEqual(lo2, [1])
+        self.assertEqual(hi2, [])

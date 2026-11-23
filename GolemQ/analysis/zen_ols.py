@@ -192,6 +192,23 @@ def czsc_peak_markers(ohlc: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
 # --------------------------------------------------------------------------- #
 # 分段
 # --------------------------------------------------------------------------- #
+#: 一侧峰点少于此数 ⇒ 认为「这一浪还没成形」，不出该方向的交叉
+#: （用户 2026-11-23：2026-09-22 那段 75 根里只有 1 个高峰，却出了 +1，
+#:  一个小时后段切到 205 根又出 -1，同一小时来回翻）。
+MIN_PEAKS_SIDE = 3
+#: 峰点不够时把取样窗按段长放大到这么多倍重取
+WIDEN_FACTOR = 2
+
+
+def _collect_peaks(marks, low, high, a, b):
+    """取 ``[a, b]`` 内可用于 LIS/LDS 的峰点下标。"""
+    lo = [k for k in range(a, b + 1)
+          if marks[k] == 1 and np.isfinite(low[k])]
+    hi = [k for k in range(a, b + 1)
+          if marks[k] == -1 and np.isfinite(high[k])]
+    return lo, hi
+
+
 def segment_ids(pivot_lag) -> np.ndarray:
     """按 `ZenPivotLag` 的**符号**切段，返回逐 bar 的段编号。
 
@@ -340,11 +357,15 @@ def cross_marks(ohlc: pd.DataFrame, pivot_lag=None, peak: str = 'czsc',
                 lo, hi = _mark_idx(a, b, upto=t)
                 new_low = [i for i in newly if marks[i] == 1]
                 new_high = [i for i in newly if marks[i] == -1]
-                if new_low and len(lo) >= min_peak:
+                # 一侧峰点 < MIN_PEAKS_SIDE ⇒ 扩窗 2 倍重取（与流式同口径）
+                if (new_low and len(hi) < MIN_PEAKS_SIDE) or                         (new_high and len(lo) < MIN_PEAKS_SIDE):
+                    a1 = max(0, t - WIDEN_FACTOR * (t - a + 1) + 1)
+                    lo, hi = _mark_idx(a1, b, upto=t)
+                if new_low and len(hi) >= MIN_PEAKS_SIDE and len(lo) >= min_peak:
                     pos = lis_positions(low[lo])
                     if pos and lo[pos[-1]] in new_low:
                         cross[t] = 1
-                elif new_high and len(hi) >= min_peak:
+                elif new_high and len(lo) >= MIN_PEAKS_SIDE and len(hi) >= min_peak:
                     pos = lds_positions(high[hi])
                     if pos and hi[pos[-1]] in new_high:
                         cross[t] = -1
@@ -465,13 +486,19 @@ def calc_zen_ols_timing_lag_streaming(ohlc: pd.DataFrame,
             s0 -= 1
         if not in_pivot_marks and piv_lag[i] > 0:
             continue
-        lo = [k for k in range(s0, i + 1) if marks[k] == 1 and np.isfinite(low[k])]
-        hi = [k for k in range(s0, i + 1) if marks[k] == -1 and np.isfinite(high[k])]
-        if marks[j] == 1 and len(lo) >= min_peak:
+        lo, hi = _collect_peaks(marks, low, high, s0, i)
+        # ⚠️ 一侧峰点 < MIN_PEAKS_SIDE ⇒ 这一浪还没成形，LIS/LDS 的结论不可靠。
+        # 先把取样窗按段长放大到 2 倍重取；仍不够就**不出该方向**的交叉
+        # （用户 2026-11-23 口径）。
+        if (marks[j] == 1 and len(hi) < MIN_PEAKS_SIDE) or                 (marks[j] == -1 and len(lo) < MIN_PEAKS_SIDE):
+            _span = i - s0 + 1
+            s1 = max(0, i - WIDEN_FACTOR * _span + 1)
+            lo, hi = _collect_peaks(marks, low, high, s1, i)
+        if marks[j] == 1 and len(hi) >= MIN_PEAKS_SIDE and len(lo) >= min_peak:
             pos = lis_positions(low[lo])
             if pos and lo[pos[-1]] == j:
                 cross[i] = 1
-        elif marks[j] == -1 and len(hi) >= min_peak:
+        elif marks[j] == -1 and len(lo) >= MIN_PEAKS_SIDE and len(hi) >= min_peak:
             pos = lds_positions(high[hi])
             if pos and hi[pos[-1]] == j:
                 cross[i] = -1
