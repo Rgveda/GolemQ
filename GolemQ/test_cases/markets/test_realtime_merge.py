@@ -220,5 +220,75 @@ class TestMinRealtimeMergeBody(unittest.TestCase):
             self.assertEqual(RT.dt.now(), _FrozenDT.NOW)
 
 
+class TestDayRealtimeMergeBody(unittest.TestCase):
+    """`GQ_fetch_stock_day_realtime_adv` 的**函数体**：快照 tick → 当日日线。
+
+    ⚠️ 2026-11-23 的 bug（D90 补）：分钟侧修好后，日线仍走
+    `tick_resample_1min → min_to_day(sum)` —— 累计量被**逐分钟再 sum**，
+    000711 实测 2.51e10 手（真值 2.75e6）。本类钉住两件事：
+
+    * `volume` = 最后一条**累计** ÷ 100（股 → 手），不是增量、也不是逐笔 sum；
+    * `open/high/low` 取快照的**日级**字段 —— `--sub` 只跑了下午时，
+      也不能把「13:21 的现价」当今开写进去。
+    """
+
+    def _history(self):
+        idx = pd.MultiIndex.from_arrays(
+            [pd.DatetimeIndex(['2026-10-09']), ['600519']], names=['ts', 'code'])
+        return KlineResult(pd.DataFrame({
+            'code': '600519', 'open': 1260.0, 'high': 1261.0, 'low': 1259.0,
+            'close': 1260.5, 'volume': 1000.0, 'amount': 1260500.0,
+            'adj': 1.0,
+        }, index=idx))
+
+    def _ticks(self):
+        dts = pd.date_range('2026-10-12 13:21', periods=10, freq='1min')
+        cum = np.arange(1, 11) * 1_000_000.0          # 累计**股**数
+        return pd.DataFrame({
+            'datetime': dts, 'code': '600519',
+            'price': 1270.0, 'close': 1260.5,          # close 是**昨收**
+            'open': 1265.0, 'high': 1280.0, 'low': 1260.0,
+            'vol': cum, 'amount': cum * 1270.0,
+        })
+
+    def _merge(self, history, ticks):
+        from GolemQ.core.constants import MARKET_TYPE
+        info = pd.DataFrame({'liutongguben': [2.357015e9]}, index=['600519'])
+        with unittest.mock.patch.object(RT, 'GQ_fetch_stock_realtime_adv',
+                                        return_value=ticks), \
+                unittest.mock.patch.object(RT, 'GQ_fetch_stock_info',
+                                           return_value=info), \
+                unittest.mock.patch.object(RT, 'GQ_util_get_last_day',
+                                           return_value=_FrozenDT.NOW.replace(
+                                               hour=0, minute=0, second=0)), \
+                unittest.mock.patch.object(RT, 'dt', _FrozenDT), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            return RT.GQ_fetch_stock_day_realtime_adv(
+                ['600519'], history, market_type=MARKET_TYPE.STOCK_CN,
+                verbose=False)
+
+    def _last_day_row(self, out):
+        d = out.data.copy()
+        days = pd.to_datetime(d.index.get_level_values(0))
+        return d.loc[days == pd.Timestamp('2026-10-12')]
+
+    def test_day_bar_from_cumulative_snapshot(self):
+        out = self._merge(self._history(), self._ticks())
+        row = self._last_day_row(out)
+        self.assertEqual(len(row), 1, '注入 tick 的那天没进日线结果')
+        self.assertAlmostEqual(float(row['open'].iloc[0]), 1265.0)
+        self.assertAlmostEqual(float(row['high'].iloc[0]), 1280.0)
+        self.assertAlmostEqual(float(row['low'].iloc[0]), 1260.0)
+        self.assertAlmostEqual(float(row['close'].iloc[0]), 1270.0)
+
+    def test_day_volume_is_cumulative_not_sum(self):
+        """老路径会得到 1e6+2e6+…=5.5e7 手；正确值是最后累计 1e7 股 = 1e5 手。"""
+        out = self._merge(self._history(), self._ticks())
+        row = self._last_day_row(out)
+        self.assertAlmostEqual(float(row['volume'].iloc[0]), 100_000.0, delta=1.0)
+        self.assertAlmostEqual(float(row['amount'].iloc[0]), 1.27e10, delta=1.0)
+
+
 if __name__ == '__main__':
     unittest.main()

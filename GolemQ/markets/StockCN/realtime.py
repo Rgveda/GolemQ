@@ -867,30 +867,72 @@ def GQ_fetch_stock_day_realtime_adv(
                                                              data_realtime_code['volume'], 
                                                              data_realtime_code['vol'])
 
-                    # 一分钟数据转出来了
-                    try:
-                        data_realtime_1min = GQ_data_tick_resample_1min(
-                            data_realtime_code, 
-                            type_='1min',
-                            stack_vol=False)
-                        # data_realtime_1min['vol']
-                        if (market_type == MARKET_TYPE.STOCK_CN):
-                            # 公式**只此一份**：`metadata_save.turnover_from_volume`
-                            # （2026-10-13 起）。原先这里内联的就是它 —— 且是那个
-                            # **多除了 100 的错版**，见该函数的「量纲」一节与 D44。
-                            from .metadata_save import turnover_from_volume
-                            vol = data_realtime_1min.tail(1)["volume"].item()
-                            stock_info = GQ_fetch_stock_info([code[:6]])
-                            total_volume = stock_info['liutongguben'].iloc[0]
-                            turnover_rate = turnover_from_volume(vol, total_volume)
-                    except Exception:
-                        if (len(data_realtime_code) > 3.82):
-                            print('fooo1 GQ_fetch_stock_day_realtime_adv', code)
-                            print(data_realtime_code)
-                            traceback.print_exc()
-                            # raise ('foooo1{}'.format(code))
-                    data_realtime_1day = GQ_data_min_to_day(data_realtime_1min)
-                    data_realtime_1day = data_realtime_1day.rename_axis('date')
+                    # ⚠️ **快照型 tick**（腾讯 L1）：`vol`/`amount` 是**当日累计**。
+                    # 老路径「1min 取 last → 日线取 sum」会把累计量重复累加
+                    # （2026-11-23 实测 000711 日线 volume 2.51e10，真值 2.75e6）。
+                    # 这里走 `_snapshot_ticks_to_bars(..., 'day')`：累计量取最后一条、
+                    # open/high/low 取快照的**日级**字段（半场订阅也能得到真日线）。
+                    turnover_rate = None
+                    _v = pd.to_numeric(data_realtime_code.get('vol'), errors='coerce')
+                    _is_cum = (_v is not None and len(_v.dropna()) > 2
+                               and bool((_v.dropna().diff().dropna() >= 0).all()))
+                    if _is_cum:
+                        try:
+                            data_realtime_1day = _snapshot_ticks_to_bars(
+                                data_realtime_code.copy(), 'day')
+                        except Exception:   # noqa: BLE001 合成失败 ⇒ 本轮不合并
+                            # 不回落到老路径：老路径对累计型 tick 必然算错，
+                            # 宁可不补这根日线，也不能把脏量写进帧里。
+                            data_realtime_1day = pd.DataFrame()
+                        if len(data_realtime_1day) > 0:
+                            # 摊平成 `GQ_data_min_to_day` 的形状（扁平索引 'date'）。
+                            # `date` 列由下面的公共尾段按索引重建，这里先丢掉助手
+                            # 自带的字符串版，避免 `set_index('date')` 撞上重名列。
+                            data_realtime_1day = data_realtime_1day.reset_index()
+                            data_realtime_1day = data_realtime_1day.drop(
+                                columns=['date'], errors='ignore')
+                            data_realtime_1day = data_realtime_1day.rename(
+                                columns={'ts': 'date'}).set_index('date')
+                            if (market_type == MARKET_TYPE.STOCK_CN):
+                                try:
+                                    from .metadata_save import turnover_from_volume
+                                    _vol_hands = float(
+                                        data_realtime_1day['volume'].iloc[-1])
+                                    stock_info = GQ_fetch_stock_info([code[:6]])
+                                    turnover_rate = turnover_from_volume(
+                                        _vol_hands, stock_info['liutongguben'].iloc[0])
+                                except Exception:   # noqa: BLE001 换手率缺失不挡合并
+                                    turnover_rate = None
+                    else:
+                        # 一分钟数据转出来了
+                        data_realtime_1min = None
+                        try:
+                            data_realtime_1min = GQ_data_tick_resample_1min(
+                                data_realtime_code,
+                                type_='1min',
+                                stack_vol=False)
+                            # data_realtime_1min['vol']
+                            if (market_type == MARKET_TYPE.STOCK_CN):
+                                # 公式**只此一份**：`metadata_save.turnover_from_volume`
+                                # （2026-10-13 起）。原先这里内联的就是它 —— 且是那个
+                                # **多除了 100 的错版**，见该函数的「量纲」一节与 D44。
+                                from .metadata_save import turnover_from_volume
+                                vol = data_realtime_1min.tail(1)["volume"].item()
+                                stock_info = GQ_fetch_stock_info([code[:6]])
+                                total_volume = stock_info['liutongguben'].iloc[0]
+                                turnover_rate = turnover_from_volume(vol, total_volume)
+                        except Exception:
+                            if (len(data_realtime_code) > 3.82):
+                                print('fooo1 GQ_fetch_stock_day_realtime_adv', code)
+                                print(data_realtime_code)
+                                traceback.print_exc()
+                                # raise ('foooo1{}'.format(code))
+                        if data_realtime_1min is None:
+                            data_realtime_1day = pd.DataFrame()
+                        else:
+                            data_realtime_1day = GQ_data_min_to_day(
+                                data_realtime_1min)
+                            data_realtime_1day = data_realtime_1day.rename_axis('date')
                     if (len(data_realtime_1day) > 0):
                         # 转成日线数据
                         data_realtime_1day.rename(
@@ -899,7 +941,8 @@ def GQ_fetch_stock_day_realtime_adv(
 
                         # 假装复了权，我建议复权那几天直接量化处理，复权几天内对策略买卖点影响很大
                         data_realtime_1day['adj'] = 1.0
-                        if (market_type == MARKET_TYPE.STOCK_CN):
+                        if (market_type == MARKET_TYPE.STOCK_CN) and \
+                                (turnover_rate is not None):
                             try:
                                 data_realtime_1day[FLD.TURNOVER_RATE] = turnover_rate
                             except Exception:
@@ -1048,6 +1091,32 @@ def GQ_fetch_stock_min_realtime_adv(
                         data_realtime_code['vol'] = np.where(np.isnan(data_realtime_code['vol']), 
                                                              data_realtime_code['volume'], 
                                                              data_realtime_code['vol'])
+
+                    # ⚠️ **快照型 tick**（腾讯 L1）：`vol`/`amount` 是当日**累计值**、
+                    # `close` 是昨收、现价在 `price`。老路径「每分钟取 last 再 sum」
+                    # 会把累计量重复累加（2026-11-23 实测 000711 虚高 3500 倍）。
+                    # 这里直接按区间增量合成 bar（口径见 `_snapshot_ticks_to_bars`）。
+                    _v = pd.to_numeric(data_realtime_code.get('vol'), errors='coerce')
+                    _is_cum = (_v is not None and len(_v.dropna()) > 2
+                               and bool((_v.dropna().diff().dropna() >= 0).all()))
+                    if _is_cum:
+                        try:
+                            free = data_realtime_code.copy()
+                            # 助手要 DatetimeIndex 作索引（这里是 set_index 后的扁平索引）
+                            data_realtime_mins = _snapshot_ticks_to_bars(
+                                free, frequency)
+                        except Exception:   # noqa: BLE001 合成失败 ⇒ 本轮不合并
+                            data_realtime_mins = pd.DataFrame()
+                        if len(data_realtime_mins) > 0:
+                            data_min.data = pd.concat(
+                                [data_min.data, data_realtime_mins], axis=0,
+                                sort=True)
+                            if verbose:
+                                print(f'[realtime] {code} 快照合成 '
+                                      f'{len(data_realtime_mins)} 根 {frequency}')
+                        # 累计型 tick 不回落到老路径（老路径必定重复累加），
+                        # 无论这轮合成出几根，都跳过老路。
+                        continue
 
                     # 将l1 Tick数据重采样为1分钟
                     try:
@@ -1320,3 +1389,115 @@ if __name__ == '__main__':
     data_min = GQ_fetch_stock_min_realtime_adv(
         codelist, data_min,
         frequency='15min')
+
+def _snapshot_ticks_to_bars(ticks: pd.DataFrame, frequency: str) -> pd.DataFrame:
+    """**快照型** L1 tick → 指定周期 bar（按区间取增量）。
+
+    背景（2026-11-23 实测 000711）：腾讯 L1 落库的是**快照**，不是逐笔成交 ——
+
+    * `vol` / `amount` 是**当日累计**（14:59 时 vol=274,807,700 股、amount=1.10e9）；
+    * `close` 其实是**昨收**，**现价在 `price`**；
+    * 累计 vol 的单位是 **股**，而历史 60min 表的 `volume` 是 **手**（差 100 倍）。
+
+    老路径 `GQ_data_tick_resample_1min`（`'vol': 'last'`）→ `GQ_data_min_resample`
+    （`'vol': 'sum'`）会把「每分钟的累计量」再 `sum` 一遍 —— 实测 3500 倍虚高。
+    这里改成：**每根 bar = 区间末的累计值 − 区间首之前那根**。
+
+    分钟级只能看到订阅之后的区间；``frequency='day'`` 则取**最后一条快照**的
+    当日累计量与快照自带的日级 ``open/high/low`` —— 即使 `--sub` 只跑了半天，
+    当日日线也不缺前半场（见该分支的注释）。
+
+    :returns: 索引 ``['ts','code']``，列 ``open/high/low/close/volume/amount/date``，
+        `volume` 单位为**手**（与历史表一致）。
+    """
+    if ticks is None or len(ticks) == 0:
+        return pd.DataFrame()
+    t = ticks.copy()
+    idx0 = (t.index.get_level_values(0) if isinstance(t.index, pd.MultiIndex)
+            else t.index)
+    t.index = pd.DatetimeIndex(pd.to_datetime(idx0))
+    t = t.sort_index()
+    t = t[~t.index.duplicated(keep='last')]
+    code = str(t['code'].iloc[0])[:6]
+
+    price = pd.to_numeric(t['price'], errors='coerce')
+    price.index = t.index
+
+    cum_vol = pd.to_numeric(t['vol'], errors='coerce')
+    cum_vol.index = t.index
+    cum_amt = pd.to_numeric(t['amount'], errors='coerce')
+    cum_amt.index = t.index
+
+    freq = str(frequency).lower()
+    if freq in ('day', '1d'):
+        # **日线**：不能用「区间末 − 区间首」—— 日线的起点是开盘，而订阅可能
+        # 从盘中才开始（2026-11-23：`--sub` 13:21 才起）。快照本身带了
+        # **当日**累计量与当日 open/high/low（腾讯 qt 字段，随行情滚动更新），
+        # 所以直接取最后一条快照：
+        #   * volume = 当日累计股数 ÷ 100（手），**不受订阅起点影响**；
+        #   * open/high/low 也取快照的日级字段 —— 否则半场订阅会把
+        #     「13:21 的现价」当成今开来写（当天真实今开 3.80，现价 4.25）。
+        px = price.dropna()
+        if len(px) == 0:
+            return pd.DataFrame()
+
+        def _snap(name):
+            if name not in t.columns:
+                return np.nan
+            s = pd.to_numeric(t[name], errors='coerce').dropna()
+            v = float(s.iloc[-1]) if len(s) else np.nan
+            # 集合竞价前后这些字段会是 0（尚未定价）—— 当缺失处理
+            return v if v > 0 else np.nan
+
+        o, h, l = _snap('open'), _snap('high'), _snap('low')
+        if not np.isfinite(o):
+            o = float(px.iloc[0])
+        if not np.isfinite(h):
+            h = float(px.max())
+        if not np.isfinite(l):
+            l = float(px.min())
+        row = pd.DataFrame([{
+            'open': o, 'high': h, 'low': l, 'close': float(px.iloc[-1]),
+            # ⚠️ 累计 vol 是**股**，日表的 volume 是**手**
+            'volume': float(cum_vol.dropna().iloc[-1]) / 100.0,
+            'amount': float(cum_amt.dropna().iloc[-1]),
+        }], index=pd.DatetimeIndex([t.index[-1].normalize()]))
+        row['date'] = row.index.strftime('%Y-%m-%d')
+        row['code'] = code
+        return row.set_index([row.index, 'code']).rename_axis(['ts', 'code'])
+
+    if freq.startswith('60'):
+        rule, shift = '60min', pd.Timedelta(minutes=60)
+    elif freq.startswith('30'):
+        rule, shift = '30min', pd.Timedelta(minutes=30)
+    elif freq.startswith('15'):
+        rule, shift = '15min', pd.Timedelta(minutes=15)
+    else:
+        rule, shift = '1min', pd.Timedelta(minutes=1)
+
+    parts = []
+    for lo, hi, off in (('09:30', '11:30', '30min'), ('13:00', '15:00', '0min')):
+        seg = price.between_time(lo, hi)
+        if len(seg) == 0:
+            continue
+        b = seg.resample(rule, closed='right', offset=off).agg(
+            {'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'})
+        b.index = pd.DatetimeIndex(b.index) + shift
+        parts.append(b)
+    if not parts:
+        return pd.DataFrame()
+    out = pd.concat(parts).sort_index()
+    out = out[out[['open', 'high', 'low', 'close']].notna().any(axis=1)]
+
+    def _delta(cum: pd.Series) -> np.ndarray:
+        at = cum.reindex(out.index, method='ffill')
+        prev = at.shift(1)
+        prev = prev.fillna(cum.iloc[0])
+        return (at - prev).clip(lower=0).to_numpy()
+
+    out['amount'] = _delta(cum_amt)
+    # ⚠️ 累计 vol 是**股**，历史 60min 表的 volume 是**手**
+    out['volume'] = _delta(cum_vol) / 100.0
+    out['date'] = out.index.strftime('%Y-%m-%d')
+    out['code'] = code
+    return out.set_index([out.index, 'code']).rename_axis(['ts', 'code'])

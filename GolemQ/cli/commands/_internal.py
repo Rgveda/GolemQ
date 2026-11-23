@@ -102,5 +102,6 @@ def add_internal_arguments(parser) -> None:
                         default=False,
                         help='[internal] review 只算不写（不写行、不写水位）。')
     parser.add_argument('--recheck-days', dest='recheck_days', type=int,
-                        default=0,
-                        help='[internal] review 水位前溯 N 天。')
+                        default=1,
+                        help='[internal] review 水位前溯 N 天（默认 1，D90：'
+                             '收盘后重算最近一天，覆盖盘中写下的半根 bar）。')

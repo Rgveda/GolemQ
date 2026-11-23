@@ -187,16 +187,15 @@ class ReviewPipeline(BasePipeline):
         want = set(freqs) if freqs is not None else {'day', '60min', '15min'}
 
         if 'day' in want:
-            # ⚠️ **暂时 realtime=False**（2026-11-23 实测后回退）：
-            # 实时集合是有数据的（`realtime_2026-11-23` 241 万行），tick 合成的
-            # **价格是对的**，但 **volume/amount 差 3 个数量级** —— tick 里的
-            # `amount` 是**累积值**且没有 `volume` 字段，合并器把它当区间量累加，
-            # 000711 当天 14:00 那根合成出 9.77e9（日线总量才 2.75e6）。
-            # ChipDist / Renko 量能全吃 volume ⇒ 会算脏。
-            # 修好合并器的量纲后再开（见 D90「遗留」）。
+            # `realtime=True`：盘中把 `realtime_YYYY-MM-DD` 的 L1 **快照** tick
+            # 合成出当天已走出的 bar（用户 2026-11-23：盘中要算、要落库）。
+            # ⚠️ 快照型 tick 的 `vol/amount` 是**当日累计**，老的
+            # `tick_resample_1min → min_resample(sum)` 会把累计量重复累加
+            # （实测虚高 3500 倍）；已改走 `_snapshot_ticks_to_bars`（按区间增量、
+            # vol 股→手）。收盘后跑与不带 realtime 同速（两道短路门 ~1ms）。
             day_res, _ = market.get_kline_price_v3(code, start=day_start,
                                                    end=str(as_of.date()),
-                                                   realtime=False, verbose=False)
+                                                   realtime=True, verbose=False)
             if day_res is not None and len(getattr(day_res, 'data', ())) > 0:
                 frames['day'] = day_res.data.loc[
                     pd.Index(pd.to_datetime(day_res.data.index.get_level_values(0))) <= as_of]
@@ -213,10 +212,10 @@ class ReviewPipeline(BasePipeline):
                 # **目标区间头部**（如 2024 年以前）少掉一半以上的基础数据，
                 # SE/中枢计数全部失真。这条不许按“省 IO” reclaim。
                 freq_start = REVIEW_ANCHOR_DAY
-            # 同上：暂时 realtime=False（tick 合成的 volume 量纲未修，见上）
+            # 同上：盘中要拿到当天已走出的 60min / 15min bar（快照 tick 合成）
             res, _ = market.get_kline_price_min(
                 code, start=freq_start, end=str(as_of.date()) + ' 23:59:59',
-                frequency=freq, realtime=False, verbose=False)
+                frequency=freq, realtime=True, verbose=False)
             data = None if res is None else getattr(res, 'data', None)
             if data is not None and len(data) > 0:
                 frames[key] = data.loc[
@@ -407,7 +406,7 @@ def shard_codes(codes, spec: str = '') -> List[str]:
 def run_review(eval_range: str = 'fast', codes: Optional[Iterable[str]] = None,
                pct_of_cores: float = 0.32, families=DEFAULT_FAMILIES,
                force: bool = False, dry_run: bool = False, verbose: bool = False,
-               offset: str = '', from_date: str = '', recheck_days: int = 0,
+               offset: str = '', from_date: str = '', recheck_days: int = 1,
                limit: int = 0, shard: str = '', code_timeout: int = 0,
                **kwargs):
     """解析 scope → 逐码跑 → 返回 ``(CodeResult 列表, 统计)``。

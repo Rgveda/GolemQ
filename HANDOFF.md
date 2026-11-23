@@ -610,6 +610,7 @@ mainstream-credits 等模型函数；牛股诊股数据也未搬。
 | **REVIEW-PERF** | ChipDist 与 RegTree 的 JIT 核查：ChipDist 的 JIT 核在跑但被**762MB/次的超额数组**+**3.5M 元素 dict 往返**拖慢（2.14→0.27s/天）；RegTree 的 jit 建树器**写了没接**，review 走的是 np.matrix 纯 Python 版（0.81→0.007s/次）。实测 `day_core` 59.6→11.8s、`zen_snapshots` 69.7→41.1s | ✅ **D88 ⑤⑥**；用例 `TestArrayFastPath` 3 条 + `test_regtree_builder.py` 3 条；全量回填外推 2.5h→45min；旧 Python 实现加**不可过滤** stderr 提醒（`presentation.legacy_python_warning`，防误用不删代码） |
 | **REVIEW-TIMEOUT** | `Slowest 1%` 里那些 7200s 的码：**不是数据不足**，是「review 从没跑过」的全量回填（day 缺 1,700 / 15min 缺 8,100+）。实测 `day_core` 3.97s/天（ChipDist 2.3 + Prophet 0.66 + _frame_features 1.05）、`zen_snapshots` 1.16s/目标 ⇒ 全新码约 **2.5 小时**。修了三处：①完成判据剔除外部列（`4QPwrlnWek`，真 bug，否则回填 2024 以前会静默漏算）②`raw_bars()` 向量化（`minor_features` -37%）③单码护栏 2h→3h ④**按年切块、块末落库**（`chunk_targets` 生成器 + `ReviewOptions.max_years=1`，切块 vs 一次性逐列验证一致）| ✅ **D88**；`test_persist_check_columns.py` 4 条；**未做**：ChipDist/Prophet/RegTree 逐日算法（需数值对拍，另立项） |
 | **STATS-SLOWEST** | `Statistics` 增「Slowest 1%」：按 **sum(各码耗时)** 算占比（并行下 sum≫墙钟）、慢码带状态标记与 `CodeResult.meta` 分阶段耗时（review 写 `fetch/steps/write`）；「深挖单个码」用 `python -m GolemQ.cli.internal --review-runtime --runtime-code` | ✅ 2026-11-21；用例 `test_cases/pipeline/test_pipeline_slowest.py` 4 条 |
+| **REVIEW-RT** | `--review` 盘中带 realtime 合成（**D90**）：`_fetch_frames` 三频率 `realtime=True`；快照型 tick 走 `_snapshot_ticks_to_bars` —— 60min/15min 按**区间增量**、日线取**最后累计**（股→手）+ 快照**日级** open/high/low；`recheck_days=1` 收盘后复核半根 bar | ✅ 2026-11-23；`test_snapshot_ticks.py` 8 条；⚠️ 除权日 qfq/原始价对齐**未处理**，订阅起点前的分钟 bar 合成不出来 |
 
 ---
 

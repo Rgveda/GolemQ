@@ -691,6 +691,32 @@ class TestReviewCliDefaults(unittest.TestCase):
         self.assertEqual(pick(alias).name, 'review-daily')
         self.assertEqual(pick(canonical).name, 'review-daily')
 
+    def test_recheck_days_defaults_to_one(self):
+        """D90：收盘后再跑一次要覆盖当天最后一次写下的半根 bar。
+
+        ⚠️ 用户入口**没有** `--recheck-days`（只在 internal 注册）——
+        `getattr(args, 'recheck_days', ...)` 的兜底必须是 **1**，否则
+        `ReviewOptions.recheck_days=1` 会被显式的 0 覆盖掉（2026-11-23 实测到）。
+        """
+        rc, _, _, run = self._run(
+            ['--strategy', 'review', '--eval', 'fast'])
+        self.assertEqual(rc, 0)
+        self.assertEqual(run.call_args.kwargs['recheck_days'], 1)
+
+    def test_internal_recheck_days_reaches_run_review(self):
+        """internal 显式给的值照常透传（只在 internal parser 注册）。"""
+        from GolemQ.cli.__main__ import build_parser
+        from GolemQ.cli.commands.review import run_review_daily
+        args = build_parser(internal=True).parse_args(
+            ['--strategy', 'review', '--eval', 'etc', '--recheck-days', '3'])
+        with unittest.mock.patch('GolemQ.pipeline.review.run_review',
+                                 return_value=({}, self.STATS)) as run, \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            rc = run_review_daily(args)
+        self.assertEqual(rc, 0)
+        self.assertEqual(run.call_args.kwargs['recheck_days'], 3)
+
     def test_default_pct_is_announced(self):
         rc, _, err, run = self._run(
             ['--strategy', 'review', '--eval', 'fast'])

@@ -124,7 +124,11 @@ def run_review_daily(args) -> int:
             pct_of_cores=pct_of_cores, families=families,
             force=args.force, dry_run=getattr(args, 'dry_run', False), verbose=args.verbose,
             offset=args.offset, from_date=args.from_date,
-            recheck_days=getattr(args, 'recheck_days', 0),
+            # ⚠️ 默认值必须是 **1**（D90）：用户入口没有 `--recheck-days`
+            # （只在 internal 注册），`getattr` 的兜底若写 0 会把
+            # `ReviewOptions` 的默认值整个覆盖掉 ⇒ 收盘后那次「重算最近一天」
+            # 永远不会发生。这是 2026-11-23 复核时实测到的。
+            recheck_days=getattr(args, 'recheck_days', 1),
             limit=getattr(args, 'review_limit', 0),
             shard=getattr(args, 'review_shard', ''),
             code_timeout=getattr(args, 'review_timeout', 0))
