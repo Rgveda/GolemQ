@@ -207,6 +207,12 @@ def _sign(v) -> int:
 #: （用户 2026-11-23：2026-09-22 那段 75 根里只有 1 个高峰，却出了 +1，
 #:  一个小时后段切到 205 根又出 -1，同一小时来回翻）。
 MIN_PEAKS_SIDE = 3
+#: 方向判定：链长要**长出这么多**才算赢（相等/接近 ⇒ 保持不动）。
+#: 起因（用户 2026-11-23）：000711 在 2026-07-09 10:30 转多、15:00 又转空 ——
+#: 同一段（中枢内、段长 100~107）里 lo=7 / hi=3~4，两边链长接近，逐根在 +1/-1
+#: 之间跳。取 1 实测：翻转 205 → 135，且 09-20~10-05 的下跌仍跟得住；
+#: 取 2 会把下跌跟丢（那段变成 +103）。
+MARGIN = 1
 #: 峰点不够时把取样窗按段长放大到这么多倍重取
 WIDEN_FACTOR = 2
 
@@ -545,9 +551,9 @@ def calc_zen_ols_timing_lag_streaming(ohlc: pd.DataFrame,
             if pos and hi[pos[-1]] == i:
                 _dn_len = len(pos)
         # 两边都成立时比链长；相等则保持不动（不制造来回翻）
-        if _up_len > _dn_len:
+        if _up_len > _dn_len + MARGIN:
             cross[i] = 1
-        elif _dn_len > _up_len:
+        elif _dn_len > _up_len + MARGIN:
             cross[i] = -1
         if debug_window is not None and debug_out is not None:
             _t = ts[i]
