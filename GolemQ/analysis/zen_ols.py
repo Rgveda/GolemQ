@@ -192,6 +192,17 @@ def czsc_peak_markers(ohlc: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
 # --------------------------------------------------------------------------- #
 # 分段
 # --------------------------------------------------------------------------- #
+def _sign(v) -> int:
+    """返回 -1 / 0 / +1（对 NaN 也安全）。"""
+    try:
+        f = float(v)
+    except Exception:               # noqa: BLE001
+        return 0
+    if not np.isfinite(f) or f == 0:
+        return 0
+    return 1 if f > 0 else -1
+
+
 #: 一侧峰点少于此数 ⇒ 认为「这一浪还没成形」，不出该方向的交叉
 #: （用户 2026-11-23：2026-09-22 那段 75 根里只有 1 个高峰，却出了 +1，
 #:  一个小时后段切到 205 根又出 -1，同一小时来回翻）。
@@ -406,7 +417,9 @@ def calc_zen_ols_timing_lag(ohlc: pd.DataFrame,
 
 def calc_zen_ols_timing_lag_streaming(ohlc: pd.DataFrame,
                                       in_pivot_marks: bool = True,
-                                      min_peak: int = 2) -> pd.Series:
+                                      min_peak: int = 2,
+                                      debug_window=None,
+                                      debug_out=None) -> pd.Series:
     """**流式**版 `ZenOLSLag`：一遍 `CZSC.update` 走到底，逐 bar 因果。
 
     与 :func:`calc_zen_ols_timing_lag`（逐 target 重建 2160 根窗口）的区别：
@@ -451,57 +464,99 @@ def calc_zen_ols_timing_lag_streaming(ohlc: pd.DataFrame,
     czsc = CZSC(bars[:1], max_bi_count=max(5000, n + 100), verbose=False)
     conf = {}
     prev_key = None
+    # 增量维护：段编号 / 段起点 / 当前段内的低峰、高峰列表 / 上一根的符号
+    _seg_id, s0 = 0, 0
+    seg_lo, seg_hi = [], []
+    _prev_sign = _sign(piv_lag[0]) if n else 0
     for i in range(1, n):
         czsc.update(bars[i])
         bi = czsc.bi_list
-        if not bi:
-            continue
-        key = bi[-1].fx_b.dt
-        if key == prev_key:
-            continue
-        prev_key = key
-        conf[key] = bars[i].dt
-        j = pos_of.get(pd.Timestamp(key))
-        if j is None:
-            continue
-        marks[j] = 1 if bi[-1].fx_b.mark == Mark.D else -1
-        known[j] = i
+        _new_fx = None
+        if bi:
+            key = bi[-1].fx_b.dt
+            if key != prev_key:
+                prev_key = key
+                conf[key] = bars[i].dt
+                j0 = pos_of.get(pd.Timestamp(key))
+                if j0 is not None:
+                    marks[j0] = 1 if bi[-1].fx_b.mark == Mark.D else -1
+                    known[j0] = i
+                    _new_fx = j0
+        if _new_fx is None:
+            # 没有新分型 ⇒ 中枢状态不变，lag 逐根 +1（省掉每 bar 重算）
+            if i > 0 and piv_lag[i - 1] != 0:
+                piv_lag[i] = piv_lag[i - 1] + np.sign(piv_lag[i - 1])
+        else:
+            _a = max(0, i + 1 - _SEG_TAIL)
+            try:
+                piv = calc_pivots(bi_list=list(bi), conf_map=conf, strict=True)
+                _zd = causal_pivot_series(piv, ts[_a:i + 1], strict=True)[0]
+                piv_lag[_a:i + 1] = calc_event_timing_lag(
+                    np.where(~np.isnan(np.asarray(_zd, dtype=float)), 1, -1))
+            except Exception:         # noqa: BLE001 无中枢 ⇒ 保持上一状态
+                pass
 
-        # ① 逐 bar 中枢 lag（只用到目前为止的笔 + 确认时间 ⇒ 因果）
-        # ⚠️ 只重算**最近 `SEG_TAIL` 根**：全量前缀每事件一次要 5ms（1,060 次
-        # ⇒ 5.6s），而更早的 bar 用的是「当时已知」的值 —— 不去覆盖它反而更因果。
-        _a = max(0, i + 1 - _SEG_TAIL)
-        try:
-            piv = calc_pivots(bi_list=list(bi), conf_map=conf, strict=True)
-            _zd = causal_pivot_series(piv, ts[_a:i + 1], strict=True)[0]
-            piv_lag[_a:i + 1] = calc_event_timing_lag(
-                np.where(~np.isnan(np.asarray(_zd, dtype=float)), 1, -1))
-        except Exception:             # noqa: BLE001 无中枢 ⇒ 保持上一状态
-            pass
-
-        # ② 本段前缀上的 LIS/LDS，看新确认的分型是否把趋势推进一步
-        seg = segment_ids(piv_lag[:i + 1])
-        s0 = i
-        while s0 > 0 and seg[s0 - 1] == seg[i]:
-            s0 -= 1
+        # ② 每根 bar 都评估：段内已确认的峰点 + **当前 bar 自己**（用户 2026-11-23：
+        # 「最后一 bar 也要同时加入计算作为高点或者低点」——否则最新那根永远不算峰，
+        # 信号必然滞后一个分型确认周期）。
+        # ⚠️ 段与峰点表都**增量维护**：`segment_ids()` 的写法是 O(前缀长度)，9,319 根
+        # 逐 bar 调一次 = O(n²)（实测 3.7s → 30.7s）。这里只按上一根推一步。
+        _sg = _sign(piv_lag[i])
+        if _sg != 0 and _sg != _prev_sign:
+            _seg_id += 1
+            s0 = i
+            seg_lo, seg_hi = [], []
+            _prev_sign = _sg
+        if _new_fx is not None:
+            if marks[_new_fx] == 1:
+                seg_lo.append(_new_fx)
+            else:
+                seg_hi.append(_new_fx)
         if not in_pivot_marks and piv_lag[i] > 0:
             continue
-        lo, hi = _collect_peaks(marks, low, high, s0, i)
-        # ⚠️ 一侧峰点 < MIN_PEAKS_SIDE ⇒ 这一浪还没成形，LIS/LDS 的结论不可靠。
-        # 先把取样窗按段长放大到 2 倍重取；仍不够就**不出该方向**的交叉
-        # （用户 2026-11-23 口径）。
-        if (marks[j] == 1 and len(hi) < MIN_PEAKS_SIDE) or                 (marks[j] == -1 and len(lo) < MIN_PEAKS_SIDE):
+        # 当前 bar 同时作为**两侧候选**（用户 2026-11-23：「最后一 bar 也要加入」），
+        # 但方向由**哪条链更长**决定 —— 不能简单让 +1 分支优先（实测正占比会
+        # 从 44% 飙到 80%），也不能按「比上一根高低」判侧（实测翻转 1,683 次）。
+        _lo_cand = np.isfinite(low[i])
+        _hi_cand = np.isfinite(high[i])
+        lo = seg_lo + ([i] if (_lo_cand and i not in seg_lo) else [])
+        hi = seg_hi + ([i] if (_hi_cand and i not in seg_hi) else [])
+        # 一侧峰点 < MIN_PEAKS_SIDE ⇒ 这一浪还没成形：把取样窗按段长放大
+        # 2 倍重取，仍不足则**不出该方向**（用户 2026-11-23 口径）
+        if len(hi) < MIN_PEAKS_SIDE or len(lo) < MIN_PEAKS_SIDE:
             _span = i - s0 + 1
             s1 = max(0, i - WIDEN_FACTOR * _span + 1)
-            lo, hi = _collect_peaks(marks, low, high, s1, i)
-        if marks[j] == 1 and len(hi) >= MIN_PEAKS_SIDE and len(lo) >= min_peak:
+            lo2, hi2 = _collect_peaks(marks, low, high, s1, i)
+            if _lo_cand and i not in lo2:
+                lo2 = lo2 + [i]
+            if _hi_cand and i not in hi2:
+                hi2 = hi2 + [i]
+            if len(hi2) > len(hi) or len(lo2) > len(lo):
+                lo, hi = lo2, hi2
+        _up_ok = len(hi) >= MIN_PEAKS_SIDE and len(lo) >= min_peak
+        _dn_ok = len(lo) >= MIN_PEAKS_SIDE and len(hi) >= min_peak
+        _up_len = _dn_len = 0
+        if _up_ok:
             pos = lis_positions(low[lo])
-            if pos and lo[pos[-1]] == j:
-                cross[i] = 1
-        elif marks[j] == -1 and len(lo) >= MIN_PEAKS_SIDE and len(hi) >= min_peak:
+            if pos and lo[pos[-1]] == i:
+                _up_len = len(pos)
+        if _dn_ok:
             pos = lds_positions(high[hi])
-            if pos and hi[pos[-1]] == j:
-                cross[i] = -1
+            if pos and hi[pos[-1]] == i:
+                _dn_len = len(pos)
+        # 两边都成立时比链长；相等则保持不动（不制造来回翻）
+        if _up_len > _dn_len:
+            cross[i] = 1
+        elif _dn_len > _up_len:
+            cross[i] = -1
+        if debug_window is not None and debug_out is not None:
+            _t = ts[i]
+            if debug_window[0] <= _t <= debug_window[1]:
+                debug_out.append({'ts': _t, 'seg_start': ts[s0],
+                                  'seg_len': i - s0 + 1, 'piv_lag': piv_lag[i],
+                                  'n_lo': len(lo), 'n_hi': len(hi),
+                                  'up_ok': _up_ok, 'dn_ok': _dn_ok,
+                                  'cross': int(cross[i])})
 
     jx = Timeline_duration((cross == 1).astype(np.int32))
     sx = Timeline_duration((cross == -1).astype(np.int32))
