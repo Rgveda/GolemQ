@@ -114,7 +114,11 @@ class ReviewOptions:
     families: Sequence[str] = DEFAULT_FAMILIES
     force: bool = False
     dry_run: bool = False
-    recheck_days: int = 0
+    #: 把最近 N 个自然日内**已持久化**的行也纳入重算（`missing_targets` 的参数）。
+    #: 用户 2026-11-23：**盘中要跑要落库，15:00 之后再跑一次覆盖确认** ——
+    #: 盘中 10:30/11:30/14:00 那几根是半根 bar 算的，收盘后必须用完整 bar 重算。
+    #: 默认 1 天；只影响最新一天的行，代价可忽略。
+    recheck_days: int = 1
     from_date: str = ''
     offset: str = ''
     verbose: bool = False
@@ -183,9 +187,13 @@ class ReviewPipeline(BasePipeline):
         want = set(freqs) if freqs is not None else {'day', '60min', '15min'}
 
         if 'day' in want:
+            # `realtime=True`：盘中把 `realtime_YYYY-MM-DD` 的 L1 tick 合成进日线
+            # （`kline83._merge_realtime` 有两道短路门：集合不存在 / 历史不落后
+            # ⇒ 约 1ms，收盘后与不带 REALTIME 同速）。用户 2026-11-23：
+            # **盘中要算当天、要落库**，所以这里必须开。
             day_res, _ = market.get_kline_price_v3(code, start=day_start,
                                                    end=str(as_of.date()),
-                                                   realtime=False, verbose=False)
+                                                   realtime=True, verbose=False)
             if day_res is not None and len(getattr(day_res, 'data', ())) > 0:
                 frames['day'] = day_res.data.loc[
                     pd.Index(pd.to_datetime(day_res.data.index.get_level_values(0))) <= as_of]
@@ -202,9 +210,10 @@ class ReviewPipeline(BasePipeline):
                 # **目标区间头部**（如 2024 年以前）少掉一半以上的基础数据，
                 # SE/中枢计数全部失真。这条不许按“省 IO” reclaim。
                 freq_start = REVIEW_ANCHOR_DAY
+            # 同上：盘中要拿到当天已走出的 60min / 15min bar（tick 合成）
             res, _ = market.get_kline_price_min(
                 code, start=freq_start, end=str(as_of.date()) + ' 23:59:59',
-                frequency=freq, realtime=False, verbose=False)
+                frequency=freq, realtime=True, verbose=False)
             data = None if res is None else getattr(res, 'data', None)
             if data is not None and len(data) > 0:
                 frames[key] = data.loc[

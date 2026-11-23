@@ -120,5 +120,6 @@
 | `D87` | `stock_reality_feat_60min` 是**特征表**，允许插「只有特征列」的稀疏行 | 2026-11-22 | [decisions/D87.md](docs/decisions/D87.md) |
 | `D88` | review 单码超时的根因与三处修正 | 2026-11-22 | [decisions/D88.md](docs/decisions/D88.md) |
 | `D89` | `ZenOLSLag` 重新实现：按 `ZenPivotLag` 分段 + 段内 LIS/LDS | 2026-11-22 | [decisions/D89.md](docs/decisions/D89.md) |
+| `D90` | `--review` 盘中带 realtime 合成 + 收盘后重复确认 | 2026-11-23 | [decisions/D90.md](docs/decisions/D90.md) |
 
 <!-- END GENERATED -->
