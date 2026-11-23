@@ -572,25 +572,18 @@ def build_hour_extra_frame(ohlc: pd.DataFrame, targets, code: str,
     # ⚠️ 与 `ZenPivotLag` **同一趟**算：分型用整帧一次 CZSC（带确认时间 ⇒ 因果），
     # 不是每个 target 重建一次。
     try:
-        from GolemQ.analysis.zen_ols import calc_zen_ols_timing_lag
-        # ⚠️ **逐 target 用 ≤T 的 2160 根窗口**，与 `pivot_stats` 同一口径。
-        # 为什么不能用「整帧一次」：整帧 CZSC 的笔/中枢会被**后续 bar 修订**，
-        # 同一根 bar 在不同时点算出来的段边界不同（实测 601595 T=3000：
-        # 截断 +3 vs 全量 -129），也就是 D84 踩过的那个未来函数。
-        # 逐窗口的代价实测 0.075s/目标（含窗口内 CZSC 重建）。
-        _ts_all = pd.DatetimeIndex(pd.to_datetime(
-            ohlc.index.get_level_values(0)))
-        _tg = pd.DatetimeIndex(pd.to_datetime(targets))
-        _vals = np.full(len(_tg), np.nan)
-        for _i, _T in enumerate(_tg):
-            _w = ohlc.loc[_ts_all <= _T].tail(SE_WINDOW)
-            if len(_w) < 30:
-                continue
-            try:
-                _vals[_i] = float(calc_zen_ols_timing_lag(_w).iloc[-1])
-            except Exception:       # noqa: BLE001 单点失败留 NaN
-                continue
-        frame[ZEN.OLS_TIMING_LAG] = _vals
+        from GolemQ.analysis.zen_ols import calc_zen_ols_timing_lag_streaming
+        # **流式**口径（用户 2026-11-23 选定）：一遍 `CZSC.update` 走到底，
+        # 第 T 根只看过前 T 根 ⇒ 天然因果、前缀稳定；成本 O(总 bar 数)
+        # （9,800 根约 5s），而逐 target 重建 2160 窗口是 ~12 分钟/码。
+        _ols = calc_zen_ols_timing_lag_streaming(ohlc)
+        _flat = pd.Series(
+            np.asarray(_ols, dtype=float),
+            index=pd.DatetimeIndex(pd.to_datetime(
+                ohlc.index.get_level_values(0))))
+        _flat = _flat[~_flat.index.duplicated(keep='last')]
+        frame[ZEN.OLS_TIMING_LAG] = _flat.reindex(
+            pd.DatetimeIndex(pd.to_datetime(targets))).to_numpy(dtype=float)
     except Exception:               # noqa: BLE001 短历史/异常 ⇒ 留 NaN
         frame[ZEN.OLS_TIMING_LAG] = np.nan
 

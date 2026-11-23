@@ -31,8 +31,10 @@ except ImportError:
     sys.path.insert(0, os.path.abspath(
         os.path.join(os.path.dirname(__file__), '..', '..', '..')))
 
-from GolemQ.analysis.zen_ols import (calc_zen_ols_timing_lag, cross_marks,
-                                     lds_positions, lis_positions, segment_ids)
+from GolemQ.analysis.zen_ols import (calc_zen_ols_timing_lag,
+                                     calc_zen_ols_timing_lag_streaming,
+                                     cross_marks, lds_positions,
+                                     lis_positions, segment_ids)
 
 
 def _ohlc(n=400, seed=7):
@@ -142,3 +144,56 @@ class TestCausality(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestStreamingCausality(unittest.TestCase):
+    """**流式**口径（用户 2026-11-23 选定）：一遍 `CZSC.update` 走到底。
+
+    与逐 target 重建窗口的区别：历史是「从帧头累积」，不是 2160 滚动窗口；
+    好处是成本 O(总 bar 数)（实测 9,800 根 ~5s vs 逐窗口 ~12 分钟）。
+
+    硬要求仍然是**前缀稳定**：用 ≤T 的数据算出的 T 处值，必须与全量算出的 T 处一致
+    —— `CZSC.update` 在第 T 根只看过前 T 根，天然满足。
+    """
+
+    def test_prefix_stable(self):
+        o = _ohlc(n=420)
+        full = calc_zen_ols_timing_lag_streaming(o)
+        for T in (150, 260, 419):
+            part = calc_zen_ols_timing_lag_streaming(o.iloc[:T + 1])
+            self.assertEqual(float(part.iloc[-1]), float(full.iloc[T]),
+                             f'T={T} 流式口径出现未来函数')
+
+    def test_output_shape_and_range(self):
+        import numpy as np
+        o = _ohlc(n=300)
+        lag = calc_zen_ols_timing_lag_streaming(o)
+        self.assertEqual(len(lag), len(o))
+        v = lag.dropna()
+        self.assertGreater(len(v), 0, '至少要有值')
+        self.assertLessEqual(abs(float(v.max())), len(o) + 1)
+
+
+class TestScaleInvariance(unittest.TestCase):
+    """**除权不该改变 `ZenOLSLag`**（用户 2026-11-23 提出的隐患）。
+
+    review 的 60min 取数是 `if_fq='qfq'`（前复权）：一次除权会把**整条历史**
+    乘一个常数。`ZenOLSLag` 如果只依赖价格的相对关系（CZSC 包含/分型、
+    LIS/LDS 的序、以及「距事件的 bar 数」），那么整体缩放不该产生任何差异。
+
+    ⚠️ 反过来，这条用例也是**闸门**：谁以后在算法里引入绝对价格阈值
+    （比如 `if price > 100`），这里会立刻红。
+    """
+
+    def test_uniform_scaling_does_not_change_lag(self):
+        import numpy as np
+        o = _ohlc(n=380, seed=11)
+        base = calc_zen_ols_timing_lag_streaming(o)
+        for k in (0.5, 2.0, 0.1):
+            scaled = o.copy()
+            for c in ('open', 'high', 'low', 'close'):
+                scaled[c] = scaled[c] * k
+            got = calc_zen_ols_timing_lag_streaming(scaled)
+            np.testing.assert_array_equal(
+                np.asarray(got, dtype=float), np.asarray(base, dtype=float),
+                err_msg=f'整体 ×{k} 改变了 ZenOLSLag —— 引入了绝对量纲')

@@ -41,7 +41,7 @@ import pandas as pd
 
 __all__ = ['lis_positions', 'lds_positions', 'find_peaks_scipy',
            'czsc_peak_markers', 'segment_ids', 'cross_marks',
-           'calc_zen_ols_timing_lag']
+           'calc_zen_ols_timing_lag', 'calc_zen_ols_timing_lag_streaming']
 
 
 # --------------------------------------------------------------------------- #
@@ -156,6 +156,7 @@ def frame_context(ohlc: pd.DataFrame):
         return marks, known, pivot_lag
 
     # ① 峰点（带确认时间，因果的关键）
+    _SEG_TAIL = 2160        # 中枢 lag 每次只重算最近这么多根（见下面的注释）
     pos_of = {t: i for i, t in enumerate(ts)}
     for p in bi_list_to_points(bi_list, conf_map=conf):
         i = pos_of.get(pd.Timestamp(p['dt']))
@@ -375,6 +376,105 @@ def calc_zen_ols_timing_lag(ohlc: pd.DataFrame,
         return pd.Series(dtype=float, index=ohlc.index)
     cross = cross_marks(ohlc, pivot_lag=pivot_lag, peak=peak, causal=causal,
                         in_pivot_marks=in_pivot_marks, min_peak=min_peak)
+
+    jx = Timeline_duration((cross == 1).astype(np.int32))
+    sx = Timeline_duration((cross == -1).astype(np.int32))
+    lag = calc_event_timing_lag(np.where(jx < sx, 1, -1)).astype(np.float32)
+    return pd.Series(lag, index=ohlc.index, name='ZenOLSLag')
+
+
+def calc_zen_ols_timing_lag_streaming(ohlc: pd.DataFrame,
+                                      in_pivot_marks: bool = True,
+                                      min_peak: int = 2) -> pd.Series:
+    """**流式**版 `ZenOLSLag`：一遍 `CZSC.update` 走到底，逐 bar 因果。
+
+    与 :func:`calc_zen_ols_timing_lag`（逐 target 重建 2160 根窗口）的区别：
+
+    * **口径**：这里的「历史」是从帧头累积到当前 bar（不再是 2160 滚动窗口）；
+    * **成本**：O(总 bar 数) 而不是 O(目标数 × 窗口) —— 实测 9,800 根 ~2s，
+      逐窗口版是 ~12 分钟；
+    * **因果**：`CZSC.update` 在第 T 根只看过前 T 根 ⇒ 天然前缀稳定
+      （用户 2026-11-23 选定）。
+
+    实现要点：只在**分型确认**（`bi_list[-1].fx_b` 变化）那一刻重算本段前缀，
+    平时 lag 只是逐根 +1。
+    """
+    from GolemQ.analysis.pivot import (calc_pivots, causal_pivot_series)
+    from GolemQ.analysis.timing import (Timeline_duration,
+                                         calc_event_timing_lag)
+    from GolemQ.analysis.zen import raw_bars, _freq_of
+
+    n = len(ohlc)
+    if n == 0:
+        return pd.Series(dtype=float, index=ohlc.index)
+    code = str(ohlc.index.get_level_values(1)[0])
+    ts = pd.DatetimeIndex(pd.to_datetime(ohlc.index.get_level_values(0)))
+    bars = raw_bars(ohlc, code, _freq_of(ohlc), strict=False,
+                    vol_keys=('volume', 'vol'))
+    low = pd.to_numeric(ohlc['low'], errors='coerce').to_numpy(dtype=float)
+    high = pd.to_numeric(ohlc['high'], errors='coerce').to_numpy(dtype=float)
+
+    try:
+        from czsc import CZSC
+        from czsc.objects import Mark
+    except Exception:                 # noqa: BLE001 无 czsc ⇒ 全 0
+        return pd.Series(np.zeros(n, dtype=float), index=ohlc.index)
+
+    _SEG_TAIL = 2160        # 中枢 lag 每次只重算最近这么多根（见下面的注释）
+    pos_of = {t: i for i, t in enumerate(ts)}
+    marks = np.zeros(n, dtype=np.int8)
+    known = np.arange(n, dtype=np.int64)
+    piv_lag = np.zeros(n, dtype=float)
+    cross = np.zeros(n, dtype=np.int8)
+
+    czsc = CZSC(bars[:1], max_bi_count=max(5000, n + 100), verbose=False)
+    conf = {}
+    prev_key = None
+    for i in range(1, n):
+        czsc.update(bars[i])
+        bi = czsc.bi_list
+        if not bi:
+            continue
+        key = bi[-1].fx_b.dt
+        if key == prev_key:
+            continue
+        prev_key = key
+        conf[key] = bars[i].dt
+        j = pos_of.get(pd.Timestamp(key))
+        if j is None:
+            continue
+        marks[j] = 1 if bi[-1].fx_b.mark == Mark.D else -1
+        known[j] = i
+
+        # ① 逐 bar 中枢 lag（只用到目前为止的笔 + 确认时间 ⇒ 因果）
+        # ⚠️ 只重算**最近 `SEG_TAIL` 根**：全量前缀每事件一次要 5ms（1,060 次
+        # ⇒ 5.6s），而更早的 bar 用的是「当时已知」的值 —— 不去覆盖它反而更因果。
+        _a = max(0, i + 1 - _SEG_TAIL)
+        try:
+            piv = calc_pivots(bi_list=list(bi), conf_map=conf, strict=True)
+            _zd = causal_pivot_series(piv, ts[_a:i + 1], strict=True)[0]
+            piv_lag[_a:i + 1] = calc_event_timing_lag(
+                np.where(~np.isnan(np.asarray(_zd, dtype=float)), 1, -1))
+        except Exception:             # noqa: BLE001 无中枢 ⇒ 保持上一状态
+            pass
+
+        # ② 本段前缀上的 LIS/LDS，看新确认的分型是否把趋势推进一步
+        seg = segment_ids(piv_lag[:i + 1])
+        s0 = i
+        while s0 > 0 and seg[s0 - 1] == seg[i]:
+            s0 -= 1
+        if not in_pivot_marks and piv_lag[i] > 0:
+            continue
+        lo = [k for k in range(s0, i + 1) if marks[k] == 1 and np.isfinite(low[k])]
+        hi = [k for k in range(s0, i + 1) if marks[k] == -1 and np.isfinite(high[k])]
+        if marks[j] == 1 and len(lo) >= min_peak:
+            pos = lis_positions(low[lo])
+            if pos and lo[pos[-1]] == j:
+                cross[i] = 1
+        elif marks[j] == -1 and len(hi) >= min_peak:
+            pos = lds_positions(high[hi])
+            if pos and hi[pos[-1]] == j:
+                cross[i] = -1
 
     jx = Timeline_duration((cross == 1).astype(np.int32))
     sx = Timeline_duration((cross == -1).astype(np.int32))
