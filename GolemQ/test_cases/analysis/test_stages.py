@@ -375,5 +375,64 @@ class TestRatioForm(unittest.TestCase):
         self.assertGreater(len(set(right)), 1, '正确做法下 STAGE 本来就该变化')
 
 
+class TestStageGaridentColumns(unittest.TestCase):
+    """`stage_garident_columns`：落库的伴随 5 列（2026-11-24）。
+
+    背景：`garPD/garPAnchor/garPCount/garPClr/garSLag` 原先只有 4.4 搬运值
+    （止于 2026-11-16）。算法侧 `calc_stage_frame` 已经算出**绝对带**，
+    这里只做「÷ 锚日 15:00 close」的落库换算 + `garSLag`。
+    """
+
+    TS = pd.DatetimeIndex(['2024-01-02 15:00', '2024-01-03 15:00',
+                           '2024-01-04 15:00'])
+
+    def _frames(self, closes=(10.0, 11.0, 22.0)):
+        ohlc = pd.DataFrame({'close': list(closes)}, index=self.TS)
+        sf = pd.DataFrame({
+            'stage': [0.0, 1.0, np.nan],
+            'garP': [[(11.0, 10.0)]] * 3,
+            'garPAnchor': ['2024-01-02'] * 3,
+            'garPCount': [1.0, 1.0, 1.0],
+            'garPClr': [1.0, 0.0, 1.0],
+        }, index=self.TS)
+        return ohlc, sf
+
+    def test_ratio_uses_anchor_close_not_current(self):
+        ohlc, sf = self._frames(closes=(10.0, 11.0, 99.0))
+        out = NEW.stage_garident_columns(ohlc, sf)
+        # 锚日 01-02 的 close = 10 ⇒ (1.1, 1.0)；用当前行 99 会得到 (0.11,…)。
+        self.assertEqual(out['garPD'].iloc[2], [(1.1, 1.0)])
+
+    def test_anchor_missing_falls_back_to_own_close(self):
+        ohlc, sf = self._frames(closes=(10.0, 22.0, 22.0))
+        sf.loc[sf.index[1], 'garPAnchor'] = '1999-01-01'
+        got = NEW.stage_garident_columns(ohlc, sf)['garPD'].iloc[1]
+        self.assertAlmostEqual(got[0][0], 11.0 / 22.0)
+        self.assertAlmostEqual(got[0][1], 10.0 / 22.0)
+
+    def test_gar_slag_is_stage_event_lag(self):
+        ohlc, sf = self._frames()
+        out = NEW.stage_garident_columns(ohlc, sf)
+        self.assertEqual(out['garSLag'].iloc[:2].tolist(), [-1.0, 1.0])
+        self.assertTrue(np.isnan(out['garSLag'].iloc[2]), 'stage 为空 ⇒ lag 也为空')
+
+    def test_multiprice_index_is_supported(self):
+        ohlc, sf = self._frames()
+        idx = pd.MultiIndex.from_arrays([self.TS, ['600519'] * 3],
+                                        names=['ts', 'code'])
+        ohlc.index = idx
+        sf.index = idx
+        out = NEW.stage_garident_columns(ohlc, sf)
+        self.assertEqual(list(out.index), list(idx))
+        self.assertEqual(out['garPD'].iloc[0], [(1.1, 1.0)])
+
+    def test_missing_band_columns_stay_empty(self):
+        ohlc, sf = self._frames()
+        out = NEW.stage_garident_columns(ohlc, sf[['stage']])
+        self.assertTrue(out['garPD'].isna().all())
+        self.assertTrue(out['garPAnchor'].isna().all())
+        self.assertTrue(np.isnan(out['garPCount']).all())
+
+
 if __name__ == '__main__':
     unittest.main()

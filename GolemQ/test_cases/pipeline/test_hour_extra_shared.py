@@ -93,6 +93,40 @@ class TestSharedHourExtraFrame(unittest.TestCase):
         self.assertTrue(np.isnan(nat[0]).all())
         self.assertTrue(np.allclose(nat[1:], 3.0))
 
+    def test_stage_family_columns_are_present_without_day(self):
+        """没有 day 帧时 GAR 5 列也要在输出里（契约形状，值为空）。
+
+        `HOUR_STAGE_COLUMNS` 2026-11-24 扩到 6 列（stage + garPD/garPCount/
+        garPClr/garPAnchor/garSLag）；构建器必须**永远**给出这些列，否则
+        `zen_snapshots_step` 的按列取值会 KeyError。
+        """
+        from GolemQ.pipeline.review.contract import HOUR_STAGE_COLUMNS
+        targets = pd.DatetimeIndex([pd.Timestamp('2024-01-02 15:00')])
+        se_days = pd.DatetimeIndex([pd.Timestamp('2024-01-02 15:00')])
+        piv_df = pd.DataFrame([[5.0, 6.0]], index=se_days,
+                              columns=['ZenPivotCnt', 'ZenPivotLag'])
+        rk_row = {c: 7.0 for c in RENKO_DAY_COLUMNS}
+        for _base, dummy in RENKO_PRICE_DUMMIES:
+            rk_row[dummy] = 100.0
+        rk_df = pd.DataFrame([rk_row], index=se_days,
+                             columns=list(RENKO_DAY_COLUMNS))
+        nat_df = pd.DataFrame([[3.0] * len(HOUR_NATIVE_COLUMNS)],
+                              index=se_days,
+                              columns=list(HOUR_NATIVE_COLUMNS))
+        with patch.object(he, 'sample_entropy_by_day',
+                          return_value=(se_days, np.array([0.5]))), \
+                patch.object(he, 'pivot_stats',
+                             return_value=(se_days, piv_df)), \
+                patch.object(he, 'renko_by_day',
+                             return_value=(se_days, rk_df)), \
+                patch.object(he, 'native_by_day',
+                             return_value=(se_days, nat_df)):
+            out = he.build_hour_extra_frame(_ohlc(), targets, CODE)
+        for c in HOUR_STAGE_COLUMNS:
+            self.assertIn(c, out.columns)
+            self.assertTrue(out[c].isna().all(), c)
+        self.assertEqual(len(HOUR_STAGE_COLUMNS), 6)
+
 
 class TestSharedChipMapping(unittest.TestCase):
 

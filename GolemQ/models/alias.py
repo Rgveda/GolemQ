@@ -31,6 +31,19 @@ class LTT:
     BS_STAR_UP_BEFORE_MAJOR = 'BSStarUpBfMaj'
     BS_STAR_DOWN_BEFORE_MAJOR = 'BSStarDwnBfMaj'
     MAINSTREAM_LEADIN_BEFORE = 'MsLeadinBf'
+    #: **多周期买点基础信号**（用户 2026-11-24 定名）：15min → `_MINOR`，
+    #: 60min → 无后缀，day → `_MAJOR`。三周期同口径：`bsb<bss`、恰一个
+    #: `Q==1`、`MACD>0`、`bsb+9>=JX`、`bsb<SX`、`dea_lag<bsb`。
+    #: 生产方：`analysis/mtf_buy_weight.py::calc_mtf_buy_signals`。
+    QUADRANT_MAINSTREAM_UPRISING_BEFORE_MINOR = 'QuadMsUprBfMin'
+    QUADRANT_MAINSTREAM_UPRISING_BEFORE = 'QuadMsUprBf'
+    QUADRANT_MAINSTREAM_UPRISING_BEFORE_MAJOR = 'QuadMsUprBfMaj'
+    #: **多周期买点共振权重**（用户 2026-11-24 定名 `QUADRANT_MAINSTREAM_CREDIT_COMPOUNDED`）：
+    #: 15min 基础 1 / 60min 2 / day 3；该周期命中且
+    #: `Mainstream_leadin_Before < MACD_CROSS_SX_BEFORE` 再 +1；
+    #: 三周期**按自然日**相加，≥4 视为共振。
+    #: 生产方：`analysis/mtf_buy_weight.py::calc_mtf_buy_weight`。
+    QUADRANT_MAINSTREAM_CREDIT_COMPOUNDED = 'QuadMsCredCpd'
     QUADRANT_TRIGGER_CREDIT = 'QuadTrgCred'
     QUADRANT_LEVERAGE_MACD_LEADIN_UB = 'QLevMACDLinUb'
     # ── 以下 2026-10-11 随「四量图」搬运补（`analysis/quadrant_jit.py` 要用）────────

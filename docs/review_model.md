@@ -68,7 +68,7 @@ K 线 ───▶│ + day_sample 18 + coldstart 12（来自日线，按日映�
 | 60min 原生组 | 11 | `zen_snapshots` | `stage`、`m9t`/`m9tLag`、`poly9D`/`poly9NorR`、`rTrePrcD`/`rTreLagR`/`rTreSlopD`、`prophetLbD`/`prophetUbD`/`prophetClrNorm` |
 | ChipDist | 4 | `chip_cost_by_day` | **960 根日线窗口**、逐日 as-of、**补 adj 缩放**；`cost5PrzD` `cost15PrzD` `cost85PrzD` `cost95PrzD` |
 | 日族采样 | 19 | `day_sample` | 日表 19 列（含 `ZenPivotLagMaj`）；chip 4 列按「绝对成本 ÷ as-of 收盘」重算比值 |
-| coldstart | 12 | `coldstart_step` | `bstStgBf` `epStgBf` `garPD` `garPCount` `garPClr` `garPAnchor` `garSLag` `m9tMaj` `poly9pwr3Maj` `prophetLbMajD` `prophetUbMajD` `prophetClrNormMaj`；garP 稀疏、`garPD`/`garPAnchor` **ffill** |
+| coldstart | 12 | `coldstart_step` | `bstStgBf` `epStgBf` `garPD` `garPCount` `garPClr` `garPAnchor` `garSLag` `m9tMaj` `poly9pwr3Maj` `prophetLbMajD` `prophetUbMajD` `prophetClrNormMaj`；garP 稀疏、`garPD`/`garPAnchor` **ffill**。⚠️ 2026-11-24 起 GAR 5 列由 **stage 步**（`stage_garident_columns`）现算落库，coldstart 不再负责 |
 
 **落库**：`*_reality_feat_60min`，唯一键 `(code, time_stamp)`。
 

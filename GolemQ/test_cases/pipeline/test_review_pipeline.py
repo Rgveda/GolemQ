@@ -169,6 +169,9 @@ class TestRatioColumns(unittest.TestCase):
             contract |= set(cols)
         ratio_like = {c for c in contract
                       if c.endswith('D') or c.endswith('_DUMMY')}
+        # `garPD`（带）按**锚日 close** 还原（`reality_attach` 的 garident 带），
+        # 不走 `PRICE_RATIO_COLUMNS`（那里分母是 as-of close）。
+        ratio_like -= {'garPD'}
         missing = sorted(ratio_like - set(PRICE_RATIO_COLUMNS))
         self.assertEqual(missing, [],
                          f'这些比值列不会被还原：{missing}')

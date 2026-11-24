@@ -90,7 +90,8 @@ class MainstreamPipeline(BasePipeline):
 
     # ------------------------------------------------------------------ #
     def _features_from_frames(self, code: str, f60, f15, fd, *,
-                              window: Optional[int] = None):
+                              window: Optional[int] = None,
+                              with_mtf_weight: bool = False):
         """三帧 → 60min 特征帧。纯计算，不取数（供 `code_features` 与对拍）。
 
         走 `analysis/feature_flow.py` 的 Hamilton DAG：`q60/q15/qd` 各算一次，
@@ -112,7 +113,7 @@ class MainstreamPipeline(BasePipeline):
                     'ohlc_day': fd,
                     'window': int(window or self.zen_window)})
         q = out['qlev_frame']
-        return pd.DataFrame({
+        frame = pd.DataFrame({
             LTT.QUADRANT_POWERLINE: out['pwrln'],
             LTT.QUADRANT_POWERLINE_MINOR: out['pwrln_minor'],
             LTT.QUADRANT_POWERLINE_MAJOR: out['pwrln_major'],
@@ -136,15 +137,44 @@ class MainstreamPipeline(BasePipeline):
             LTT.QUADRANT_PRELUDE_ENDPOINT_BEFORE:
                 out[LTT.QUADRANT_PRELUDE_ENDPOINT_BEFORE],
         }, index=f60.index)
+        if with_mtf_weight:
+            # 多周期买点：3 个基础信号（`QuadMsUprBf*`）+ 权重 `QuadMsCredCpd`
+            # （全称见 LTT 常量注释）。
+            # ⚠️ 与 feature_flow 的 q60/q15/qd 有重复计算（约 0.7s/码），
+            # 默认**不**算；策略/回测需要时显式打开，避免拖慢 `run_market`。
+            from GolemQ.analysis.mtf_buy_weight import calc_mtf_buy_resonance
+            res = calc_mtf_buy_resonance(f60, f15, fd).reindex(f60.index)
+            for _c in res.columns:
+                frame[_c] = res[_c]
+        return frame
 
-    def code_features(self, code: str, as_of: Optional[pd.Timestamp] = None):
+    def code_features(self, code: str, as_of: Optional[pd.Timestamp] = None,
+                      with_mtf_weight: bool = False):
         """单码 → 60min 特征帧（含 `QuadPreUprBf` / `QuadPreEpBf` / `zDLagD`）。
 
         供 `code_masks` 与逐值对拍共用（不另写一套）。
+
+        :param with_mtf_weight: 是否附加多周期买点列（`QuadMsUprBf*` + `QuadMsCredCpd`）。
+            默认 False —— 它约 **0.7s/码**，`run_market` 的投票不需要它。
         """
         as_of = pd.Timestamp(as_of or GQ_util_last_trade_as_of())
         f60, f15, fd = self._fetch(code, as_of)
-        return self._features_from_frames(code, f60, f15, fd)
+        return self._features_from_frames(code, f60, f15, fd,
+                                          with_mtf_weight=with_mtf_weight)
+
+    def code_mtf_buy_weight(self, code: str,
+                            as_of: Optional[pd.Timestamp] = None) -> pd.Series:
+        """单码 → `QuadMsCredCpd`（对齐 60min 索引；日权重因果映射）。
+
+        策略侧专用入口：不跑 feature_flow，只算三周期的买点权重
+        （`analysis/mtf_buy_weight.py::calc_mtf_buy_weight`）。
+        """
+        from GolemQ.analysis.mtf_buy_weight import calc_mtf_buy_weight
+        as_of = pd.Timestamp(as_of or GQ_util_last_trade_as_of())
+        f60, f15, fd = self._fetch(code, as_of)
+        if f60 is None or f15 is None or fd is None or len(f60) == 0:
+            return pd.Series(dtype=float, name=LTT.QUADRANT_MAINSTREAM_CREDIT_COMPOUNDED)
+        return calc_mtf_buy_weight(f60, f15, fd)
 
     def code_masks_and_pwrln(self, code: str,
                              as_of: Optional[pd.Timestamp] = None):

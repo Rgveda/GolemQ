@@ -30,7 +30,7 @@
 
 ---
 
-## 二、列清单（`HOUR_COLUMNS` = 79）
+## 二、列清单（`HOUR_COLUMNS` = 84）
 
 ### 2.1 60min 原生（只落 60min 表）
 
@@ -44,7 +44,7 @@
 | Poly9 | `poly9D` `poly9NorR` | `poly9D` = Poly9 ÷ close；`poly9NorR` = 归一化 0..1 |
 | RegTree | `rTrePrcD` `rTreLagR` `rTreSlopD` | 价格/斜率 ÷ close |
 | Prophet | `prophetLbD` `prophetUbD` `prophetClrNorm` | 60min 拟合；LB/UB 是 ÷close 比值 |
-| STAGE | `stage` | 60min 原生阶段机 |
+| STAGE | `stage` + `garPD` `garPCount` `garPClr` `garPAnchor` `garSLag` | 60min 原生阶段机；GAR 5 列 2026-11-24 起由 review 现算（`stage_garident_columns`：绝对带 ÷ 锚日 15:00 close，D49） |
 
 ### 2.1b ChipDist（**日频**，在**日线循环**内计算；日表 + 60min 都落）
 
@@ -225,7 +225,7 @@ ChartScan 单独写（attach 时改名 `Cls60/Conf60/Coord60/ChartScaned60`）�
 | **Poly9** | 原生 `poly9D` `poly9NorR`；日/周 `poly9MajD` `poly9NorMajR` `poly9WekD` `poly9NorWekR`；`poly9pwr3Maj`（日 norm） | ✅ 契约 |
 | **RegTree** | 原生 `rTrePrcD` `rTreLagR` `rTreSlopD`；日 `rTrePrcMajD` `rTreLagMajR` `rTreSlopMajD` | ✅ 契约 |
 | **Prophet** | 原生 `prophetLbD` `prophetUbD` `prophetClrNorm`；日 `prophetLbMajD` `prophetUbMajD` `prophetClrNormMaj` | ✅ 契约 |
-| **STAGE** | `stage`（4.4 **算法移植**：`CLT_GRP_CHK` checkpoint，D81 更正）；伴随 `bstStgBf` `epStgBf` `garPD` `garPCount` `garPClr` `garPAnchor` `garSLag` —— **garPD 等仍以历史搬运值为准**（同一份 Garident 带可后续换算） | ✅ 契约 |
+| **STAGE** | `stage`（4.4 **算法移植**：`CLT_GRP_CHK` checkpoint，D81 更正）；伴随 `bstStgBf` `epStgBf` `garPD` `garPCount` `garPClr` `garPAnchor` `garSLag` —— **GAR 5 列 2026-11-24 起由 review 现算落库**（绝对带 ÷ 锚日 15:00 close；旧 4.4 搬运值止于 11-16）。⚠️ 4.4 的 `garSLag` 与其 `stage` 列**不自洽**（stage 恒定时 lag 仍翻转），新值按文档公式 `event_lag(stage)` 计算 | ✅ 契约 |
 | **M9T** | 原生 `m9t` `m9tLag`；日 `m9tMaj` `m9tMajR` `m9tLagMajR`；周 `m9tWekR` `m9tLagWekR` | ✅ 契约 |
 | **se** | `se` | ✅ 契约 |
 | **minor（15min）** | `AroUprsgLagMin` `1QUprLagMin`…`4QUprLagMin` `4QPwrlnMin` `4QPwrlnLedInBfMin` `4QPwrlnLedOutBfMin` `BSBuBfMin` `BSSelBfMin` `BSStarUpBfMin` `BSStarDwnBfMin` `MsLeadinVarMin` `MsLeadinEntryMin` `MsLeadinBfMin` `MsLeadinx3BfMin` `MsLeadinx5BfMin` | ✅ 契约 |

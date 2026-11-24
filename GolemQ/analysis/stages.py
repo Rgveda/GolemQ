@@ -67,7 +67,8 @@ import numpy as np
 import pandas as pd
 
 from GolemQ.core.constants import AKA, FIELD as FLD, TREND_STATUS as ST
-from GolemQ.analysis.timing import Timeline_duration
+from GolemQ.analysis.timing import (Timeline_duration,
+                                    calc_feature_event_timing_lag)
 
 __all__ = [
     'calc_garident_price',
@@ -76,6 +77,7 @@ __all__ = [
     'garident_bands_to_ratio',
     'garident_bands_from_ratio',
     'garident_bottom_roof',
+    'stage_garident_columns',
 ]
 
 #: 定带用的滚动窗口：取 checkpoint 之前这么多根收盘价。
@@ -236,6 +238,111 @@ def garident_bottom_roof(bands):
         return float(bands[0][1]), float(bands[-1][0])
     except (TypeError, IndexError, ValueError):
         return float('nan'), float('nan')
+
+
+def stage_garident_columns(ohlc: pd.DataFrame,
+                           stage_frame: pd.DataFrame) -> pd.DataFrame:
+    """`stage` 帧的**伴随 5 列**（落库口径：`garPD/garPCount/garPClr/garPAnchor/garSLag`）。
+
+    输入是 :func:`calc_stage_frame` 的输出 —— 它带**绝对价带**
+    ``GARIDENT_PRICE``（ffill）、锚日期、条数与离顶条数。落库要的是**比值带**
+    `garPD`（D49：绝对价一落库就跟复权过期），所以这里：
+
+    * ``garPD`` = 绝对带 ÷ **锚日 15:00 的 close**（复用 `garident_bands_to_ratio`，
+      别手写除法）；锚日取不到该 bar 时退回「当日最后一根 close」，再退回本行 close；
+    * ``garPCount`` / ``garPClr`` / ``garPAnchor`` 原样搬运；
+    * ``garSLag`` = ``calc_feature_event_timing_lag(stage)``（worklog 2026-10-20）。
+
+    ``ohlc`` 的索引可以是 ``(ts, code)`` 多层，也可以是单层 DatetimeIndex。
+
+    >>> idx = pd.DatetimeIndex(['2024-01-02 15:00', '2024-01-03 15:00'])
+    >>> ohlc = pd.DataFrame({'close': [10.0, 11.0]}, index=idx)
+    >>> sf = pd.DataFrame({
+    ...     'stage': [0.0, 1.0],
+    ...     'garP': [[(11.0, 10.0)], [(11.0, 10.0)]],
+    ...     'garPAnchor': ['2024-01-02', '2024-01-02'],
+    ...     'garPCount': [1.0, 1.0],
+    ...     'garPClr': [1.0, 0.0]}, index=idx)
+    >>> out = stage_garident_columns(ohlc, sf)
+    >>> out['garPD'].iloc[1]
+    [(1.1, 1.0)]
+    >>> out['garSLag'].tolist()
+    [-1.0, 1.0]
+    >>> out['garPAnchor'].iloc[0]
+    '2024-01-02'
+    """
+    if stage_frame is None or len(stage_frame) == 0:
+        return pd.DataFrame(index=getattr(stage_frame, 'index', None))
+    idx = stage_frame.index
+    out = pd.DataFrame(index=idx)
+
+    for src, dst in ((FLD.GARIDENT_PRICE_COUNT, 'garPCount'),
+                     (FLD.GARIDENT_PRICE_CLEARANCE, 'garPClr')):
+        if src in stage_frame.columns:
+            out[dst] = pd.to_numeric(
+                stage_frame[src], errors='coerce').to_numpy(dtype=float)
+        else:
+            out[dst] = np.nan
+    if FLD.GARIDENT_PRICE_ANCHOR in stage_frame.columns:
+        out['garPAnchor'] = stage_frame[FLD.GARIDENT_PRICE_ANCHOR].to_numpy(
+            dtype=object)
+    else:
+        out['garPAnchor'] = np.full(len(idx), None, dtype=object)
+
+    # 锚日 15:00 的 close（还原比值带用）；缺 15:00 再退当日最后一根。
+    if isinstance(ohlc.index, pd.MultiIndex):
+        ts = pd.DatetimeIndex(pd.to_datetime(ohlc.index.get_level_values(0)))
+    else:
+        ts = pd.DatetimeIndex(pd.to_datetime(ohlc.index))
+    close = pd.Series(pd.to_numeric(ohlc[AKA.CLOSE], errors='coerce').to_numpy(),
+                      index=ts).sort_index()
+    close = close[~close.index.duplicated(keep='last')]
+    _c15 = close[ts.strftime('%H:%M') == '15:00']
+    _c15.index = _c15.index.normalize()
+    _c15 = _c15[~_c15.index.duplicated(keep='last')]
+    _cday = close.copy()
+    _cday.index = _cday.index.normalize()
+    _cday = _cday.groupby(level=0).last()
+
+    bands = (stage_frame[FLD.GARIDENT_PRICE].to_numpy(dtype=object)
+             if FLD.GARIDENT_PRICE in stage_frame.columns
+             else np.full(len(idx), None, dtype=object))
+    # 本行 close 按 stage 帧的 ts 对齐（它才是要输出的行）
+    _sts = pd.DatetimeIndex(pd.to_datetime(
+        idx.get_level_values(0) if isinstance(idx, pd.MultiIndex) else idx))
+    own_close = close.reindex(_sts).to_numpy(dtype=float)
+    _pd_bands = [garident_bands_to_ratio(b, _anchor_close(a, _c15, _cday, c))
+                 for b, a, c in zip(bands, out['garPAnchor'].to_numpy(),
+                                    own_close)]
+    out[FLD.GARIDENT_PRICE_DUMMY] = pd.Series(_pd_bands, index=idx,
+                                              dtype=object)
+
+    stage = pd.to_numeric(stage_frame[AKA.STAGE], errors='coerce') \
+        if AKA.STAGE in stage_frame.columns else pd.Series(
+            np.nan, index=idx)
+    lag = calc_feature_event_timing_lag(
+        pd.DataFrame({AKA.STAGE: stage}), AKA.STAGE).astype(float)
+    lag[pd.isna(stage).to_numpy()] = np.nan
+    out[FLD.GARIDENT_STAGE_TIMING_LAG] = lag
+    return out
+
+
+def _anchor_close(anchor, c15, cday, own_close):
+    """锚日期 → 还原比值带该乘的 close（15:00 → 当日最后一根 → 本行 close）。"""
+    if isinstance(anchor, str):
+        try:
+            d = pd.Timestamp(anchor).normalize()
+        except (TypeError, ValueError):
+            d = None
+        if d is not None:
+            for src in (c15, cday):
+                try:
+                    v = src.get(d)
+                except Exception:   # noqa: BLE001
+                    v = None
+                if isinstance(v, (int, float, np.floating)) and np.isfinite(v):
+                    return float(v)
+    return own_close if own_close is not None and np.isfinite(own_close) else None
 
 
 def calc_garident_stage(curr_closep: float, curr_garident_prices) -> float:

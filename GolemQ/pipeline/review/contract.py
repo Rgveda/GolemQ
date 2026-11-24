@@ -103,8 +103,10 @@ HOUR_ZEN_COLUMNS: Tuple[str, ...] = (
 #: `stage` 由 review 的 `analysis/stages.py::calc_stage_frame`（4.4
 #: `calc_blh_ground_zero_anchor` + `calc_cluster_garident_stages`）重算；
 #: 历史存量仍是 2026-11-16 一次性对拍时落的值（同源算法，可用于校验）。
-#: `garPD/garPAnchor/garPCount/garPClr` 目前仍以历史搬运值为准，后续再从同一份
-#: Garident 带换算；`bstStgBf/epStgBf` 由 `reality_attach` 用 `garPD → garP` 现算、**不落库**。
+#: `garPD/garPAnchor/garPCount/garPClr/garSLag` 2026-11-24 起由 review **现算落库**
+#: （`analysis/stages.py::stage_garident_columns`：绝对带 ÷ 锚日 15:00 close，
+#: D49 的比值口径；旧 4.4 搬运值止于 2026-11-16）。
+#: `bstStgBf/epStgBf` 仍由 `reality_attach` 用 `garPD → garP` 现算、**不落库**。
 STAGE_COLUMNS: Tuple[str, ...] = (
     'stage',
     'bstStgBf', 'epStgBf',
@@ -125,7 +127,11 @@ HOUR_EXTRA_COLUMNS: Tuple[str, ...] = (AKA.SAMPLE_ENTROPY, ZEN.PIVOT_COUNT)
 #: `stage`：**4.4 算法移植**后由 review 重算（2026-11-18 修正 D81 ——
 #: 用户要的是搬 4.4 旧树的算法，不是搬它落库的 STAGE 行）。
 #: 算法入口 `analysis/stages.py::calc_stage_frame`（`CLT_GRP_CHK` + Garident 带）。
-HOUR_STAGE_COLUMNS: Tuple[str, ...] = ('stage',)
+HOUR_STAGE_COLUMNS: Tuple[str, ...] = (
+    'stage',
+    FLD.GARIDENT_PRICE_DUMMY,      # garPD：比值带（锚日 15:00 close 为分母，D49）
+    'garPCount', 'garPClr', 'garPAnchor', 'garSLag',
+)
 
 #: ChipDist 的 `RETURN_COST5` + 化简版 `COST5_UPRISING_BEFORE`（D85）。
 #: `RetCost5` 来自 **60min 全帧一次** ChipDist；`cost5UprBf` 是 `Timeline_duration`。

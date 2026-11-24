@@ -134,17 +134,19 @@ def zen_snapshots_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.Data
             rk_vals = ex[list(RENKO_DAY_COLUMNS)].to_numpy(dtype=float)
             # ⚠️ 逐列取（历史上有过 obj/list 列）；数值列在 DataFrame 构造时自然成为 float。
             nat_vals = [ex[c] for c in HOUR_NATIVE_COLUMNS]
-            stage_val = ex[AKA.STAGE]
+            # stage + GAR 伴随 5 列（`HOUR_STAGE_COLUMNS` 的顺序即落库顺序）
+            stage_vals = [ex[c] for c in HOUR_STAGE_COLUMNS]
             ret5_val = ex[AKA.RETURN_COST5]
             upr_val = ex[AKA.COST5_UPRISING_BEFORE]
         else:
             # 依赖补出来的 bar：只填 15min 需要的两列，其余留 NaN。
-            se = piv_cnt = piv_lag = ols_lag = stage_val = np.nan
+            se = piv_cnt = piv_lag = ols_lag = np.nan
+            stage_vals = [np.nan] * len(HOUR_STAGE_COLUMNS)
             ret5_val = upr_val = np.nan
             rk_vals = np.full(len(RENKO_DAY_COLUMNS), np.nan)
             nat_vals = [np.nan] * len(HOUR_NATIVE_COLUMNS)
         rows.append([d60, p60, d15, p15, piv_lag, ols_lag, *minor_vals,
-                     se, piv_cnt, stage_val, ret5_val, upr_val,
+                     se, piv_cnt, *stage_vals, ret5_val, upr_val,
                      *rk_vals, *nat_vals])
         idx.append((T, ctx.code))
 

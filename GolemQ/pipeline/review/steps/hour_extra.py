@@ -598,9 +598,17 @@ def build_hour_extra_frame(ohlc: pd.DataFrame, targets, code: str,
 
     stage_full = None
     frame[AKA.STAGE] = np.nan
+    # GAR 伴随列（2026-11-24）：没有 day 帧/算失败时留空（object 列用 None）。
+    _STAGE_EXTRA = ((FLD.GARIDENT_PRICE_DUMMY, object),
+                    ('garPCount', float), ('garPClr', float),
+                    ('garPAnchor', object),
+                    (FLD.GARIDENT_STAGE_TIMING_LAG, float))
+    for _c, _dt in _STAGE_EXTRA:
+        frame[_c] = None if _dt is object else np.nan
     if day is not None and len(day):
         try:
-            from GolemQ.analysis.stages import calc_stage_frame
+            from GolemQ.analysis.stages import (calc_stage_frame,
+                                                stage_garident_columns)
             sf = calc_stage_frame(ohlc, day)
             _ts = pd.DatetimeIndex(pd.to_datetime(
                 sf.index.get_level_values(0)))
@@ -608,6 +616,12 @@ def build_hour_extra_frame(ohlc: pd.DataFrame, targets, code: str,
                                    index=_ts)
             stage_full = stage_full[~stage_full.index.duplicated(keep='last')]
             frame[AKA.STAGE] = stage_full.reindex(targets).to_numpy(dtype=float)
+            # GAR 5 列：绝对带 ÷ 锚日 15:00 close（D49），映射到同一批 targets。
+            _gar = stage_garident_columns(ohlc, sf)
+            for _c, _dt in _STAGE_EXTRA:
+                _s = pd.Series(_gar[_c].to_numpy(), index=_ts)
+                _s = _s[~_s.index.duplicated(keep='last')]
+                frame[_c] = _s.reindex(targets).to_numpy(dtype=_dt)
         except Exception:           # noqa: BLE001 短历史/缺列 ⇒ 留 NaN
             frame[AKA.STAGE] = np.nan
 
