@@ -44,8 +44,10 @@ def latest_closed_bar(frequency: str = '15min', now=None) -> pd.Timestamp:
         return now.normalize() + pd.Timedelta(hours=15)
     # 开盘前：上一交易日 15:00
     if now.time() < pd.Timestamp('09:30').time():
-        prev = now.normalize() - pd.Timedelta(days=1)
-        d = GQ_util_get_last_day(ts=prev.to_pydatetime())
+        # ⚠️ 直接传 `now` —— `GQ_util_get_last_day` 自带「9:30 前算上一交易日」，
+        # 再手动减一天会**多退一个交易日**（2026-11-24 01:51 实测退到 11-20，
+        # 而最后已收盘的是 11-23）。
+        d = GQ_util_get_last_day(ts=now.to_pydatetime())
         return pd.Timestamp(d).normalize() + pd.Timedelta(hours=15)
     return ts
 

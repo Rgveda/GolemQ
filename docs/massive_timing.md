@@ -20,6 +20,8 @@
 | 事件标记 | `analysis/position.py::calc_position_flags` | `PosFull / PosFullOnset / PosReClear / PosBottom / PosDeepBottom / PosProbe` |
 | 分档众数 | `pipeline/mainstream/snapshot.py`（`SNAPSHOT_AGS`） | `STAGE_MODE` 等 |
 | 周线共振 | `tools/backfill_quad_pwrln_wek.py`（**D86**） | `MasQuadPwrlnWekMed / WekMode` |
+| 日线共振 | `tools/plot_mas_quad_pwrln.py --apply`（2026-11-23） | `MasQuadPwrlnMajMed / MajMode` |
+| **统一输出** | `tools/plot_mas_quad_pwrln.py`（Wek+Maj 一个命令） | CSV `mas_quad_pwrln_wek_2018_2026.csv`（含 `MasPosOnhold`）+ `mas_quad_pwrln.png` |
 | 落库 | `stock_massive_reality_60min_models`（**一日一行，只有 15:00**） | 上列全部 |
 
 ⚠️ massive 表 **2022-06-16** 才开始有行，一天一根（15:00）；2018~2022-06 只有周线 CSV。
@@ -102,6 +104,58 @@ MasQuadPwrlnWekMode = 全市场成熟码的横截面众数
 取值落在 `-3.8 + 0.1k` 的格点上（`-3.8` 最弱 ~ `4.2` 最强）。
 **只算成熟码**：某码周线不足 233 根时 MA233 项恒 0、powerline 结构性偏低，
 不进截面（D86）。
+
+⚠️ **日期轴 2026-11-24 修正**：原先取 `stock_reality_feat_day`（特征表）的
+distinct 日期，而那张表没跑过 review 的年份有洞 —— 600519 在 2022-06~10 只有
+**10** 个日期（原始日线 103 个）⇒ 2022 大半年的周线截面整段缺失。现改取
+`stock_day.date`（原始日线），2018~2026 共 **2,155** 个交易日。
+
+### 1.5 日线 Maj 共振（2026-11-23 落库）
+
+```python
+4QPwrln = (close > MA5) + (close > MA13) + ... + (close > MA233) - 3.8   # **日线**
+MasQuadPwrlnMajMed  = 全市场横截面中位数
+MasQuadPwrlnMajMode = 全市场横截面众数
+```
+
+与 `run_market` 里的 `pwrln_major` **同源**：那边也是
+`calc_four_quadrant_boost(annual=252)` 的日线 `4QPwrln` 按日映射到当天 4 根
+60min（`feature_flow.pwrln_major`），所以 15:00 行的横截面逐值相同。
+
+⚠️ **Maj 不做成熟度门槛**（默认 `--min-days 0`）：mainstream 的横截面包含上市
+不足 233 日的码（它们的 MA233 恒 NaN ⇒ powerline 偏低）。**为了让回填值与
+mainstream 逐值一致，这里不另加门槛**；`--min-days 233` 会得到更干净的截面，
+但与 mainstream 分叉 —— 别只改一边。
+
+**统一入口（2026-11-23）**：`tools/plot_mas_quad_pwrln.py` 一次算 Wek + Maj，
+并输出
+
+* CSV：`output/mas_quad_pwrln_wek_2018_2026.csv`
+  （`MasQuadPwrlnWekMed/WekMode` → `MajMed/MajMode` → `n` → `MasPosOnhold`）；
+* PNG：`output/mas_quad_pwrln.png`（上：Wek/Maj 四条线；下：`MasPosOnhold`
+  + 仓位事件标记）。
+
+* 历史回填：`python tools/plot_mas_quad_pwrln.py --start 2018-01-01 --end 2026-11-23 --apply`
+  （只写 massive 的 15:00 行）；
+* ⚠️ 主流按 bar 写**全部四根**（10:30/11:30/14:00/15:00），日内值同样是市场级
+  序列；本页的 CSV/PNG 与分析只用 **15:00**。
+* 日常更新：`--strategy mainstream --eval all` 每次都会重算并写 Maj 两列
+  （**取数**窗口 = as_of − 1600 自然日，但**输出/落库**只保留最近 **800** 天，
+  保证每根 bar 都有 233 根日线预热）；
+  ⚠️ **窄口径**（`--eval fast|etc|代码清单`）时两列被置空、不覆盖历史 ——
+  市场级序列只对全市场横截面有定义（`run_market(market_scope=False)`）。
+
+⚠️ **两处口径修复（2026-11-24，用户选「修主流口径」）**：
+
+1. **Maj 预热**：主时间轴原先包含 2 倍回看的全部 bar（约 4.4 年），窗口头部
+   没有 MA233 预热 ⇒ Maj 偏低（2022-07-08 实测 -3.8 vs 0.2）。现只输出最近
+   800 自然日；更早的行不再被主流覆盖（保留回填值）。
+2. **Wek 成熟度**：主流的 Wek 横截面读逐码 `4QPwrlnWek`，而该列原先**不 gate**
+   ⇒ 截面混进上市不足 233 周的新股。现在
+   ① review 的 `day_sample_step` 与周线工具的 `--write-60min/--synthetic-60min`
+   都按 233 周门槛写 NaN（`_mature_mask` 唯一实现）；
+   ② 窗口内逐码 `4QPwrlnWek` 已回填（`backfill_quad_pwrln_wek.py --start
+   2024-09-15 --end 2026-11-23 --min-weeks 233 --write-60min --skip-cross`）。
 
 ---
 
@@ -397,8 +451,9 @@ reclear_d = 零仓段 → ≤3 个交易日重开 → 再次零仓      # 日频
    2024-11-05、2024-12-03、2025-07-14、2025-08-07 这 6 次是 0）。
    **用 `PosFull & ~PosFull.shift(1)` 自己派生。**
 9. **基准序列别截断**：见第五节勘误 —— 截断 + `dropna()` 会造出假优势。
-10. **`MasQuadPwrlnMajMed/Mode` 未落库**：`run_market` 会算，但 `SNAPSHOT_AGS`
-    只注册了 `Wek`；日线 Maj 只在 `output/mas_quad_pwrln.csv`。
+10. ~~**`MasQuadPwrlnMajMed/Mode` 未落库**~~ —— **2026-11-23 已落库**（见 1.5）：
+    `tools/plot_mas_quad_pwrln.py --apply` 回填 2022-06-16 起；
+    `--strategy mainstream --eval all` 日常重算。窄口径跑会置空、不覆盖。
 11. **不是投资建议**。全部是历史回看，含幸存者偏差（当前股票池）。
 
 ---
@@ -415,7 +470,11 @@ python tools/massive_timing_report.py --csv output/massive_timing_daily.csv
 # MasQuad 版「两月牛」分段表（四基准收益）
 python tools/masquad_bull_episodes.py --csv output/masquad_bull_episodes.csv
 
-# 周线 CSV 本身（D86 口径，需重算时）
+# **统一入口**：Wek + Maj + MasPosOnhold → 同一份 CSV + PNG；--apply 写 massive
+python tools/plot_mas_quad_pwrln.py --start 2018-01-01 --end 2026-11-20 \
+    --apply --workers 16
+
+# 只重算周线截面（D86 口径，输出只有 Wek 三列；别指向统一 CSV）
 python tools/backfill_quad_pwrln_wek.py --start 2018-01-01 --end 2026-11-20 \
-    --min-weeks 233 --out output/mas_quad_pwrln_wek_2018_2026.csv
+    --min-weeks 233 --out output/mas_quad_pwrln_wek.csv
 ```

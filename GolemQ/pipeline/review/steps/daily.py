@@ -23,6 +23,13 @@ from GolemQ.pipeline.review.contract import (DAY_COLUMNS, DAY_SAMPLE_COLUMNS,
                                              HOUR_WEEKLY_COLUMNS)
 
 
+#: 周线 `4QPwrln` 的最长窗口是 **MA233**：该码周线不足 233 根时 MA233 恒 NaN
+#: （`close > NaN` → False）⇒ 后一项恒 0，powerline 结构性偏低。
+#: 与 `tools/backfill_quad_pwrln_wek.py` 的 `--min-weeks 233` **同口径**（D86）：
+#: 不足门槛的日期写 NaN，不进主流的周线横截面。
+WEEK_POWERLINE_MIN_BARS = 233
+
+
 def _last(series, default=np.nan):
     if series is None or len(series) == 0:
         return default
@@ -106,6 +113,38 @@ def _week_start(t) -> pd.Timestamp:
     """该 bar 所在周的周一（用于「已完成周」缓存）。"""
     t = pd.Timestamp(t).normalize()
     return t - pd.Timedelta(days=t.weekday())
+
+
+def _weekly_pwrln(code: str, wk_raw: pd.DataFrame, day_all: pd.DataFrame):
+    """周线 `4QPwrln` 的最新值（含 D86 成熟度门槛）。失败返回 NaN。
+
+    ⚠️ gate 依据：`day_all` 从 2016 锚点起取 —— 若该码数据**从锚点之前**
+    就有（帧首日 == 锚点），帧内周线数被截断 ⇒ **不 gate**（视作成熟码）；
+    只有「帧首日晚于锚点」时计数才是真值，新股才会被正确剔除。
+    """
+    if wk_raw is None or len(wk_raw) == 0:
+        return np.nan
+    try:
+        wk = weekly_ohlc(wk_raw)
+        if len(wk) == 0:
+            return np.nan
+        _truncated = (pd.Timestamp(
+            day_all.index.get_level_values(0).min()
+        ).normalize() <= pd.Timestamp('2016-01-01'))
+        if len(wk) < WEEK_POWERLINE_MIN_BARS and not _truncated:
+            return np.nan
+        from GolemQ.analysis.quadrant_jit import calc_four_quadrant_boost
+        wk_feats = _frame_features(wk, annual=52, with_regtree=False)
+        _wf = calc_four_quadrant_boost(
+            code,
+            features=(wk_feats.copy() if len(wk_feats)
+                      else pd.DataFrame(index=wk.index)),
+            ohlc_data=wk, annual=52)
+        if LTT.QUADRANT_POWERLINE in _wf.columns and len(_wf):
+            return float(_wf[LTT.QUADRANT_POWERLINE].iloc[-1])
+    except Exception:               # noqa: BLE001 周线算不出 ⇒ 留空
+        pass
+    return np.nan
 
 
 def _poly9_regtree_row(day: pd.DataFrame, feats: pd.DataFrame,
@@ -208,6 +247,11 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
 
     day_rows, cold_rows, sample_rows = {}, {}, {}
     wk_cache = {}
+    # `4QPwrlnWek`：按目标日缓存（week-end 15:00 用当前周，其余用上一完成周）
+    pwrln_by_T, pwrln_cache = {}, {}
+    _dates_all = (pd.DatetimeIndex(
+        pd.to_datetime(day_all.index.get_level_values(0))).normalize()
+        if day_all is not None and len(day_all) else pd.DatetimeIndex([]))
     # 日线版中枢 lag（`ZenPivotLagMaj`）：**逐目标滚动**，与 60min 同一因果口径。
     from GolemQ.pipeline.review.steps.hour_extra import pivot_lag_by_day
     day_piv_lag = (pivot_lag_by_day(day_all, sorted(need_dates), ctx.code)
@@ -247,29 +291,31 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
             wk_end = wkey - pd.Timedelta(days=1)
             wk_raw = slice_asof(day_all, wk_end, 2160)
             wk_feats = pd.DataFrame()
-            wk_pwrln = np.nan
             if len(wk_raw) > 0:
                 try:
                     wk = weekly_ohlc(wk_raw)
                     if len(wk) > 0:
                         wk_feats = _frame_features(wk, annual=52,
                                                    with_regtree=False)
-                        # 周线 4QPwrln：与其他周线指标同一趟、同一已完成周缓存
-                        from GolemQ.analysis.quadrant_jit import (
-                            calc_four_quadrant_boost)
-                        _wf = calc_four_quadrant_boost(
-                            ctx.code,
-                            features=(wk_feats.copy() if len(wk_feats)
-                                      else pd.DataFrame(index=wk.index)),
-                            ohlc_data=wk, annual=52)
-                        if (LTT.QUADRANT_POWERLINE in _wf.columns
-                                and len(_wf)):
-                            wk_pwrln = float(
-                                _wf[LTT.QUADRANT_POWERLINE].iloc[-1])
                 except Exception:    # noqa: BLE001
                     wk_feats = pd.DataFrame()
-            wk_cache[wkey] = (wk_raw, wk_feats, wk_pwrln)
-        wk_raw, wk_feats, wk_pwrln = wk_cache[wkey]
+            wk_cache[wkey] = (wk_raw, wk_feats)
+        wk_raw, wk_feats = wk_cache[wkey]
+
+        # 周线 4QPwrln（`4QPwrlnWek`）：与周线工具/横截面**同口径**（D86）——
+        # **15:00 且是当周最后一个交易日** 用当前周；其余一律上一已完成周。
+        _d = pd.Timestamp(T).normalize()
+        _wk_last = (pd.Timestamp(T).hour == 15
+                    and not ((_dates_all > _d)
+                             & (_dates_all <= _d + pd.Timedelta(
+                                 days=6 - _d.weekday()))).any())
+        if _wk_last:
+            _pkey, _praw = ('cur', _d), slice_asof(day_all, _d, 2160)
+        else:
+            _pkey, _praw = ('prev', wkey), wk_raw
+        if _pkey not in pwrln_cache:
+            pwrln_cache[_pkey] = _weekly_pwrln(ctx.code, _praw, day_all)
+        pwrln_by_T[_d] = pwrln_cache[_pkey]
 
         # 日族 14 列：60min 行按日采样复用（用户 2026-10-30：算过就免算）
         # ⚠️ 同一 T 以前调两次 `_day_row`（F6）；两个字典共用同一份值即可。
@@ -284,8 +330,8 @@ def day_core_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> None:
         if T in cold_dates or T in prev_dates:
             cold_rows[T] = _coldstart_row(day, feats=feats)
 
-    if wk_cache:
-        ctx.outputs['_week_pwrln'] = {k: v[2] for k, v in wk_cache.items()}
+    if pwrln_by_T:
+        ctx.outputs['_week_pwrln'] = pwrln_by_T
     if day_rows:
         idx = pd.MultiIndex.from_tuples(
             [(t, ctx.code) for t in day_rows], names=['ts', 'code'])
@@ -330,10 +376,11 @@ def day_sample_step(ctx: ReviewContext, targets: pd.DatetimeIndex) -> pd.DataFra
         out.index = pd.MultiIndex.from_arrays(
             [pd.DatetimeIndex(pd.to_datetime(out.index.get_level_values(0))),
              [ctx.code] * len(out)], names=['ts', 'code'])
-        # 周线 4QPwrln：按「已完成周」取 `day_core` 的缓存值
+        # 周线 4QPwrln：按**目标日**取 `day_core` 的缓存值
+        # （week-end 15:00 = 当前周；其余 = 上一已完成周，D86 同口径）
         _wp = ctx.outputs.get('_week_pwrln') or {}
         out[LTT.QUADRANT_POWERLINE_WEEKLY] = [
-            _wp.get(_week_start(pd.Timestamp(T)), np.nan) for T in targets]
+            _wp.get(pd.Timestamp(T).normalize(), np.nan) for T in targets]
     return out
 
 

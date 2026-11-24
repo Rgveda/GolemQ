@@ -126,5 +126,35 @@ class TestOnDates(unittest.TestCase):
                                           '2024-07-22', self.WEEK_END))
 
 
+class TestMatureMask(unittest.TestCase):
+    """`_mature_mask`：周线截面与**逐码 `4QPwrlnWek`** 写入口径的唯一实现。
+
+    2026-11-24：主流的 Wek 横截面读逐码列，若逐码列不 gate，截面会混进
+    上市不足 233 周的新股（powerline 结构性偏低）—— 两边必须同一把尺子。
+    """
+
+    def _s(self, n):
+        idx = pd.date_range('2018-01-05', periods=n, freq='7D')
+        return pd.Series(np.arange(n, dtype=float), index=idx)
+
+    def test_before_threshold_is_false(self):
+        s = self._s(5)
+        dates = s.index
+        m = W._mature_mask(s, dates, 3)
+        self.assertEqual(list(m), [False, False, True, True, True])
+
+    def test_off_means_all_mature(self):
+        s = self._s(3)
+        self.assertTrue(W._mature_mask(s, s.index, 0).all())
+
+    def test_intraday_dates_ffill_from_week_end(self):
+        """60min 时间戳（15:00）按 ffill 取当周已见周数 —— 与 `_write_60min` 同口径。"""
+        s = self._s(5)
+        ts = pd.DatetimeIndex(['2018-01-05 15:00', '2018-01-08 15:00'])
+        # 两条都 ffill 到 2018-01-05（已见 1 根周线）
+        self.assertEqual(list(W._mature_mask(s, ts, 1)), [True, True])
+        self.assertEqual(list(W._mature_mask(s, ts, 2)), [False, False])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -40,6 +40,16 @@ class TestLatestClosedBar(unittest.TestCase):
                          last_day=pd.Timestamp('2026-11-06').date())
         self.assertEqual(got, pd.Timestamp('2026-11-06 10:00'))
 
+    def test_early_morning_does_not_skip_a_trade_day(self):
+        """凌晨那一退必须只退到**上一交易日**，不能连退两天。
+
+        2026-11-24 01:51 实测：原实现先减一天再问 `GQ_util_get_last_day`，
+        后者又按「9:30 前算上一交易日」退一次 ⇒ 11-20（错），应为 11-23。
+        这条用**真实日历**（不 mock），锁住两次退日的叠加。
+        """
+        got = latest_closed_bar('60min', now=pd.Timestamp('2026-11-06 01:00'))
+        self.assertEqual(got, pd.Timestamp('2026-11-05 15:00'))
+
 
 if __name__ == '__main__':
     unittest.main()

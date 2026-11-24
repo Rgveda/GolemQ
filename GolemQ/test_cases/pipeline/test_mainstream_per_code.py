@@ -63,10 +63,11 @@ class _ProgressRecorder:
 class _StubMainstream(MainstreamPipeline):
     """替掉所有 I/O：固定时间轴 + 每码一小段掩码。"""
 
-    def __init__(self, timeline, masks):
-        super().__init__(lookback_days=1)
+    def __init__(self, timeline, masks, pwrln=None, lookback_days=800):
+        super().__init__(lookback_days=lookback_days)
         self._timeline = timeline
         self._masks = masks
+        self._pwrln = pwrln
         self.called = []
 
     def _setup_cpu_affinity(self):
@@ -81,7 +82,9 @@ class _StubMainstream(MainstreamPipeline):
         if r is None:
             return None
         ts, bull, bear = r
-        return ts, bull, bear, np.full(len(ts), np.nan)
+        pwr = (np.full(len(ts), np.nan) if self._pwrln is None
+               else np.asarray(self._pwrln, dtype=float))
+        return ts, bull, bear, pwr
 
     def snapshot_contracts(self):
         return None
@@ -122,6 +125,68 @@ class TestMainstreamPerCode(unittest.TestCase):
         self.assertEqual(stub.total_count, len(codes))
         self.assertEqual(stub.success_count, len(codes))
         self.assertIsNotNone(df)
+
+    def test_market_scope_guard_on_maj_columns(self):
+        """`MasQuadPwrlnMajMed/Mode` 只对全市场横截面有定义。
+
+        窄口径（`--eval fast` / 指定代码）若照常写，会用十几个码的「中位数」
+        覆盖 massive 里历史的市场级序列 —— `market_scope=False` 必须置空；
+        写库侧对 NaN 是跳过不覆盖。
+        """
+        codes = ['600000', '600001', '600002', '600003']
+        masks = {c: self._masks() for c in codes}
+        stub = _StubMainstream(self.TIMELINE, masks,
+                               pwrln=[1.0, 2.0, 3.0, 4.0])
+
+        full = stub.run_market(codes, pool_size=0, market_scope=True)
+        self.assertTrue(np.isfinite(full['MasQuadPwrlnMajMed']).any())
+        self.assertTrue(np.isfinite(full['MasQuadPwrlnMajMode']).any())
+
+        narrow = stub.run_market(codes, pool_size=0, market_scope=False)
+        self.assertTrue(narrow['MasQuadPwrlnMajMed'].isna().all())
+        self.assertTrue(narrow['MasQuadPwrlnMajMode'].isna().all())
+
+
+class TestMarketOutputWindow(unittest.TestCase):
+    """`run_market` **只返回/落库最近 `lookback_days`（800）自然日**。
+
+    时间轴与状态机在完整的 2 倍回看上算（`StageModeStreak`/`PrevStart` 需要
+    窗口前史），但窗口头部没有 233 根日线预热，Maj/仓位不可信
+    （2026-11-23 实测：2022-07-08 主流 -3.8，带预热回填 0.2）。
+    """
+
+    AS_OF = pd.Timestamp('2026-11-23 15:00')
+
+    def _timeline(self):
+        days = pd.bdate_range('2023-01-03', '2026-11-23')
+        ts = []
+        for d in days:
+            for hh, mm in ((10, 30), (11, 30), (14, 0), (15, 0)):
+                ts.append(d + pd.Timedelta(hours=hh, minutes=mm))
+        return np.array(pd.DatetimeIndex(ts).values, dtype='datetime64[ns]')
+
+    def _masks(self, tl):
+        return tl, np.ones(len(tl), dtype=bool), np.zeros(len(tl), dtype=bool)
+
+    def test_keeps_only_last_800_days(self):
+        tl = self._timeline()
+        codes = ['600000', '600001']
+        stub = _StubMainstream(tl, {c: self._masks(tl) for c in codes},
+                               lookback_days=800)
+        df = stub.run_market(codes, as_of=self.AS_OF, pool_size=0)
+        dt = pd.to_datetime(df['datetime'])
+        floor = self.AS_OF - pd.Timedelta(days=800)
+        self.assertGreater(len(df), 0)
+        self.assertGreaterEqual(dt.min(), floor)
+        self.assertLess(len(df), len(tl), '没有裁掉窗口外的 bar')
+
+    def test_zero_lookback_keeps_everything(self):
+        tl = self._timeline()
+        codes = ['600000']
+        stub = _StubMainstream(tl, {c: self._masks(tl) for c in codes},
+                               lookback_days=0)
+        df = stub.run_market(codes, as_of=self.AS_OF, pool_size=0)
+        self.assertEqual(len(df), len(tl))
 
 
 class _EchoPipeline(BasePipeline):

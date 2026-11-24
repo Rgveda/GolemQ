@@ -40,7 +40,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from GolemQ.core.constants import FIELD as FLD
-from GolemQ.models.alias import LTT
+from GolemQ.models.alias import LTT, ZEN
 
 import _app_common as app
 from _gear_bands import trigger_runs
@@ -67,6 +67,11 @@ with st.sidebar:
         help="`bstStgBf < 1e-12` ⇒ 红圆 @ `ATR_LB_MAJ`；"
              "`epStgBf < 1e-12` ⇒ 蓝圆 @ `ATR_UB_MAJ`。"
              "ATR_MAJ 由 compact 的日线派生列因果映射而来。")
+    show_ols = st.checkbox(
+        f"ZEN.OLS {ZEN.OLS_TIMING_LAG}", value=True,
+        help="段内 LIS/LDS 的「波浪趋势」时序（D89，review 落 60min 表）："
+             "`>0` = 这一段内的上升趋势、`<0` = 下降趋势，数值是距最近一次"
+             "方向变化的 bar 数。画在**右轴 y3**（青绿点线），本页只读、不重算。")
     show_charm = st.checkbox(
         "Charm_O/I 触发点", value=True,
         help="`QLevCharmOBf / QLevCharmIBf < 1e-12`（0 = 触发）⇒ 紫点 / 红点，"
@@ -204,6 +209,37 @@ if show_coef and coef is not None:
         x=df['dt'], y=coef.to_numpy(), mode='lines', name=app.COEF_COL,
         line=dict(color='darkred', dash='dash', width=1), opacity=0.67,
         yaxis='y2'))
+
+# ---- ZEN.OLS_TIMING_LAG（`ZenOLSLag`）：右轴 y3，青绿点线（D89）----
+if show_ols:
+    _ols = None
+    if feats is not None and ZEN.OLS_TIMING_LAG in getattr(feats, 'columns', ()):
+        _ols = pd.to_numeric(feats[ZEN.OLS_TIMING_LAG], errors='coerce')
+    if _ols is None or len(_ols) != len(df):
+        st.caption(f"`{ZEN.OLS_TIMING_LAG}` 取不到（本频率没有 attach 该列，"
+                   "或长度与 K 线不一致）—— 跳过。")
+    else:
+        fig.add_trace(go.Scatter(
+            x=df['dt'], y=_ols.to_numpy(), mode='lines',
+            name=ZEN.OLS_TIMING_LAG, yaxis='y3',
+            line=dict(color='teal', dash='dot', width=1), opacity=0.8,
+            connectgaps=False))
+        fig.update_layout(
+            yaxis3=dict(title=ZEN.OLS_TIMING_LAG, overlaying='y', side='right',
+                        anchor='x', position=0.955, showgrid=False,
+                        zeroline=False),
+            margin=dict(r=88))
+        fig.add_hline(y=0, yref='y3',
+                      line=dict(color='teal', width=0.6, dash='dot'),
+                      opacity=0.4)
+        _v = _ols.dropna()
+        if len(_v):
+            st.caption(f"`{ZEN.OLS_TIMING_LAG}`：末值 **{float(_v.iloc[-1]):.0f}**"
+                       f"（近 {int(len(_v))} 根有值），右轴 y3 青绿点线；"
+                       "`>0` = 上升段内趋势、`<0` = 下降段内趋势（数值 = 距最近"
+                       "一次方向变化的 bar 数）。")
+        else:
+            st.caption(f"`{ZEN.OLS_TIMING_LAG}` 全为空 —— review 还没跑出这列。")
 
 app.finish_figure(fig)
 st.plotly_chart(fig, width='stretch')

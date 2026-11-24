@@ -192,6 +192,12 @@ class MainstreamPipeline(BasePipeline):
 
         ⚠️ `stock_60min` 里有杂散 13:00 行（实测 4 根），旧树只认四个标准
         stamp；不过滤会把脏 bar 当成有效快照（横截面成员数会明显偏少）。
+
+        ⚠️ 返回的是**完整 2 倍回看**（≈4.4 年）—— 状态机（`StageModeStreak` /
+        `PosReClear` 的「上一零仓段」）需要窗口之前的历史；**只落库最近
+        `lookback_days`（800）天**在 `run_market` 末尾裁。窗口头部没有 233 根
+        日线预热，Maj/仓位在那里不可信（2026-11-23 实测：2022-07-08 Maj -3.8
+        vs 带预热回填 0.2）。
         """
         stamps = {dtime(10, 30), dtime(11, 30), dtime(14, 0), dtime(15, 0)}
         ts = set()
@@ -268,12 +274,17 @@ class MainstreamPipeline(BasePipeline):
         return snap
 
     def run_market(self, codes: Iterable[str], as_of=None,
-                   pool_size: int = 0) -> pd.DataFrame:
+                   pool_size: int = 0, market_scope: bool = True) -> pd.DataFrame:
         """全市场横截面 → 每根 60min bar 的仓位行。
 
         **并行执行走 `BasePipeline.run_codes`**（与 compact / review 同一套）：
         一码一个任务、统一进度条、统一超时与统计。本类**不再自己写 `Parallel`** ——
         平行实现只会分叉（用户 2026-11-12 明确）。
+
+        :param market_scope: 横截面是否**全市场**。`MasQuadPwrlnMajMed/Mode` 是
+            市场级序列，只对「全市场」有定义；`False`（如 `--eval fast` / 指定代码）
+            时两列置空 —— ⚠️ 写库侧对 NaN 是**跳过不覆盖**（`save_position_series`），
+            所以窄口径跑不会把历史的市场级值冲掉。
         """
         as_of = pd.Timestamp(as_of or GQ_util_last_trade_as_of())
         codes = [str(c) for c in codes]
@@ -316,6 +327,10 @@ class MainstreamPipeline(BasePipeline):
                 if len(_mode):
                     mas_pwrln_maj_mode[np.asarray(_mode.columns)] = \
                         _mode.iloc[0].to_numpy(dtype=float)
+            if not market_scope:
+                # 市场级序列只对全市场横截面有定义；窄口径置空（写库跳过 NaN）。
+                mas_pwrln_maj_med = np.full(T, np.nan)
+                mas_pwrln_maj_mode = np.full(T, np.nan)
 
         res = calc_position_series(total[2], total[0], total[1])
         # 快照契约（一次 groupby(bar)）：STAGE_MODE / 各 MEDIAN / COMBO
@@ -391,7 +406,15 @@ class MainstreamPipeline(BasePipeline):
                 if _c == 'STAGE_MODE':
                     continue
                 out[_c] = _snap_col(_c)
-        return out[out['mberCnt'] > 0].reset_index(drop=True)
+        out = out[out['mberCnt'] > 0]
+        # ⚠️ **只返回/落库最近 `lookback_days`（800）自然日**：时间轴与状态机
+        # 在完整的 2 倍回看上算（窗口前史保留），但窗口头部没有 233 根日线预热，
+        # Maj/仓位不可信 —— 不写库（更早的行保留既有值）。见 `market_timeline`。
+        if self.lookback_days > 0 and len(out):
+            floor = pd.Timestamp(as_of) - pd.Timedelta(
+                days=int(self.lookback_days))
+            out = out[pd.to_datetime(out['datetime']) >= floor]
+        return out.reset_index(drop=True)
 
 
 def run_mainstream(eval_range: str = 'all', codes=None, as_of: str = '',
@@ -419,6 +442,13 @@ def run_mainstream(eval_range: str = 'all', codes=None, as_of: str = '',
 
     cpu = worker_count(pct_of_cores)
 
+    # 只有「全市场股票池」的横截面才定义 `MasQuadPwrlnMajMed/Mode`；
+    # `--eval fast|block|etc*|代码清单` 时置空，避免用十几个码的「中位数」
+    # 覆盖掉历史的市场级值。
+    full_market = (codes is None
+                   and str(eval_range).lower() in ('all', 'stock', 'stocks'))
+
     pipe = MainstreamPipeline(lookback_days=lookback_days, verbose=verbose)
-    df = pipe.run_market(codelist, as_of=(as_of or None), pool_size=cpu)
+    df = pipe.run_market(codelist, as_of=(as_of or None), pool_size=cpu,
+                         market_scope=full_market)
     return df, {'total_count': len(codelist), 'rows': len(df)}
