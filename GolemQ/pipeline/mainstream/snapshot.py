@@ -15,8 +15,13 @@
 * 新增契约 = 往注册表加一行，不改循环。
 
 目前可用的源列（来自 `*_reality_feat_60min`）：`stage`、`poly9NorMajR`、
-`cost5PrzD/cost95PrzD`、以及虚拟列 `m9tCmpod`
+`cost5PrzD/cost95PrzD`、以及虚拟列 `M9tTrkLag`
 （逐码合成的 M9T combo，见 `analysis.mainstream_timing.calc_m9t_combo`）。
+
+⚠️ 源表由 `MainstreamPipeline.run_market` 提供：8 个源列在**逐码 worker**里读回、
+`M9tTrkLag` 也在 worker 内算好（`_snapshot_source`），跑完 `pd.concat` 成
+`ret_features_pd` 再喂给 :func:`snapshot_frame` —— 本模块**不读库**
+（旧树 `workload_p1` 的形状；2026-11-25 由父进程全表扫改过来）。
 缺 producer 的源列（stockScoreM15 / MAPOWER30_MAJOR / ATR_*_MAJOR / zenOLS /
 MACD_CROSS_SX）等 mainstream 逐股特征栈移植后再往注册表里加。
 """
@@ -28,7 +33,10 @@ from typing import Callable, Dict, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-__all__ = ['Agg', 'SNAPSHOT_AGS', 'aggregate_snapshot', 'snapshot_frame']
+from GolemQ.models.alias import LTT
+
+__all__ = ['Agg', 'SNAPSHOT_AGS', 'SNAP_SRC_COLS', 'aggregate_snapshot',
+           'snapshot_frame']
 
 
 @dataclass(frozen=True)
@@ -62,10 +70,28 @@ SNAPSHOT_AGS: Sequence[Agg] = (
     Agg('MasQuadPwrlnWekMed', '4QPwrlnWek', 'median'),
     Agg('MasQuadPwrlnWekMode', '4QPwrlnWek', 'mode'),
     # 逐码 M9T combo（COMPOUNDED）的众数 / 中位数
-    Agg('MAGIC_NINE_TURNS_DUMMY_COMPOUNDED_MODE', 'm9tCmpod', 'mode',
+    Agg('MAGIC_NINE_TURNS_DUMMY_COMPOUNDED_MODE',
+        LTT.MAGIC_NINE_TURNS_TRUNK_TIMING_LAG, 'mode',
         drop_zero=True),
-    Agg('M9T_LAG_CMB_MED', 'm9tCmpod', 'median'),
+    Agg('M9T_LAG_CMB_MED', LTT.MAGIC_NINE_TURNS_TRUNK_TIMING_LAG, 'median'),
 )
+
+
+def _registry_sources() -> tuple:
+    """注册表用到的**真实**源列（去掉虚拟的 `M9tTrkLag`），按首次出现顺序。"""
+    return tuple(dict.fromkeys(a.source for a in SNAPSHOT_AGS
+                                if a.source !=
+                                LTT.MAGIC_NINE_TURNS_TRUNK_TIMING_LAG))
+
+
+#: 逐码合成虚拟列 `M9tTrkLag` 的三个真实输入（`calc_m9t_combo`）。
+#: 注册表里只出现虚拟列，所以这三列必须单独列出。
+M9T_SRC_COLS = ('m9t', 'm9tLagMajR', 'm9tLagWekR')
+
+#: 逐码 worker 要从 `*_reality_feat_60min` 读回的列 —— **由注册表推导** + M9T 三列，
+#: 往 `SNAPSHOT_AGS` 加一行就自动跟上（测试断言覆盖注册表，防止悄悄变旧）。
+SNAP_SRC_COLS = _registry_sources() + tuple(
+    c for c in M9T_SRC_COLS if c not in _registry_sources())
 
 
 def aggregate_snapshot(frame: pd.DataFrame, ags=SNAPSHOT_AGS) -> Dict[str, float]:
@@ -108,7 +134,7 @@ def snapshot_frame(features: pd.DataFrame, ags=SNAPSHOT_AGS,
     ...     'cost5PrzD': [1.1, 1.2, 1.3],
     ...     'cost95PrzD': [1.4, 1.5, 1.6],
     ...     'stage': [1, 1, 2],
-    ...     'm9tCmpod': [1, 1, -1]})
+    ...     'M9tTrkLag': [1, 1, -1]})
     >>> r = snapshot_frame(f)
     >>> round(float(r['POLYNOMIAL9_NORM_MAJOR_MEDIAN'].iloc[0]), 4)
     0.4

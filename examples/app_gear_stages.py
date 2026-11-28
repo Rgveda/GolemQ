@@ -57,8 +57,13 @@ with st.sidebar:
     st.divider()
     st.caption("显示开关 —— 各层可单独关，便于对照")
     show_coef = st.checkbox("上升系数", value=True)
+    show_cs_buy = st.checkbox(
+        "ChartScan：Buy 全高带（orange / lightcoral）", value=False,
+        help="`ChartScan 60min/日线 Buy < Leadout Maj & < 日线 Sell` 的两条全高带。"
+             "它等价于 lag 副图里 `ChrtScanUprTukLag > 0`，也与 navy/crimson 仓位带"
+             "大面积重合 ⇒ **默认关**（用户 2026-11-28）。")
     show_chartscan = st.checkbox(
-        "ChartScan：Buy/Sell 三时钟带", value=True,
+        "ChartScan：Sell 三时钟带", value=True,
         help="15min→lime / 60min→olive / 日线→green。Sell 状态画带（即老树的 "
              "STOPLOSS 区段）；数据来自 `*_reality_feat_60min` 的 "
              "`Cls60/ClsDay/Cls15` + `Coord*`。")
@@ -67,6 +72,29 @@ with st.sidebar:
         help="`bstStgBf < 1e-12` ⇒ 红圆 @ `ATR_LB_MAJ`；"
              "`epStgBf < 1e-12` ⇒ 蓝圆 @ `ATR_UB_MAJ`。"
              "ATR_MAJ 由 compact 的日线派生列因果映射而来。")
+    show_credit_star = st.checkbox(
+        f"{LTT.QUADRANT_MAINSTREAM_CREDIT_COMPOUNDED} > 3 五角星（ATR_LB_MAJ）",
+        value=True,
+        help="多周期买点共振权重（15min 1 / 60min 2 / day 3，`MsLeadinBf` 补充 +1，"
+             "按自然日相加）**> 3** 的 bar ⇒ 金色五角星 @ `ATR_LB_MAJ`。"
+             "权重是**按自然日**汇总的，再因果映射到 bar（盘中用上一交易日、"
+             "15:00 用当日）—— 所以同一天的多根 bar 常是同一个权重。"
+             "只在 60min 有日线帧时可用；取值来源 `analysis/mtf_buy_weight.py`。")
+    clear_thr = st.slider("仓位阈值：几条滞后同向", 2, 6, 4,
+                          help="六条滞后（M9tTrkLag / ChrtScanUprTukLag / "
+                               "QuadBsTukLag / ZenOLSLag / QuadDwnRskLagMaj / "
+                               "QLevMACDLagD）里**至少这么多条为负** ⇒ navy 全高带（清仓）、"
+                               "**至少这么多条为正** ⇒ crimson 全高带（满仓）；"
+                               "NaN 不计票。默认 4（含 4）。")
+    show_trunks = st.checkbox(
+        "滞后类：M9tTrkLag / ChrtScanUprTukLag / QuadBsTukLag / ZenOLSLag /"
+        " QuadDwnRskLagMaj / QLevMACDLagD",
+        value=True,
+        help="`QUADRANT_BS_TRUNK_TIMING_LAG`：正值 = 连续满足「买卖星线主干」的根数、"
+             "负值 = 连续不满足（不会出现 0）。画在**右轴 y4**，本页只读、不重算。"
+             "⚠️ `CHARTSCAN_UPRISING_TRUNK_TIMING_LAG` **不画** —— 它就是上面两条"
+             "全高带（orange ∪ lightcoral）的数值化（正数=连续命中根数），"
+             "再画一遍是重复。")
     show_ols = st.checkbox(
         f"ZEN.OLS {ZEN.OLS_TIMING_LAG}", value=True,
         help="段内 LIS/LDS 的「波浪趋势」时序（D89，review 落 60min 表）："
@@ -162,9 +190,12 @@ if (LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR in ms.columns
             st.caption(f"yellowgreen 区域：`QuadDwnRskLagMaj > 1e-12`，"
                        f"{len(_runs)} 段；y 范围 = `CCI_NORM` min/max - 1。")
 
-# ChartScan：Sell 三时钟带（副轴）+ Buy 晚于 Leadout/日线 Sell 的全高带
+# ChartScan：Sell 三时钟带（副轴）/ Buy 全高带（两个独立开关）
 if show_chartscan:
     app.add_chartscan_sell_bands(fig, feats, df, echo=st.caption)
+# `add_chartscan_buy_bands`（orange / lightcoral）默认**不画**：它等价于
+# `ChrtScanUprTukLag > 0`，且与 navy/crimson 仓位带大面积重合（用户 2026-11-28）。
+if show_cs_buy:
     app.add_chartscan_buy_bands(fig, data, echo=st.caption)
 
 # Charm_O / Charm_I 触发点
@@ -200,6 +231,47 @@ if show_stage_dots and frequency == app.RENKO_FREQ and feats is not None:
             st.caption(f"{_label} 触发：{int(_hit.sum())} 处（{_color}），"
                        f"标在 `{_ycol}`。")
 
+# 多周期买点共振权重 `QuadMsCredCpd > 3` 的五角星（用户 2026-11-25）——
+# 与 bstStgBf 红圆同一基线 `ATR_LB_MAJ`；只在 60min（日线帧）成立。
+if show_credit_star:
+    _cred = LTT.QUADRANT_MAINSTREAM_CREDIT_COMPOUNDED
+    if frequency != app.RENKO_FREQ:
+        st.caption(f"`{_cred}` 需要日线帧映射 —— 只在 60min 画五角星，当前 {frequency} 跳过。")
+    else:
+        _w = app.mtf_credit_weight(symbol, frequency, long_history,
+                                   fold_mainstream)
+        _bands = app.atr_major_bands(symbol, frequency, long_history,
+                                     fold_mainstream)
+        if _w is None:
+            st.caption(f"`{_cred}` 取不到（缺 15min/日线帧或三周期都算不出来）—— 跳过五角星。")
+        elif _bands is None or FLD.ATR_LB_MAJOR not in _bands.columns:
+            st.caption("ATR_MAJ 取不到（缺日线帧）—— 跳过五角星。")
+        else:
+            _w = _w.reindex(data['ohlc'].index)   # 与 K 线同索引、同序
+            _wv = pd.to_numeric(_w, errors='coerce').to_numpy()
+            _yv = pd.to_numeric(_bands[FLD.ATR_LB_MAJOR],
+                                errors='coerce').to_numpy()
+            _xv = df['dt'].to_numpy()
+            if len(_wv) != len(df) or len(_yv) != len(df):
+                st.caption(f"`{_cred}` / `{FLD.ATR_LB_MAJOR}` 长度与 K 线不一致 "
+                           f"（{len(_wv)} / {len(_yv)} vs {len(df)}）—— 跳过五角星。")
+            else:
+                _hit = np.isfinite(_wv) & (_wv > 3) & np.isfinite(_yv)
+                if _hit.any():
+                    fig.add_trace(go.Scatter(
+                        x=_xv[_hit], y=_yv[_hit], mode='markers',
+                        name=f'{_cred} > 3',
+                        marker=dict(symbol='star', size=13, color='gold',
+                                    line=dict(color='darkorange', width=1))))
+                _vals = pd.Series(_wv).dropna()
+                if len(_vals):
+                    st.caption(
+                        f"`{_cred} > 3`：{int(_hit.sum())} 处（金色五角星 @ "
+                        f"`{FLD.ATR_LB_MAJOR}`）；有值 bar {int(len(_vals))}，"
+                        f"末值 **{float(_vals.iloc[-1]):.0f}**。")
+                else:
+                    st.caption(f"`{_cred}` 全为空 —— 跳过五角星。")
+
 # Mainstream leadin / leadout
 app.add_mainstream_triggers(fig, data, show_leadin, show_leadout)
 
@@ -210,7 +282,13 @@ if show_coef and coef is not None:
         line=dict(color='darkred', dash='dash', width=1), opacity=0.67,
         yaxis='y2'))
 
-# ---- ZEN.OLS_TIMING_LAG（`ZenOLSLag`）：右轴 y3，青绿点线（D89）----
+# ---- 滞后类序列：**单独画在「bar 序号等距」的副图上**
+# 为什么不叠在主图的时间轴：60min bar 的 x 间距是 1h / 2.5h / 19.5h（隔夜）/
+# 67.5h（周末）—— 每根 +1 的阶梯在时间轴上会被拉成「一段陡一段平」（用户 2026-11-26）。
+# 按 bar 序号画，每根一格，正常的递进就是 45° 直线；有锯齿说明真的漏根/重复。
+_lags = {}
+_lag_caps = []          # (name, 末值说明文本)
+
 if show_ols:
     _ols = None
     if feats is not None and ZEN.OLS_TIMING_LAG in getattr(feats, 'columns', ()):
@@ -219,27 +297,124 @@ if show_ols:
         st.caption(f"`{ZEN.OLS_TIMING_LAG}` 取不到（本频率没有 attach 该列，"
                    "或长度与 K 线不一致）—— 跳过。")
     else:
-        fig.add_trace(go.Scatter(
-            x=df['dt'], y=_ols.to_numpy(), mode='lines',
-            name=ZEN.OLS_TIMING_LAG, yaxis='y3',
-            line=dict(color='teal', dash='dot', width=1), opacity=0.8,
-            connectgaps=False))
-        fig.update_layout(
-            yaxis3=dict(title=ZEN.OLS_TIMING_LAG, overlaying='y', side='right',
-                        anchor='x', position=0.955, showgrid=False,
-                        zeroline=False),
-            margin=dict(r=88))
-        fig.add_hline(y=0, yref='y3',
-                      line=dict(color='teal', width=0.6, dash='dot'),
-                      opacity=0.4)
+        _lags[ZEN.OLS_TIMING_LAG] = (_ols, 'teal', 'dot')
         _v = _ols.dropna()
         if len(_v):
-            st.caption(f"`{ZEN.OLS_TIMING_LAG}`：末值 **{float(_v.iloc[-1]):.0f}**"
-                       f"（近 {int(len(_v))} 根有值），右轴 y3 青绿点线；"
-                       "`>0` = 上升段内趋势、`<0` = 下降段内趋势（数值 = 距最近"
-                       "一次方向变化的 bar 数）。")
+            _lag_caps.append((ZEN.OLS_TIMING_LAG,
+                              f"末值 **{float(_v.iloc[-1]):.0f}**（近 "
+                              f"{int(len(_v))} 根有值；`>0` 上升段内、`<0` 下降段内）"))
         else:
             st.caption(f"`{ZEN.OLS_TIMING_LAG}` 全为空 —— review 还没跑出这列。")
+
+if show_trunks:
+    _tr = app.trunk_lags(symbol, frequency, long_history, fold_mainstream)
+    if not _tr:
+        st.caption("主干时序取不到（只在 60min、且需要 15min/日线帧）—— 跳过。")
+    else:
+        _styles = {LTT.QUADRANT_BS_TRUNK_TIMING_LAG: ('purple', 'solid'),
+                   LTT.CHARTSCAN_UPRISING_TRUNK_TIMING_LAG: ('goldenrod', 'dash'),
+                   LTT.MAGIC_NINE_TURNS_TRUNK_TIMING_LAG: ('royalblue', 'dashdot')}
+        for _name, _s in _tr.items():
+            _col, _dash = _styles.get(_name, ('gray', 'dot'))
+            _v = pd.to_numeric(_s, errors='coerce')
+            if len(_v) != len(df):
+                st.caption(f"`{_name}` 长度 {len(_v)} 与 K 线 {len(df)} 不一致 —— 跳过。")
+                continue
+            _lags[_name] = (_v, _col, _dash)
+            _d = _v.dropna()
+            if len(_d):
+                _lag_caps.append((_name, f"末值 **{float(_d.iloc[-1]):.0f}**"
+                                         f"（近 {int(len(_d))} 根有值；正=连续成立、负=连续不成立）"))
+
+# `QuadDwnRskLagMaj`（下行风险 lag，日线 MAJOR 映射到 60min 后**按 60min bar 逐根 ±1**）
+_dwn = None
+if ms is not None and LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR in getattr(
+        ms, 'columns', ()):
+    _dwn = pd.to_numeric(ms[LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR],
+                         errors='coerce')
+if _dwn is not None and len(_dwn) == len(df):
+    _lags[LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR] = (_dwn, 'olive', 'dot')
+    _d = _dwn.dropna()
+    if len(_d):
+        _lag_caps.append((LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR,
+                          f"末值 **{float(_d.iloc[-1]):.0f}**（近 {int(len(_d))} 根"
+                          f"有值；>0 上行风险段、<0 下行风险段）"))
+
+# `QLevMACDLagD`（四量图杠杆 MACD 时序）：同样逐 bar ±1，一起放进 lag 副图
+_macd_lag = None
+if ms is not None and LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY in getattr(
+        ms, 'columns', ()):
+    _macd_lag = pd.to_numeric(
+        ms[LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY], errors='coerce')
+if _macd_lag is not None and len(_macd_lag) == len(df):
+    _lags[LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY] = (
+        _macd_lag, 'crimson', 'dot')
+    _d = _macd_lag.dropna()
+    if len(_d):
+        _lag_caps.append((LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY,
+                          f"末值 **{float(_d.iloc[-1]):.0f}**（近 {int(len(_d))} 根"
+                          f"有值；四量图杠杆 MACD 时序）"))
+
+# ---- 仓位信号（用户 2026-11-27/28）：六条滞后统计同向条数
+#   **≥阈值条为负** ⇒ navy 全高带（清仓）；**≥阈值条为正** ⇒ crimson 全高带（满仓）。
+#   两条不可能同时成立（6 条里 ≥4 负 + ≥4 正 需要 8 条）。NaN 不计票。
+if len(_lags) >= 2:
+    _neg = np.zeros(len(df), dtype=int)
+    _pos = np.zeros(len(df), dtype=int)
+    for _name, (_v, _c, _dash) in _lags.items():
+        _arr = pd.to_numeric(_v, errors='coerce').to_numpy(dtype=float)
+        _neg += (_arr < 0)
+        _pos += (_arr > 0)
+    _pad = pd.Timedelta(minutes=30)
+
+    def _band(_mask, _color, _opacity):
+        _runs = app.trigger_runs(pd.Series(np.where(_mask, 0.0, 1.0),
+                                           index=df['dt']))
+        for _a, _b in _runs:
+            fig.add_shape(type='rect', xref='x', yref='paper',
+                          x0=_a - _pad, x1=_b + _pad, y0=0, y1=1,
+                          fillcolor=_color, opacity=_opacity,
+                          line=dict(width=0), layer='below')
+        return _runs
+
+    _thr = int(clear_thr)
+    _clear = _neg >= _thr
+    _full = _pos >= _thr
+    _runs_clear = _band(_clear, 'navy', 0.18) if _clear.any() else []
+    _runs_full = _band(_full, 'crimson', 0.10) if _full.any() else []
+    st.caption(
+        f'**navy 全高带 = 清仓**：{len(_lags)} 条滞后里 ≥{_thr} 条为负 ⇒ '
+        f'{len(_runs_clear)} 段 / {int(_clear.sum())} 根；'
+        f'**crimson 全高带 = 满仓**：≥{_thr} 条为正 ⇒ '
+        f'{len(_runs_full)} 段 / {int(_full.sum())} 根（NaN 不计票）')
+
+if _lags:
+    _x = np.arange(len(df))
+    fig2 = go.Figure()
+    for _name, (_v, _col, _dash) in _lags.items():
+        fig2.add_trace(go.Scatter(
+            x=_x, y=_v.to_numpy(), mode='lines', name=_name,
+            line=dict(color=_col, dash=_dash, width=1.2), opacity=0.85,
+            connectgaps=False, customdata=df['dt'].to_numpy(),
+            hovertemplate='%{customdata|%Y-%m-%d %H:%M}  %{y:.0f}<extra></extra>'))
+    _step = max(1, len(_x) // 10)
+    _tick = list(_x[::_step])
+    fig2.update_layout(
+        height=260, margin=dict(l=10, r=10, t=10, b=10),
+        hovermode='x unified', legend=dict(orientation='h', y=1.02),
+        xaxis=dict(title='bar 序号（等距，鼠标悬停看时间）',
+                   tickmode='array', tickvals=_tick,
+                   ticktext=[str(pd.Timestamp(d))[:10]
+                             for d in df['dt'].to_numpy()[_tick]]),
+        yaxis=dict(title='lag', zeroline=True,
+                   zerolinecolor='rgba(128,128,128,0.5)'))
+    st.plotly_chart(fig2, width='stretch')
+    st.caption('⚠️ 这几条都是**逐 bar 滞后量**：正常递进就是 ±1/根（45° 直线），'
+               '大跳变 = 方向翻转（`calc_event_timing_lag` 重置）。'
+               '按 bar 序号等距画，才不会被时间轴的空档（隔夜 19.5h、周末 67.5h）'
+               '拉成一段陡一段平。')
+    for _name, _txt in _lag_caps:
+        st.caption(f"`{_name}`：{_txt}")
 
 app.finish_figure(fig)
 st.plotly_chart(fig, width='stretch')

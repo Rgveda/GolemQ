@@ -132,6 +132,12 @@ DOCTEST_MODULES = (
     'GolemQ.analysis.stages',
     'GolemQ.analysis.timeseries',
     'GolemQ.analysis.indicators',
+    # ChartScan 上升主干（2026-11-25）：`cs_class_before` 的事件距离与
+    # `calc_chartscan_uprising_trunk_lag` 的 `Timeline_duration` 语义，
+    # 都只吃传进来的 DataFrame / 数组，**不碰库**。
+    'GolemQ.analysis.chartscan',
+    # 多周期买点权重（2026-11-24）：`_compose_day_weight` 的算术。
+    'GolemQ.analysis.mtf_buy_weight',
     # RSRS（阻力支撑相对强度）**指标计算**（2026-10-12 搬）。只搬 `pre_rsrs_data_func`
     # 一条（老树的 8 个择时信号与那个**坏掉的** `pre_rsrs_zscore_np_func` 都没搬）。
     # 它的 doctest 钉两件事：**列序**（5 列，顺序即契约）与**索引对齐**。

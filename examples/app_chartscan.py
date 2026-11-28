@@ -275,8 +275,10 @@ else:
         '所在 bar': det.index.get_level_values(level=0),
     }).sort_values('所在 bar', ascending=False)
     st.dataframe(table, width='stretch', hide_index=True)
-    st.caption('⚠️「检出时刻」(`Coordinates*`) 是 **UTC 毫秒**；「所在 bar」是文档的键'
-               '（日族 `date_stamp` / 分钟族 `time_stamp`，**秒**）—— 单位不同，别直接比。')
+    st.caption('⚠️ `Coordinates*` 是**框所在的那根 bar**，**不是检出时刻** —— 检出发生在'
+               '这一行的键时刻，实测普遍比框晚 2~12 天（拿它当事件时间会有未来函数）；'
+               '单位是 **UTC 毫秒**。「所在 bar」是文档的键（日族 `date_stamp` / '
+               '分钟族 `time_stamp`，**秒**）—— 单位不同，别直接比。')
 
 if res['family'] != 'day':
     st.caption(f'60min 族只写收盘那几根（{", ".join(CLOSE_TIMES)}）；'

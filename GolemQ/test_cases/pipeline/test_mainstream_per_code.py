@@ -86,7 +86,24 @@ class _StubMainstream(MainstreamPipeline):
                else np.asarray(self._pwrln, dtype=float))
         return ts, bull, bear, pwr
 
-    def snapshot_contracts(self):
+    def _snapshot_source(self, code, start=None, end=None):
+        """替掉逐码的 reality 读口（本用例只关心「一码一次、不分片」）。"""
+        return pd.DataFrame()
+
+    def snapshot_contracts(self, features=None):
+        return None
+
+    def snapshot_gap_codes(self, results):
+        """不补退市码（否则会真去查库）。"""
+        return []
+
+    def stored_stage_mode(self, timeline):
+        """窄口径不读 massive 表。"""
+        return np.full(len(timeline), np.nan)
+
+    @staticmethod
+    def assert_snapshot_usable(snap, n_codes=0, n_rows=0):
+        """本用例的 stub 没有快照源 —— 跳过全市场安全阀。"""
         return None
 
     def _index_close_map(self, code, timeline):

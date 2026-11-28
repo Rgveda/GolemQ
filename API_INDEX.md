@@ -57,6 +57,16 @@
 |:--|:--|:--|
 | f | `find_zs(points)` | 输入笔或线段标记点，输出中枢识别结果。 `[dt]` |
 
+### `chartscan`
+ChartScan 三时钟 → 「上升主干」掩码与时序。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| f | `cs_class_before(feats, index, family, row_times)` | 距最近一次 ChartScan cls（'Buy' / 'Sell'）的 bar 数。 `[dt]` |
+| f | `leadout_major_distance(ms_major, index)` | 日线 MAJOR 的 MsLeadoutBfMaj → 60min bar 数距离。 |
+| f | `chartscan_buy_mask(feats, index, leadout_major)` | 用户 2026-11-25 的上升主干掩码（bool 数组）。 |
+| f | `calc_chartscan_uprising_trunk_lag(feats, index, leadout_major)` | calc_event_timing_lag(np.where(mask, 1, -1)) → ChrtScanUprTukLag。 `[dt]` |
+
 ### `compact`
 calc_compact_features —— XGBoost xgb_scan 的 37 个 derivable 特征。
 
@@ -120,6 +130,8 @@ QuadrantGear 的 Hamilton 数据流（列级 DAG，按需执行）。
 | f | `bs_star_dwn_bf_maj(ohlc60, bs_day)` |  |
 | f | `bs_bu_bf_maj(ohlc60, bs_day)` |  |
 | f | `bs_sel_bf_maj(ohlc60, bs_day)` |  |
+| f | `bs60(ohlc60)` | 60min calc_bs_signals（星线/买卖线的 *_BEFORE，供 BS 主干用）。 |
+| f | `bs_trunk(ohlc60, qlev_macd_lag, bs60, bs_star_up_bf_maj, bs_star_dwn_bf_maj, bs_bu_bf_maj, bs_sel_bf_maj)` | QuadBsTuk / QuadBsTukLag —— 共用 quadrant_jit 的那份实现。 |
 | f | `charm_frame(qlev_macd_lag, quad_downrisk_major, quad_downrisk, qlev_pwrln_upr_lag, cost15_prz, ohlc60)` | QLevCharmOBf / QLevCharmIBf（QuadGear0 第五行的两个 OR 分支）。 |
 | f | `quad_gear0(qlev_macd_lag, quad_downrisk_major, bs_star_up_bf_maj, bs_star_dwn_bf_maj, bs_bu_bf_maj, bs_sel_bf_maj, ms_leadin_maj, ms_leadout_maj, QLevCharmOBf, ohlc60)` | O 档。输入列来自 DAG；calc_quadrant_gear_o 只做算术。 |
 | f | `build_driver()` | 构建本模块的 Hamilton Driver（每次调用新建，线程间不共享状态）。 |
@@ -1230,7 +1242,7 @@ stock_reality_feat_day —— 日频元数据的统一落点。
 |:--|:--|:--|
 | f | `reality_feat_name(family, market_type)` | (族, 市场类型) → 集合名。 `[dt]` |
 | f | `reality_feat_rows(features, family, created_at, write_nulls)` | CV 结果帧 → *_reality_feat_* 文档列表。纯函数（不碰 DB）。 `[dt]` |
-| f | `save_position_series(df, market_type, db, verbose, echo)` | 「全局智能仓位」→ stock_/index_massive_reality_60min_models（旧名）。 |
+| f | `save_position_series(df, market_type, db, verbose, echo, delta)` | 「全局智能仓位」→ stock_/index_massive_reality_60min_models（旧名）。 |
 | f | `save_reality_feat(features, family, market_type, verbose, echo, created_at, write_nulls, db)` | 取数（其实只组行）→ upsert_fields 落 golemq_stock_cn。 |
 | f | `asof_close(close, daily)` | 把逐 bar 的 close 映射成该行的 as-of 收盘（F8，2026-11-16）。 `[dt]` |
 | f | `restore_price_columns(df, close, columns)` | 把存成比值的价格列乘回 close，还原价格量纲。纯函数。 |
@@ -1545,13 +1557,18 @@ Mainstream 管线（8.3）—— 目前只含「全局智能仓位」一段。
 | | 名称 | 摘要 |
 |:--|:--|:--|
 | C | `MainstreamPipeline` | 全市场 Mainstream 聚合（当前只有仓位段）。 |
-| f | `MainstreamPipeline.code_features(code, as_of, with_mtf_weight)` | 单码 → 60min 特征帧（含 QuadPreUprBf / QuadPreEpBf / zDLagD）。 |
+| f | `MainstreamPipeline.code_features(code, as_of, with_mtf_weight, with_chartscan, with_bs_trunk)` | 单码 → 60min 特征帧（含 QuadPreUprBf / QuadPreEpBf / zDLagD |
 | f | `MainstreamPipeline.code_mtf_buy_weight(code, as_of)` | 单码 → QuadMsCredCpd（对齐 60min 索引；日权重因果映射）。 |
+| f | `MainstreamPipeline.code_chartscan_trunk(code, as_of)` | 单码 → ChrtScanUprTukLag（CHARTSCAN_UPRISING_TRUNK_TIMING_LAG）。 |
 | f | `MainstreamPipeline.code_masks_and_pwrln(code, as_of)` | 单码 → (ts, bull, bear, pwrln_major)；pwrln_major 供 MasQuadPwrlnMaj。 |
 | f | `MainstreamPipeline.code_masks(code, as_of)` | 单码 → (ts, bull, bear) 三个等长数组（只含可判定 bar）。 |
+| f | `MainstreamPipeline.merge_snapshot_sources(results)` | 各码 worker 的 snap_src → (ret_features_pd, 贡献码数)。 |
+| f | `MainstreamPipeline.snapshot_gap_codes(results)` | 本应当参与横截面、但没有产出 snap_src 的码（父进程补读）。 |
+| f | `MainstreamPipeline.stored_stage_mode(timeline)` | 窄口径：从 massive 表读回既有的 STAGE_MODE（不重算市场级快照）。 |
 | f | `MainstreamPipeline.run_code(code)` |  |
 | f | `MainstreamPipeline.market_timeline(as_of)` | 主时间轴：只保留 10:30 / 11:30 / 14:00 / 15:00 四根。 |
-| f | `MainstreamPipeline.snapshot_contracts()` | 一次 groupby(bar) 产出全部快照契约列（MED/MODE/COMBO）。 |
+| f | `MainstreamPipeline.assert_snapshot_usable(snap, n_codes, n_rows)` | 全市场跑的安全阀：快照为空 ⇒ 中止，不写坏仓位列。 |
+| f | `MainstreamPipeline.snapshot_contracts(features)` | 合并后的逐码快照源表 → 每根 bar 一行的契约列（MED/MODE/COMBO）。 |
 | f | `MainstreamPipeline.run_market(codes, as_of, pool_size, market_scope)` | 全市场横截面 → 每根 60min bar 的仓位行。 |
 | f | `run_mainstream(eval_range, codes, as_of, pct_of_cores, lookback_days, verbose)` | 解析 scope → 逐片算 → 返回 (仓位 DataFrame, 统计)。 |
 
@@ -1856,6 +1873,35 @@ GolemQ 测试运行脚本
 
 ## GolemQ.test_cases.analysis
 
+### `test_chartscan`
+ChartScan 上升主干时序 ChrtScanUprTukLag（用户 2026-11-25 算子）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestNaming` |  |
+| f | `TestNaming.test_constant()` |  |
+| f | `TestNaming.test_families()` |  |
+| C | `TestCsClassBefore` |  |
+| f | `TestCsClassBefore.test_distance_to_last_buy()` |  |
+| f | `TestCsClassBefore.test_none_without_event_or_column()` |  |
+| f | `TestCsClassBefore.test_sell_class()` |  |
+| C | `TestMask` |  |
+| f | `TestMask.test_union_of_two_families()` |  |
+| f | `TestMask.test_requires_both_comparisons()` |  |
+| f | `TestMask.test_none_without_chartscan()` |  |
+| C | `TestNoLookAhead` | 事件时间 = 框首次被扫到的时刻，不是框坐标（用户 2026-11-26）。 |
+| f | `TestNoLookAhead.test_first_seen_not_coord()` |  |
+| f | `TestNoLookAhead.test_repeated_scans_do_not_reset()` |  |
+| f | `TestNoLookAhead.test_distinct_boxes_are_distinct_events()` |  |
+| C | `TestLeadoutMajorDistance` | 日线 MsLeadoutBfMaj → 60min bar 数（不是日线根数）。 |
+| f | `TestLeadoutMajorDistance.test_maps_to_60min_bars()` |  |
+| f | `TestLeadoutMajorDistance.test_missing_is_none()` |  |
+| C | `TestTrunkLag` |  |
+| f | `TestTrunkLag.test_counts_since_last_hit()` |  |
+| f | `TestTrunkLag.test_not_ready_is_nan()` |  |
+| f | `TestTrunkLag.test_missing_day_sell_is_all_nan()` |  |
+| f | `TestTrunkLag.test_all_nan_without_columns()` |  |
+
 ### `test_chartscan_client`
 analysis/cv/client.py 的休市节流（_throttle）。
 
@@ -1962,6 +2008,7 @@ analysis/feature_flow.py —— Hamilton DAG 的“各频段只算一次”。
 | f | `TestFeatureFlow.test_mainstream_rewind_stoploss_before_major()` |  |
 | f | `TestFeatureFlow.test_mainstream_rewind_stoploss_nodes_execute()` |  |
 | f | `TestFeatureFlow.test_mainstream_code_features_matches_manual()` | MainstreamPipeline._features_from_frames 与旧手写链逐值一致。 |
+| f | `TestFeatureFlow.test_bs_trunk_columns()` | bs_trunk 节点：QuadBsTuk / QuadBsTukLag 与共享实现逐值一致。 |
 | f | `TestFeatureFlow.test_gear_end_to_end()` |  |
 
 ### `test_indicators`
@@ -2583,6 +2630,7 @@ analysis/zen_ols.py —— 重新实现的 ZenOLSLag（2026-11-22）。
 | f | `TestCausality.test_non_causal_differs_somewhere()` | 事后口径允许与截断不同（它就是偷看未来的那版）。 |
 | C | `TestStreamingCausality` | 流式口径（用户 2026-11-23 选定）：一遍 CZSC.update 走到底。 |
 | f | `TestStreamingCausality.test_prefix_stable()` |  |
+| f | `TestStreamingCausality.test_no_single_point_cross()` | 不许单点反转（用户 2026-11-26）：每次交叉时，主干的链长必须 ≥2。 |
 | f | `TestStreamingCausality.test_output_shape_and_range()` |  |
 | C | `TestScaleInvariance` | 除权不该改变 ZenOLSLag（用户 2026-11-23 提出的隐患）。 |
 | f | `TestScaleInvariance.test_uniform_scaling_does_not_change_lag()` |  |
@@ -3791,6 +3839,26 @@ BasePipeline.run_codes：不分批、tqdm 逐码，并行失败只重试一轮�
 | f | `TestNoChunkingRetry.test_each_code_once_on_success()` |  |
 | f | `TestNoChunkingRetry.test_one_parallel_retry_on_worker_death()` | worker 崩掉 ⇒ 原样并行重试一次（不是降级串行）。 |
 | f | `TestNoChunkingRetry.test_serial_fallback_only_after_retry_exhausted()` |  |
+
+### `test_snapshot_source`
+快照契约的逐码源列（_snapshot_source）+ 合并后聚合（snapshot_contracts）。
+
+| | 名称 | 摘要 |
+|:--|:--|:--|
+| C | `TestSnapSrcCols` |  |
+| f | `TestSnapSrcCols.test_derived_from_registry()` | SNAP_SRC_COLS = 注册表的真实源列 ∪ M9T 三列（不能多、不能少）。 |
+| C | `TestSnapshotSource` |  |
+| f | `TestSnapshotSource.test_columns_and_combo()` |  |
+| f | `TestSnapshotSource.test_schema_is_fixed()` | 缺某个源列（如 4QPwrlnWek）也要补齐成固定模式（NaN）， |
+| f | `TestSnapshotSource.test_window_slice_keeps_warmup()` | 只回 start..end 窗口内的 bar（暖机读全历史，但不出窗口）。 |
+| f | `TestSnapshotSource.test_none_result_is_empty()` |  |
+| f | `TestSnapshotSource.test_fetch_error_is_empty()` |  |
+| f | `TestSnapshotSource.test_missing_window_is_empty()` |  |
+| C | `TestMergeAndAggregate` |  |
+| f | `TestMergeAndAggregate.test_merge_counts_codes()` |  |
+| f | `TestMergeAndAggregate.test_merge_keeps_no_data_codes()` | no_data / 报错的码也可能有 reality 源列（旧路径是全表聚合）。 |
+| f | `TestMergeAndAggregate.test_contracts_match_direct_aggregation()` |  |
+| f | `TestMergeAndAggregate.test_empty_input()` |  |
 
 ## GolemQ.test_cases.tools
 

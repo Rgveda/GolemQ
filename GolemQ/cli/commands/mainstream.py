@@ -71,15 +71,26 @@ def run_mainstream_cli(args) -> int:
 
     market_type = (MARKET_TYPE.ETF_CN if eval_range == 'etf'
                    else MARKET_TYPE.STOCK_CN)
+    import time
+    _t0 = time.perf_counter()
+    # 用户 2026-11-25：写库（2113 行 upsert）也要报一声，否则「静默 → 最后一行」
+    print(f'[mainstream] 写库：窗口 {len(df)} 行（差量，只走有变化的）→ '
+          f'{market_type} …', flush=True)
     out = save_position_series(df, market_type=market_type,
                                db=get_active_market().get_database(),
                                verbose=args.verbose)
+    print('[mainstream] 写库完成（{:.1f}s）：{} 提交 {} 行 / 实写 {} 行'
+          '（unchanged {}）/ upserted {} / modified {}'.format(
+              time.perf_counter() - _t0, out['name'], out['rows'],
+              out['written'], out['unchanged'], out['upserted'],
+              out['modified']), flush=True)
     last = df.iloc[-1]
     print('[mainstream] bars={} members={} last={} 仓位={:.2%} '
-          '做空比={:.2%} | {} 写 {} 行'.format(
+          '做空比={:.2%} | {} 写 {} 行（窗口 {} 行，unchanged {}）'.format(
               len(df), int(last['mberCnt']),
               str(last['datetime']), float(last['MasPosOnhold']),
-              float(last['PosNegBsln']), out['name'], out['rows']))
+              float(last['PosNegBsln']), out['name'], out['written'],
+              out['rows'], out['unchanged']))
     return 0
 
 

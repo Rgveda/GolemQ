@@ -207,7 +207,10 @@ class TestFeatureFlow(unittest.TestCase):
 
         with patch.object(ff, 'calc_zen_dash_causal',
                           lambda ohlc, code: fake_zd):
-            got = pipe._features_from_frames('600519', f60, f15, fd)
+            # `with_bs_trunk=False`：本用例对拍的是**旧手写链**（没有 BS 主干），
+            # BS 主干单独在下面 `test_bs_trunk_columns` 里钉。
+            got = pipe._features_from_frames('600519', f60, f15, fd,
+                                             with_bs_trunk=False)
 
             q60 = calc_four_quadrant_boost(
                 code='600519', features=pd.DataFrame(index=f60.index),
@@ -240,6 +243,37 @@ class TestFeatureFlow(unittest.TestCase):
 
         pd.testing.assert_frame_equal(got, manual, check_dtype=False,
                                       check_like=True)
+
+    def test_bs_trunk_columns(self):
+        """`bs_trunk` 节点：`QuadBsTuk` / `QuadBsTukLag` 与共享实现逐值一致。"""
+        from GolemQ.analysis.quadrant_jit import (
+            calc_quadrant_bs_trunk_timing_lag)
+        f60, f15, fd = _frames(300)
+        pipe = MainstreamPipeline()
+        out = ff.build_driver().execute(
+            ['bs_trunk', 'qlev_macd_lag', 'bs60', 'bs_star_up_bf_maj',
+             'bs_star_dwn_bf_maj', 'bs_bu_bf_maj', 'bs_sel_bf_maj'],
+            inputs={'code': '600519', 'ohlc60': f60,
+                    'ohlc15': f15, 'ohlc_day': fd})
+        frame = out['bs_trunk']
+        self.assertIn(LTT.QUADRANT_BS_TRUNK_TIMING_LAG, frame.columns)
+        # 用同一批输入直接喂共享实现，逐值一致
+        ref = calc_quadrant_bs_trunk_timing_lag(
+            pd.DataFrame({LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY:
+                          out['qlev_macd_lag'],
+                          LTT.BS_STAR_UP_BEFORE: out['bs60'][LTT.BS_STAR_UP_BEFORE],
+                          LTT.BS_STAR_DOWN_BEFORE: out['bs60'][LTT.BS_STAR_DOWN_BEFORE],
+                          LTT.BS_STAR_UP_BEFORE_MAJOR: out['bs_star_up_bf_maj'],
+                          LTT.BS_STAR_DOWN_BEFORE_MAJOR: out['bs_star_dwn_bf_maj'],
+                          LTT.BS_BUY_BEFORE_MAJOR: out['bs_bu_bf_maj'],
+                          LTT.BS_SELL_BEFORE_MAJOR: out['bs_sel_bf_maj']},
+                         index=f60.index))
+        pd.testing.assert_series_equal(
+            frame[LTT.QUADRANT_BS_TRUNK_TIMING_LAG],
+            ref[LTT.QUADRANT_BS_TRUNK_TIMING_LAG], check_dtype=False)
+        # `code_features` 默认带上这两列
+        feat = pipe._features_from_frames('600519', f60, f15, fd)
+        self.assertIn(LTT.QUADRANT_BS_TRUNK_TIMING_LAG, feat.columns)
 
     def test_gear_end_to_end(self):
         f60, f15, fd = _frames(200)

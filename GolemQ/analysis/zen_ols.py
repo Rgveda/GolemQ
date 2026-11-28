@@ -562,6 +562,7 @@ def calc_zen_ols_timing_lag_streaming(ohlc: pd.DataFrame,
                                   'seg_len': i - s0 + 1, 'piv_lag': piv_lag[i],
                                   'n_lo': len(lo), 'n_hi': len(hi),
                                   'up_ok': _up_ok, 'dn_ok': _dn_ok,
+                                  'up_len': _up_len, 'dn_len': _dn_len,
                                   'cross': int(cross[i])})
 
     jx = Timeline_duration((cross == 1).astype(np.int32))

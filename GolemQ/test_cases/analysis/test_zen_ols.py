@@ -166,6 +166,32 @@ class TestStreamingCausality(unittest.TestCase):
             self.assertEqual(float(part.iloc[-1]), float(full.iloc[T]),
                              f'T={T} 流式口径出现未来函数')
 
+    def test_no_single_point_cross(self):
+        """**不许单点反转**（用户 2026-11-26）：每次交叉时，主干的链长必须 ≥2。
+
+        流式实现里当前 bar 总被当成候选极值点追加，所以「孤立点」= LIS/LDS 只有
+        1 个点。`MARGIN=1` 保证要 `_up_len > _dn_len + 1` ⇒ 正常路径下 ≥2；
+        这条用例把它钉死（改动 MARGIN / 候选拼接时会被抓）。
+        """
+        o = _ohlc(n=500, seed=11)
+        dbg = []
+        idx = pd.DatetimeIndex(o.index.get_level_values(0))
+        calc_zen_ols_timing_lag_streaming(
+            o, debug_window=(idx[0], idx[-1]), debug_out=dbg)
+        d = pd.DataFrame(dbg)
+        self.assertGreater(len(d), 0, 'debug 输出为空')
+        up = d[d['cross'] == 1]
+        dn = d[d['cross'] == -1]
+        if len(up):
+            self.assertGreaterEqual(int(up['up_len'].min()), 2,
+                                    '出现单点向上的 OLS 主干（LIS=1）')
+            self.assertTrue((up['up_len'] > up['dn_len'] + 1).all(),
+                            '交叉条件必须严格赢过反向链长')
+        if len(dn):
+            self.assertGreaterEqual(int(dn['dn_len'].min()), 2,
+                                    '出现单点向下的 OLS 主干（LDS=1）')
+            self.assertTrue((dn['dn_len'] > dn['up_len'] + 1).all())
+
     def test_output_shape_and_range(self):
         import numpy as np
         o = _ohlc(n=300)

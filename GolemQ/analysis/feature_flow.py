@@ -423,6 +423,34 @@ def bs_sel_bf_maj(ohlc60: pd.DataFrame, bs_day: pd.DataFrame) -> pd.Series:
     return _align_daily(bs_day[LTT.BS_SELL_BEFORE_MAJOR], ohlc60.index)
 
 
+def bs60(ohlc60: pd.DataFrame) -> pd.DataFrame:
+    """60min `calc_bs_signals`（星线/买卖线的 `*_BEFORE`，供 BS 主干用）。"""
+    return calc_bs_signals(ohlc60, pd.DataFrame(index=ohlc60.index))
+
+
+def bs_trunk(ohlc60: pd.DataFrame, qlev_macd_lag: pd.Series,
+             bs60: pd.DataFrame, bs_star_up_bf_maj: pd.Series,
+             bs_star_dwn_bf_maj: pd.Series, bs_bu_bf_maj: pd.Series,
+             bs_sel_bf_maj: pd.Series) -> pd.DataFrame:
+    """`QuadBsTuk` / `QuadBsTukLag` —— **共用** `quadrant_jit` 的那份实现。
+
+    输入 6 列全部来自 DAG（`QLevMACDLagD` + 60min 星线 + 日线 MAJOR 星线/买卖线），
+    这里只做组装 —— 别在 pipeline 里再写一遍条件（`calc_quadrant_bs_trunk_timing_lag`
+    是逐字搬自老树 `quad_gear.py:640-656` 的规范版）。
+    """
+    from GolemQ.analysis.quadrant_jit import calc_quadrant_bs_trunk_timing_lag
+    f = pd.DataFrame({
+        LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY: qlev_macd_lag,
+        LTT.BS_STAR_UP_BEFORE: bs60[LTT.BS_STAR_UP_BEFORE],
+        LTT.BS_STAR_DOWN_BEFORE: bs60[LTT.BS_STAR_DOWN_BEFORE],
+        LTT.BS_STAR_UP_BEFORE_MAJOR: bs_star_up_bf_maj,
+        LTT.BS_STAR_DOWN_BEFORE_MAJOR: bs_star_dwn_bf_maj,
+        LTT.BS_BUY_BEFORE_MAJOR: bs_bu_bf_maj,
+        LTT.BS_SELL_BEFORE_MAJOR: bs_sel_bf_maj,
+    }, index=ohlc60.index)
+    return calc_quadrant_bs_trunk_timing_lag(f)
+
+
 @extract_columns(LTT.QUADRANT_LEVERAGE_CHARM_O_BEFORE,
                  LTT.QUADRANT_LEVERAGE_CHARM_I_BEFORE)
 def charm_frame(qlev_macd_lag: pd.Series, quad_downrisk_major: pd.Series,

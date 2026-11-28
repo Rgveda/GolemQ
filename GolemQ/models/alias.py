@@ -44,7 +44,20 @@ class LTT:
     #: 三周期**按自然日**相加，≥4 视为共振。
     #: 生产方：`analysis/mtf_buy_weight.py::calc_mtf_buy_weight`。
     QUADRANT_MAINSTREAM_CREDIT_COMPOUNDED = 'QuadMsCredCpd'
+    #: **逐码 M9T 主干时序**（用户 2026-11-26 定名 + 改值）：三列
+    #: `m9t + m9tLagMajR + m9tLagWekR` 先求和再取 `calc_event_timing_lag`
+    #: （`analysis/mainstream_timing.py::calc_m9t_combo`）—— `+k` 连续成立、
+    #: `-k` 连续不成立。⚠️ **不落库**：只是 mainstream 快照源里的虚拟列。
+    #: 值由 `m9tCmpod` 改成 `M9tTrkLag`（工程内部名，无外部契约；老树同名常量
+    #: `FLD.MAGIC_NINE_TURNS_COMPOUNDED` 的真值 `M9TCmpud` 也不采用）。
+    MAGIC_NINE_TURNS_TRUNK_TIMING_LAG = 'M9tTrkLag'
     QUADRANT_TRIGGER_CREDIT = 'QuadTrgCred'
+    #: **ChartScan 上升主干时序**（用户 2026-11-25 定名；`TRUNK` 同
+    #: `QUADRANT_BS_TRUNK_TIMING_LAG`）：
+    #: `Timeline_duration(where((60min Buy < MsLeadoutBfMaj & < 日线 Sell) |
+    #: (日线 Buy < 同条件), 1, -1))` —— `0` = 该 bar 命中，`>0` = 距最近一次
+    #: 命中的 bar 数。生产方：`analysis/chartscan.py::calc_chartscan_uprising_trunk_lag`。
+    CHARTSCAN_UPRISING_TRUNK_TIMING_LAG = 'ChrtScanUprTukLag'
     QUADRANT_LEVERAGE_MACD_LEADIN_UB = 'QLevMACDLinUb'
     # ── 以下 2026-10-11 随「四量图」搬运补（`analysis/quadrant_jit.py` 要用）────────
     # 真值**逐字**取自老树 `GolemQ_old/models/alias.py` 的 `LTT` 类 —— 全是 MongoDB

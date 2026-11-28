@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import time
 from datetime import time as dtime
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -201,8 +202,38 @@ def reality_feat_rows(features: pd.DataFrame, family: str, created_at=None,
     return rows
 
 
+def _row_differs(cur: Optional[dict], row: dict) -> bool:
+    """库里的 ``cur`` 与要写的 ``row`` 在**载荷列**上有没有差别。
+
+    ``created_at`` 是每次运行都变的写入时间戳，**不参与比较** —— 否则每行都算
+    「变了」，差量写会退化成全量写。
+    """
+    if cur is None:
+        return True
+    for k, v in row.items():
+        if k == 'created_at':
+            continue
+        old = cur.get(k, _MISSING)
+        if old is _MISSING:
+            return True
+        if isinstance(v, float) and isinstance(old, float):
+            if v != v and old != old:       # 两边都是 NaN
+                continue
+            if v != old:
+                return True
+            continue
+        if old != v:
+            return True
+    return False
+
+
+#: 库文档里「没有这个字段」的哨兵（与「值为 ``None``」区分开）。
+_MISSING = object()
+
+
 def save_position_series(df: pd.DataFrame, market_type=None, db=None,
-                         verbose: bool = False, echo=None) -> dict:
+                         verbose: bool = False, echo=None,
+                         delta: bool = True) -> dict:
     """「全局智能仓位」→ ``stock_/index_massive_reality_60min_models``（**旧名**）。
 
     这张表是**全系统共用的 massive 模型表**（每根 60min bar 一行、唯一键
@@ -213,8 +244,18 @@ def save_position_series(df: pd.DataFrame, market_type=None, db=None,
     ⚠️ 与旧树的区别只在数据来源（8.3 现算 vs 4.4 历史），**表名与列名照旧**
     （D79）。
 
-    :param market_type: A 股用 ``STOCK_CN`` → ``stock_`` 前缀；ETF 用
-        ``ETF_CN`` → ``index_massive_reality_60min_models``（旧树同口径）。
+    :param delta: **差量写**（用户 2026-11-25）。``df`` 是最近 800 天窗口的
+        **全量**（≈2,100 根 bar），但一次运行真正变的只有最后几根 —— 默认先读回
+        这窗口里已有的文档，只 upsert「库里没有 / 载荷列有变化」的行。
+        ``False`` 时退回旧的「整窗重写」。
+        ⚠️ 差量**不比 `created_at`**，也不影响回填：库里没有的行照样插。
+    :returns: ``{'name', 'rows'(提交候选), 'written'(实写), 'unchanged',
+        'upserted', 'modified'}``
+
+    用户 2026-11-25 的疑问「为什么写 2113 行而不是 4 行的差量」：因为
+    `run_market` 返回的是**整窗**，旧实现把这 2,113 行全部 `$set` 一遍
+    （值没变的由 Mongo 记成 `modified=0`，但网络与写锁照样走满）。现在默认只写
+    真正变化的那几行，并把两个数都报出来。
     """
     from GolemQ.core.constants import MARKET_TYPE
     from GolemQ.datasource.writer import upsert_fields
@@ -222,7 +263,8 @@ def save_position_series(df: pd.DataFrame, market_type=None, db=None,
     mt = MARKET_TYPE.STOCK_CN if market_type is None else market_type
     name = ('stock_massive_reality_60min_models' if mt == MARKET_TYPE.STOCK_CN
             else 'index_massive_reality_60min_models')
-    stats = {'name': name, 'rows': 0, 'upserted': 0, 'modified': 0}
+    stats = {'name': name, 'rows': 0, 'written': 0, 'unchanged': 0,
+             'upserted': 0, 'modified': 0}
     if df is None or len(df) == 0:
         return stats
     out = df.copy()
@@ -241,11 +283,28 @@ def save_position_series(df: pd.DataFrame, market_type=None, db=None,
             doc[col] = v.item() if hasattr(v, 'item') else v
         rows.append(doc)
     target_db = _db() if db is None else db
+    stats['rows'] = len(rows)
+    if delta:
+        coll = target_db[name]
+        stamps = [r['time_stamp'] for r in rows]
+        proj = {'time_stamp': 1, '_id': 0}
+        for r in rows[:1]:
+            proj.update({k: 1 for k in r if k not in ('created_at',)})
+        cur = {d['time_stamp']: d
+               for d in coll.find({'time_stamp': {'$in': stamps}}, proj)}
+        kept = [r for r in rows if _row_differs(cur.get(r['time_stamp']), r)]
+        stats['unchanged'] = len(rows) - len(kept)
+        rows = kept
+    stats['written'] = len(rows)
+    if not rows:
+        if verbose:
+            (echo or print)(f'[position] {name}: {stats["rows"]} 行全部未变，跳过写库')
+        return stats
     res = upsert_fields(target_db[name], rows, ['time_stamp'])
-    stats.update(rows=len(rows), upserted=res['upserted'],
-                 modified=res['modified'])
+    stats.update(upserted=res['upserted'], modified=res['modified'])
     if verbose:
-        (echo or print)(f'[position] {name}: 写 {len(rows)} 行 / '
+        (echo or print)(f'[position] {name}: 提交 {stats["rows"]} 行 / 实写 '
+                        f'{stats["written"]} 行（unchanged {stats["unchanged"]}）/ '
                         f'upserted {res["upserted"]} / modified {res["modified"]}')
     return stats
 

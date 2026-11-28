@@ -225,7 +225,11 @@ def load_base(symbol: str, frequency: str, long_history: bool,
     :param with_czsc: 建不建 czsc 分笔（pivot app 画中枢用）
 
     → ``dict | None``：``df / name / ohlc / feats / ms / ms_major / bars /
-    bi_list / coef / coef_err / feats_err / frequency``。``None`` 表示取不到 K 线。
+    bi_list / coef / coef_err / feats_err / frequency / day_ohlc / min15``。
+    ``None`` 表示取不到 K 线。
+
+    ``min15`` / ``day_ohlc`` 只在对应用到的分支里有值（60min 才有日线帧；
+    15min 帧随 REWIND/STOPLOSS/Charm 的 DAG 一起取，`with_dag=False` 时为 None）。
     """
     freq_enum, kind, lookback_days = FREQS[frequency]
     market = get_active_market()
@@ -249,6 +253,7 @@ def load_base(symbol: str, frequency: str, long_history: bool,
 
     ms_major = None
     _day = None
+    _m15 = None
     _ts0 = pd.Timestamp(pd.to_datetime(ohlc.index.get_level_values(0)).min())
     if frequency == '60min':
         _dstart = str((_ts0 - pd.Timedelta(days=900)).date())
@@ -290,6 +295,7 @@ def load_base(symbol: str, frequency: str, long_history: bool,
                     ['ms_leadin_rewind_before_major',
                      'ms_leadout_stoploss_before_major',
                      'quad_downrisk_major',
+                     'qlev_macd_lag',
                      'charm_frame'],
                     inputs={'code': symbol, 'ohlc60': _o,
                             'ohlc15': _m15, 'ohlc_day': _day})
@@ -300,6 +306,9 @@ def load_base(symbol: str, frequency: str, long_history: bool,
                     'ms_leadout_stoploss_before_major']
                 ms[LTT.QUADRANT_DOWNRISK_TIMING_LAG_MAJOR] = _rw[
                     'quad_downrisk_major']
+                # `QLevMACDLagD`（四量图杠杆 MACD 时序）：给 lag 副图用
+                ms[LTT.QUADRANT_LEVERAGE_MACD_TIMING_LAG_DUMMY] = pd.Series(
+                    np.asarray(_rw['qlev_macd_lag']), index=ohlc.index)
                 _charm = _rw['charm_frame']
                 for _col in (LTT.QUADRANT_LEVERAGE_CHARM_O_BEFORE,
                              LTT.QUADRANT_LEVERAGE_CHARM_I_BEFORE):
@@ -354,7 +363,7 @@ def load_base(symbol: str, frequency: str, long_history: bool,
     return {'df': df, 'name': name, 'ohlc': ohlc, 'feats': feats, 'ms': ms,
             'ms_major': ms_major, 'bars': bars, 'bi_list': bi_list,
             'coef': coef, 'coef_err': coef_err, 'feats_err': feats_err,
-            'frequency': frequency, 'day_ohlc': _day}
+            'frequency': frequency, 'day_ohlc': _day, 'min15': _m15}
 
 
 @st.cache_data(show_spinner=False, ttl=600)
@@ -375,11 +384,145 @@ def atr_major_bands(symbol: str, frequency: str, long_history: bool,
     return out[[FLD.ATR_LB_MAJOR, FLD.ATR_UB_MAJOR]]
 
 
+@st.cache_data(show_spinner=False, ttl=600)
+def trunk_lags(symbol: str, frequency: str, long_history: bool,
+               fold_mainstream: bool = True):
+    """两根「主干」时序（60min；与 `ohlc` 同索引）。
+
+    * `QuadBsTukLag`（`QUADRANT_BS_TRUNK_TIMING_LAG`）—— 走**共用**的
+      `feature_flow.bs_trunk`（旧树 `quad_gear.py:648` 的规范实现）；
+    * `ChrtScanUprTukLag`（`CHARTSCAN_UPRISING_TRUNK_TIMING_LAG`）—— 走**共用**的
+      `analysis/chartscan.py`，输入是 attach 好的 `Cls*/Coord*` + 日线
+      `MsLeadoutBfMaj`（`major_values` 因果映射）。
+
+    → ``{列名: Series}``；非 60min / 缺帧 / 算不出来 ⇒ ``None``。
+    """
+    if frequency != RENKO_FREQ:
+        return None
+    data = load_base(symbol, frequency, long_history, fold_mainstream)
+    if data is None or data.get('ohlc') is None or len(data['ohlc']) == 0:
+        return None
+    ohlc, m15, day = data['ohlc'], data.get('min15'), data.get('day_ohlc')
+    feats, ms, ms_major = data.get('feats'), data.get('ms'), data.get('ms_major')
+    if day is None or len(day) == 0:
+        return None
+    out = {}
+    # BS 主干：共用 feature_flow 节点（需要 60min + 15min + 日线三帧）
+    if m15 is not None and len(m15):
+        try:
+            res = ff.build_driver().execute(
+                ['bs_trunk'], inputs={'code': symbol, 'ohlc60': ohlc,
+                                      'ohlc15': m15, 'ohlc_day': day})
+            out[LTT.QUADRANT_BS_TRUNK_TIMING_LAG] = res['bs_trunk'][
+                LTT.QUADRANT_BS_TRUNK_TIMING_LAG]
+        except Exception:                       # noqa: BLE001 演示里不抛
+            pass
+    # M9T 主干：走 mainstream 快照源同一实现（`_snapshot_source`，含 2016 暖机），
+    # 保证与落库/特征口径一致；三列不齐全的 bar 自然是 NaN。
+    try:
+        from GolemQ.pipeline.mainstream.pipeline import MainstreamPipeline
+        _ts = pd.DatetimeIndex(pd.to_datetime(
+            ohlc.index.get_level_values(0)))
+        _src = MainstreamPipeline()._snapshot_source(
+            symbol, str(_ts.min().date()), str(_ts.max().date()))
+        if _src is not None and len(_src):
+            _m = pd.Series(
+                pd.to_numeric(_src[LTT.MAGIC_NINE_TURNS_TRUNK_TIMING_LAG],
+                              errors='coerce').to_numpy(),
+                index=pd.DatetimeIndex(pd.to_datetime(_src['ts'])))
+            _m = _m[~_m.index.duplicated(keep='last')].reindex(_ts)
+            out[LTT.MAGIC_NINE_TURNS_TRUNK_TIMING_LAG] = pd.Series(
+                _m.to_numpy(), index=ohlc.index)
+    except Exception:                           # noqa: BLE001 演示里不抛
+        pass
+    # ChartScan 主干：attach 好的 Cls*/Coord* + 日线 Leadout Maj
+    if feats is not None and LTT.CHARTSCAN_UPRISING_TRUNK_TIMING_LAG and \
+            len(getattr(feats, 'columns', ())) and ms_major is not None:
+        from GolemQ.analysis.chartscan import \
+            calc_chartscan_uprising_trunk_lag
+        try:
+            idx = pd.DatetimeIndex(pd.to_datetime(
+                ohlc.index.get_level_values(0)))
+            lead = leadout_maj_distance(ms_major,
+                                        {'dt': idx.to_numpy()})
+            out[LTT.CHARTSCAN_UPRISING_TRUNK_TIMING_LAG] = \
+                calc_chartscan_uprising_trunk_lag(feats, idx, lead)
+        except Exception:                       # noqa: BLE001
+            pass
+    return out or None
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def mtf_credit_weight(symbol: str, frequency: str, long_history: bool,
+                      fold_mainstream: bool = True):
+    """`QuadMsCredCpd`（`QUADRANT_MAINSTREAM_CREDIT_COMPOUNDED`）—— 多周期买点共振权重。
+
+    口径见 `analysis/mtf_buy_weight.py`（用户 2026-11-24）：15min 基础 1 /
+    60min 2 / day 3；某周期命中且 `MsLeadinBf < MACD_CROSS_SX_BEFORE` 再 +1；
+    三周期**按自然日**相加，`>= 4` 视为共振。日权重按「盘中用上一交易日、
+    15:00 用当日」因果映射到 60min。
+
+    直接调 `analysis.mtf_buy_weight.calc_mtf_buy_weight`（**不另写一份算子**）：
+    60min / 日线帧复用 `load_base` 的取数结果，15min 帧用 DAG 取到的那份，
+    没有就自己补一次（`_ohlc_of`，同样带缓存）。
+
+    → 与 60min `ohlc` **同索引**的 Series；非 60min / 缺日线或 15min 帧返回 None。
+    """
+    if frequency != RENKO_FREQ:
+        return None
+    data = load_base(symbol, frequency, long_history, fold_mainstream)
+    if data is None or data.get('ohlc') is None or len(data['ohlc']) == 0:
+        return None
+    f60, fd, f15 = data['ohlc'], data.get('day_ohlc'), data.get('min15')
+    if f15 is None or len(f15) == 0:
+        _s = str((pd.Timestamp(pd.to_datetime(
+            f60.index.get_level_values(0)).min()) - pd.Timedelta(days=192)).date())
+        f15 = _ohlc_of(symbol, 'min', '15min', start=_s)
+    if f15 is None or len(f15) == 0 or fd is None or len(fd) == 0:
+        return None
+    from GolemQ.analysis.mtf_buy_weight import calc_mtf_buy_weight
+    try:
+        return calc_mtf_buy_weight(f60, f15, fd).reindex(f60.index)
+    except Exception:                              # noqa: BLE001 演示里不抛
+        return None
+
+
 # --------------------------------------------------------------------------- #
 # 图骨架 / Mainstream 标记
 # --------------------------------------------------------------------------- #
+def trading_rangebreaks(df) -> list:
+    """**证券图口径**的 x 轴断点：周末 / 法定节假日 / 隔夜 / 午休全部跳过。
+
+    Plotly 的时间轴默认按真实时间等比例铺 —— 周末那 67.5 小时、隔夜 19.5 小时
+    会在图上占一大段空白，K 线被挤成一堆。技术分析图的惯例是**只用交易日**连排。
+
+    * 周末：`bounds=["sat", "mon"]`；
+    * 节假日：数据里**缺的交易日**（区间内的工作日减去有 bar 的日子）逐日塞进 `values`；
+    * 隔夜 / 午休：只在分钟级帧上生效（日线帧没有盘中时间）；
+      `"15:01"~"09:29"` 与 `"11:31"~"12:59"` 是为了让 15:00 / 11:30 / 13:00 这些
+      **整点 bar 本身留在图上**（Plotly 的 bounds 起点包含在内）。
+    """
+    ts = pd.DatetimeIndex(pd.to_datetime(df['dt']))
+    if len(ts) == 0:
+        return []
+    days = pd.DatetimeIndex(pd.Index(ts.normalize()).unique()).sort_values()
+    bdays = pd.bdate_range(days[0], days[-1])
+    holidays = [str(d.date()) for d in bdays.difference(days)]
+    breaks = [dict(bounds=["sat", "mon"])]
+    has_intraday = bool((ts != ts.normalize()).any())
+    if has_intraday:
+        breaks.append(dict(pattern="hour", bounds=["15:01", "09:29"]))   # 隔夜
+        breaks.append(dict(pattern="hour", bounds=["11:31", "12:59"]))   # 午休
+    if holidays:
+        breaks.append(dict(values=holidays))
+    return breaks
+
+
 def make_figure(df) -> go.Figure:
-    """K 线 + 公共 layout（各 app 再往上叠自己的 layer）。"""
+    """K 线 + 公共 layout（各 app 再往上叠自己的 layer）。
+
+    x 轴带 `trading_rangebreaks`：**不显示周末/节假日/隔夜/午休**（技术分析图惯例）。
+    """
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
         x=df['dt'], open=df['open'], high=df['high'], low=df['low'],
@@ -387,6 +530,7 @@ def make_figure(df) -> go.Figure:
         increasing_line_color='red', increasing_fillcolor='red',
         decreasing_line_color='green', decreasing_fillcolor='green',
         name='K线'))
+    fig.update_xaxes(rangebreaks=trading_rangebreaks(df))
     return fig
 
 
@@ -494,27 +638,15 @@ def cs_asof(feats, df, family):
 
 
 def cs_before(feats, df, family, cls):
-    """距最近一次 ChartScan `cls`（Buy/Sell）的图 bar 数（此前无该事件 ⇒ NaN）。"""
-    col, ccol = f'Cls{family}', f'Coord{family}'
-    if feats is None or col not in feats.columns or ccol not in feats.columns:
-        return None
-    sub = feats[[col, ccol]].dropna(subset=[col])
-    ev_rows = sub[sub[col] == cls]
-    if ev_rows.empty:
-        return None
-    times = pd.to_datetime(ev_rows[ccol].astype(float), unit='ms').dropna()
-    if times.empty:
-        return None
-    idx = pd.DatetimeIndex(pd.to_datetime(df['dt']))
-    ev = np.searchsorted(idx.values, times.values, side='right') - 1
-    ev = np.unique(ev[ev >= 0])
-    if len(ev) == 0:
-        return None
-    last = np.searchsorted(ev, np.arange(len(idx)), side='right') - 1
-    out = np.full(len(idx), np.nan)
-    ok = last >= 0
-    out[ok] = np.arange(len(idx))[ok] - ev[last[ok]]
-    return out
+    """距最近一次 ChartScan `cls`（Buy/Sell）的图 bar 数（此前无该事件 ⇒ NaN）。
+
+    实现在 `analysis/chartscan.py::cs_class_before` —— 示例页与 mainstream 的
+    `ChrtScanUprTukLag` 共用同一份判定，别在这里另写。
+    """
+    from GolemQ.analysis.chartscan import cs_class_before
+    return cs_class_before(feats,
+                           pd.DatetimeIndex(pd.to_datetime(df['dt'])),
+                           family, cls)
 
 
 #: ChartScan 三时钟 → (族, 颜色, 名字)。Sell 画带；y 范围见 `add_chartscan_bands`。
@@ -564,6 +696,18 @@ def add_chartscan_sell_bands(fig, feats, df, echo=None):
     return out
 
 
+def leadout_maj_distance(ms_major, df):
+    """日线 `MsLeadoutBfMaj` → **60min bar 数**距离（与 ChartScan 同为 as-of 口径）。
+
+    复用 `analysis/chartscan.py::leadout_major_distance` —— 日线量必须映射到
+    60min 后**重新按 bar 数**算，不能拿日线 `Timeline_duration` 直接和 60min 的
+    `buy` 比（单位差约 4 倍，会让 `buy < leadout` 长期假成立）。
+    """
+    from GolemQ.analysis.chartscan import leadout_major_distance
+    return leadout_major_distance(
+        ms_major, pd.DatetimeIndex(pd.to_datetime(df['dt'])))
+
+
 def add_chartscan_buy_bands(fig, data, echo=None):
     """Buy 晚于 Leadout Maj **且**晚于日线 Sell 的全高带（orange / lightcoral）。"""
     feats, df = data['feats'], data['df']
@@ -572,7 +716,7 @@ def add_chartscan_buy_bands(fig, data, echo=None):
                  and len(ms_major) > 0)
     if not use_major or LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR not in ms_major.columns:
         return []
-    leadout = major_values(ms, ms_major, LTT.MAINSTREAM_LEADOUT_BEFORE_MAJOR)
+    leadout = leadout_maj_distance(ms_major, df)
     day_sell = cs_before(feats, df, 'Day', 'Sell')
     if day_sell is None:
         return []
